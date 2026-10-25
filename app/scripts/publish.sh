@@ -39,10 +39,14 @@ if [ $LOCAL = 1 ]; then
   curl -fsS -X PUT "$API/v1/downloads/$(basename "$ZIP")" -H @<(auth) -H 'content-type: application/zip' -T "$ZIP" >/dev/null
   WHERE=(file "$(basename "$ZIP")")
 else
-  # The zip for updates and the .dmg for new users, on a release page anyone can download from.
+  # The zip for updates and the .dmg for new users, on a release page anyone can download from. The .dmg has the
+  # same name in every release, so .../releases/latest/download/Atalays-Terminal.dmg (the README's link) is the newest.
   FILES=("$ZIP")
   DMG="build/Atalay's Terminal $VERSION.dmg"
-  [ -f "$DMG" ] && FILES+=("$DMG")
+  if [ -f "$DMG" ]; then
+    cp "$DMG" build/Atalays-Terminal.dmg
+    FILES+=(build/Atalays-Terminal.dmg)
+  fi
   TITLE="Atalay's Terminal $VERSION"
   gh release create "v$VERSION" "${FILES[@]}" --repo "$REPO" --title "$TITLE" --notes "${NOTES:-$TITLE}"
   URL="https://github.com/$REPO/releases/download/v$VERSION/$(basename "$ZIP")"
