@@ -1,0 +1,13 @@
+/* ===== statuses and badges, shared by the dashboard menu and the message box ===== */
+/* Like Discord: green online, amber away (a crescent), red do not disturb (a bar), hollow when offline. */
+.pdot { position: relative; display: inline-block; flex: none; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; }
+.pdot.p-online { background: var(--green); box-shadow: 0 0 8px rgba(61, 255, 168, 0.75); }
+.pdot.p-idle { background: var(--amber); box-shadow: 0 0 8px rgba(255, 210, 63, 0.6); }
+.pdot.p-idle::after { content: ""; position: absolute; top: -1px; left: -1px; width: 6px; height: 6px; border-radius: 50%; background: var(--dot-bg, #120a05); }
+.pdot.p-dnd { background: var(--red); box-shadow: 0 0 8px rgba(255, 77, 77, 0.65); }
+.pdot.p-dnd::after { content: ""; position: absolute; left: 2px; right: 2px; top: 4px; height: 1.5px; border-radius: 1px; background: var(--dot-bg, #120a05); }
+.pdot.p-offline, .pdot.p-invisible { border: 1.5px solid var(--dim); background: transparent; }
+.pdot.p-invisible { border-color: var(--dim2); }
+
+.cnt { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--ink); font-size: 0.82em; font-style: normal; font-weight: 700; line-height: 1; }
+.cnt.hot { background: var(--warn); color: #fff; box-shadow: 0 0 10px rgba(255, 46, 99, 0.6); }

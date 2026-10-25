@@ -1,0 +1,108 @@
+/* ===== message box: an instant-message window at the screen's edge, like a HUD in Ready Player One ===== */
+#msgbox { position: fixed; right: 8px; bottom: 8px; z-index: 2650; display: flex; flex-direction: column; align-items: flex-end; font: 12px/1.4 var(--font); color: var(--txt); pointer-events: none; }
+#msgbox > * { pointer-events: auto; }
+
+.mb {
+  --glow: 248, 128, 8;
+  --dot-bg: #140b05;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 30%),
+    linear-gradient(170deg, #2a1708 0%, #110a06 45%, #0a0705 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 0 26px rgba(var(--glow), 0.32);
+  transform-origin: 100% 100%;
+}
+.mb::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px); }
+.mb .mb-border {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  padding: 1.5px;
+  border-radius: 10px;
+  background: conic-gradient(from var(--ang), #f88008, #ffd23f, #00e5ff, #f88008);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: cw-spin 6s linear infinite;
+}
+.mb.in { animation: mb-in 0.42s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
+.mb.out { animation: mb-out 0.2s ease-in both; }
+
+/* header strip: what this is, from whom, when */
+.mb-head { position: relative; display: flex; align-items: center; gap: 8px; height: 28px; flex: none; padding: 0 6px 0 0; background: repeating-linear-gradient(90deg, rgba(var(--glow), 0.07) 0 1px, transparent 1px 18px), linear-gradient(180deg, rgba(var(--glow), 0.16), transparent); }
+.mb-tag { display: flex; align-items: center; height: 100%; padding: 0 9px; background: var(--accent); color: var(--ink); font-weight: 700; letter-spacing: 0.1em; font-size: 0.86em; clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%); padding-right: 14px; }
+.mb-who { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: var(--hi); font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.mb-who small { color: var(--dim); font-weight: 400; }
+.mb-time { margin-left: auto; color: var(--dim); font-size: 0.9em; white-space: nowrap; }
+.mb-x { flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--dim); font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+.mb-x:hover { color: var(--hi); background: rgba(var(--glow), 0.2); }
+
+/* peek: the latest message with a quick reply */
+.mb.peek { width: 372px; }
+.mb-text { padding: 9px 12px 4px; color: var(--hi); font-size: 13px; line-height: 1.45; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.mb-text em { color: var(--accent-soft); font-style: normal; }
+.mb-actions { display: flex; gap: 8px; padding: 6px 12px 12px; }
+.mb-actions button { height: 26px; padding: 0 12px; border: 1px solid rgba(var(--glow), 0.5); border-radius: 4px; background: transparent; color: var(--txt); font: inherit; cursor: pointer; }
+.mb-actions button:hover { border-color: var(--accent); color: var(--hi); box-shadow: 0 0 10px rgba(var(--glow), 0.4); }
+.mb-actions button.go { border-color: var(--accent); background: var(--accent); color: var(--ink); font-weight: 700; }
+.mb-actions button.go:hover { background: var(--accent-soft); color: var(--ink); }
+
+/* thin strips, no buttons (a click opens what they're about): a friend came online, a new version of the app */
+.mb.peek.online, .mb.peek.update { width: auto; max-width: 372px; cursor: pointer; }
+.mb.online .mb-head, .mb.update .mb-head { padding-right: 12px; }
+.mb.online:hover, .mb.update:hover { filter: brightness(1.15); }
+.mb.online { --glow: 61, 255, 168; }
+.mb.online .mb-tag { background: var(--green); }
+.mb.update { --glow: 0, 229, 255; }
+.mb.update .mb-tag { background: var(--cyan); }
+
+/* the input: a prompt line, as in the rest of the app */
+.mb-input { display: flex; align-items: flex-end; gap: 8px; margin: 6px 10px 10px; padding: 6px 8px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.42); transition: border-color 0.2s, box-shadow 0.2s; }
+.mb-input:focus-within { border-color: var(--accent); box-shadow: 0 0 14px rgba(var(--glow), 0.35); }
+.mb-input .pr { color: var(--accent); font-weight: 700; line-height: 20px; text-shadow: 0 0 8px rgba(var(--glow), 0.8); }
+.mb-input textarea { flex: 1; min-width: 0; height: 20px; max-height: 84px; padding: 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--hi); font: 13px/20px var(--font); caret-color: var(--accent); }
+.mb-input textarea::placeholder { color: var(--dim2); }
+.mb-input .send { flex: none; height: 20px; padding: 0 7px; border: 0; border-radius: 3px; background: var(--accent); color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; }
+.mb-input .send:disabled { opacity: 0.3; cursor: default; }
+
+/* the chat window: the whole conversation, dragged by its header. In the app it fills its own panel; in staging it
+   floats over the dashboard (left/top set by the script). */
+#chatwin { position: fixed; left: 8px; top: 8px; z-index: 2660; font: 12px/1.4 var(--font); color: var(--txt); }
+#chatwin:empty { display: none; }
+#chatwin .mb-head { cursor: grab; }
+#chatwin.dragging, #chatwin.dragging * { cursor: grabbing; user-select: none; }
+.mb.open { width: 420px; height: 560px; }
+.mb.chat { transform-origin: 50% 40%; }
+.mb.chat.in { animation: mb-pop 0.36s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
+.mb.chat.out { animation: mb-drop 0.18s ease-in both; }
+.mb-gone { flex: none; margin: 0 10px; padding: 6px 10px; border: 1px solid rgba(255, 77, 77, 0.45); border-radius: 6px; background: rgba(255, 77, 77, 0.08); color: var(--red); font-size: 0.92em; text-align: center; }
+.mb-gone[hidden] { display: none; }
+.mb-input textarea:disabled { cursor: not-allowed; }
+.mb-switch { display: flex; gap: 6px; flex: none; padding: 6px 10px 0; overflow-x: auto; scrollbar-width: none; }
+.mb-switch:empty { display: none; }
+.mb-switch button { display: flex; align-items: center; gap: 5px; flex: none; height: 22px; padding: 0 8px; border: 1px solid rgba(var(--glow), 0.3); border-radius: 11px; background: rgba(0, 0, 0, 0.3); color: var(--txt); font: inherit; font-size: 0.92em; cursor: pointer; }
+.mb-switch button:hover { border-color: var(--accent); color: var(--hi); }
+.mb-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 4px; scrollbar-width: thin; scrollbar-color: var(--dim2) transparent; }
+.mb-more { display: block; margin: 0 auto 10px; padding: 2px 10px; border: 1px solid rgba(var(--glow), 0.3); border-radius: 10px; background: transparent; color: var(--dim); font: inherit; font-size: 0.9em; cursor: pointer; }
+.mb-day { margin: 10px 0 6px; color: var(--dim2); font-size: 0.85em; text-align: center; letter-spacing: 0.12em; }
+.mb-msg { display: flex; flex-direction: column; align-items: flex-start; margin: 0 0 6px; animation: mb-line 0.25s ease-out both; }
+.mb-msg.mine { align-items: flex-end; }
+.mb-msg .b { max-width: 82%; padding: 6px 10px; border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 8px 8px 8px 2px; background: rgba(0, 229, 255, 0.07); color: var(--hi); font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.mb-msg.mine .b { border-color: rgba(var(--glow), 0.5); border-radius: 8px 8px 2px 8px; background: rgba(var(--glow), 0.13); }
+.mb-msg .t { margin-top: 2px; color: var(--dim2); font-size: 0.82em; }
+.mb-msg.sending .b { opacity: 0.6; }
+.mb-msg.failed .b { border-color: var(--red); cursor: pointer; }
+.mb-msg.failed .t { color: var(--red); }
+.mb-empty { padding: 40px 20px; color: var(--dim); text-align: center; }
+.mb-sub { color: var(--dim); font-weight: 400; font-size: 0.9em; }
+
+@keyframes mb-in { 0% { opacity: 0; transform: translateX(40px) scale(0.96); filter: brightness(2.2); } 60% { opacity: 1; filter: brightness(1.3); } 100% { opacity: 1; transform: none; filter: none; } }
+@keyframes mb-out { to { opacity: 0; transform: translateX(30px) scale(0.97); } }
+@keyframes mb-pop { 0% { opacity: 0; transform: scale(0.94); filter: brightness(2); } 100% { opacity: 1; transform: none; filter: none; } }
+@keyframes mb-drop { to { opacity: 0; transform: scale(0.96); } }
+@keyframes mb-line { from { opacity: 0; transform: translateY(4px); } }

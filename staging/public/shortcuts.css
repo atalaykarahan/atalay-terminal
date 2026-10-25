@@ -1,0 +1,62 @@
+/* ===== radial shortcuts: pie menu at the pointer, one terminal folder per slice ===== */
+#shortcuts { position: fixed; inset: 0; z-index: 2500; display: none; }
+#shortcuts.on { display: block; }
+#shortcuts .veil { position: absolute; inset: 0; background: radial-gradient(circle at var(--x) var(--y), rgba(0, 0, 0, 0.38) 0, rgba(0, 0, 0, 0.55) 360px); -webkit-backdrop-filter: blur(2.5px); backdrop-filter: blur(2.5px); animation: sc-veil 0.25s ease-out; }
+
+.pie {
+  position: absolute;
+  width: 300px;
+  height: 300px;
+  margin: -150px 0 0 -150px;
+  transform-origin: 50% 50%;
+  filter: drop-shadow(0 0 22px rgba(248, 128, 8, 0.35)) drop-shadow(0 18px 40px rgba(0, 0, 0, 0.6));
+  animation: sc-open 0.42s cubic-bezier(0.18, 0.9, 0.25, 1.15) both;
+}
+.pie.closing { animation: sc-close 0.22s ease-in both; }
+.pie svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+.pie .ring { fill: none; stroke: rgba(248, 128, 8, 0.25); stroke-width: 1; stroke-dasharray: 3 7; animation: sc-ring 12s linear infinite; transform-origin: 150px 150px; }
+.pie .slice { transform-box: fill-box; transform-origin: center; cursor: pointer; transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.3); }
+.pie .slice path.bg { fill: rgba(22, 13, 7, 0.94); stroke: rgba(248, 128, 8, 0.55); stroke-width: 1.2; transition: fill 0.18s, stroke 0.18s; }
+.pie .slice .ico { fill: none; stroke: #f88008; stroke-width: 1.6; stroke-linejoin: round; transition: stroke 0.18s; }
+.pie .slice .ico-fill { fill: rgba(248, 128, 8, 0.18); stroke: none; }
+.pie .slice text { fill: #f5ebe0; font: 600 10.5px var(--font); text-anchor: middle; pointer-events: none; }
+.pie .slice .num { fill: #8f7a66; font-size: 8.5px; font-weight: 700; }
+.pie .slice:hover path.bg, .pie .slice.hot path.bg { fill: rgba(248, 128, 8, 0.24); stroke: #ffb057; }
+.pie .slice:hover .ico, .pie .slice.hot .ico { stroke: #fff8f0; }
+.pie .slice.pick path.bg { fill: rgba(248, 128, 8, 0.75); }
+.pie .slice-in { animation: sc-slice 0.38s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+
+.pie .hub { cursor: pointer; }
+.pie .hub circle.core { fill: rgba(10, 7, 5, 0.96); stroke: #f88008; stroke-width: 1.5; }
+.pie .hub circle.pulse { fill: none; stroke: rgba(248, 128, 8, 0.6); stroke-width: 1; animation: sc-pulse 1.8s ease-out infinite; transform-origin: 150px 150px; }
+.pie .hub text { fill: #fff8f0; font: 700 11px var(--font); text-anchor: middle; pointer-events: none; }
+.pie .hub text.sub { fill: #ffb057; font-size: 8.5px; font-weight: 600; letter-spacing: 0.06em; }
+.pie .hub text.brand { fill: #f88008; font-size: 7.5px; letter-spacing: 0.32em; }
+.pie .hint { position: absolute; left: 50%; top: 100%; margin-top: 8px; padding: 3px 10px; transform: translateX(-50%); border: 1px solid rgba(248, 128, 8, 0.35); border-radius: 10px; background: rgba(10, 7, 5, 0.92); color: #b39a82; font: 9.5px var(--font); white-space: nowrap; text-align: center; }
+
+@keyframes sc-open { from { opacity: 0; transform: scale(0.35) rotate(-40deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
+@keyframes sc-close { to { opacity: 0; transform: scale(0.6) rotate(25deg); } }
+@keyframes sc-slice { from { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.8); } }
+@keyframes sc-ring { to { transform: rotate(360deg); } }
+@keyframes sc-pulse { from { transform: scale(1); opacity: 0.9; } to { transform: scale(1.9); opacity: 0; } }
+@keyframes sc-veil { from { opacity: 0; } }
+
+/* empty slots: dashed slice with a spinning plus */
+.pie .slice.empty path.bg { fill: rgba(22, 13, 7, 0.72); stroke: rgba(248, 128, 8, 0.45); stroke-dasharray: 5 4; }
+.pie .slice.empty .plus-ring { fill: rgba(248, 128, 8, 0.08); stroke: rgba(248, 128, 8, 0.6); stroke-width: 1.2; stroke-dasharray: 3 3; transform-box: fill-box; transform-origin: center; }
+.pie .slice.empty .plus { fill: none; stroke: #f88008; stroke-width: 2; stroke-linecap: round; }
+.pie .slice.empty text.add { fill: #8f7a66; font-weight: 600; }
+.pie .slice.empty:hover path.bg, .pie .slice.empty.hot path.bg { fill: rgba(248, 128, 8, 0.16); stroke: #ffb057; stroke-dasharray: none; }
+.pie .slice.empty:hover .plus-ring, .pie .slice.empty.hot .plus-ring { animation: sc-ring 2.4s linear infinite; stroke: #ffb057; }
+.pie .slice.empty:hover text.add, .pie .slice.empty.hot text.add { fill: #fff8f0; }
+.pie .slice.filled path.bg { animation: sc-filled 1.3s ease-out 0.35s both; }
+@keyframes sc-filled { 0% { fill: rgba(248, 128, 8, 0.9); stroke: #fff8f0; } 100% { fill: rgba(22, 13, 7, 0.94); } }
+
+/* right-click menu on a filled slot */
+.sc-ctx { position: absolute; z-index: 3; min-width: 200px; padding: 6px; border: 1px solid rgba(248, 128, 8, 0.5); border-radius: 8px; background: rgba(16, 10, 5, 0.88); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(248, 128, 8, 0.25); animation: sc-ctx 0.18s ease-out; }
+.sc-ctx .t { max-width: 260px; margin-bottom: 4px; padding: 2px 6px 6px; overflow: hidden; border-bottom: 1px solid rgba(248, 128, 8, 0.2); color: #8f7a66; font: 9.5px var(--font); white-space: nowrap; text-overflow: ellipsis; }
+.sc-ctx button { display: block; width: 100%; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent; color: #f5ebe0; font: 11px var(--font); text-align: left; cursor: pointer; }
+.sc-ctx button:hover { background: rgba(248, 128, 8, 0.2); }
+.sc-ctx button[data-a="remove"] { color: #ff8a8a; }
+@keyframes sc-ctx { from { opacity: 0; transform: translateY(-4px) scale(0.96); } }

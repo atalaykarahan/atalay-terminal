@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atalay's Terminal · overlay</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="chat.css">
+<link rel="stylesheet" href="shortcuts.css">
+<link rel="stylesheet" href="picker.css">
+<style>
+  html, body { background: transparent !important; }
+  body::before, body::after { display: none; }
+  #shortcuts .veil { -webkit-backdrop-filter: none; backdrop-filter: none; background: radial-gradient(circle at var(--x) var(--y), rgba(0, 0, 0, 0.12) 0, rgba(0, 0, 0, 0.32) 420px); }
+  #picker { background: rgba(0, 0, 0, 0.18); -webkit-backdrop-filter: none; backdrop-filter: none; }
+</style>
+</head>
+<body class="overlay">
+<div id="toast"></div>
+<script src="overlay.js"></script>
+<script src="api.js"></script>
+<script src="picker.js"></script>
+<script src="shortcuts.js"></script>
+<script>window.webkit.messageHandlers.overlay.postMessage({ type: 'ready' });</script>
+</body>
+</html>

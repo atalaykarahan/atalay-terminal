@@ -1,0 +1,3 @@
+# The API is its own (private) repo: atalay-terminal-api
+/api/
+.DS_Store
