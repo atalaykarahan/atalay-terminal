@@ -64,6 +64,9 @@ cd app
 ./build-app.sh --open      # builds "build/Atalay's Terminal.app" and opens it
 ```
 
+A build from source has everything that runs on your Mac. Friends, messages and levels need the released app: its
+calls to the server are signed with a key that isn't in this repository.
+
 The dashboard in a browser, while working on it:
 
 ```sh

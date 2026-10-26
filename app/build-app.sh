@@ -11,7 +11,33 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-swift build -c release
+# Released builds sign their API calls (Sources/AtalayTerminal/ClientKey.swift) with a key that never enters the
+# repository: ~/.atalay-terminal/client-key (scripts/client-key.sh makes it), client-key-staging for STAGING=1. It's
+# written into a gitignored source file here; a build without one (anyone building from source) can't sign.
+KEYFILE="${ATALAY_CLIENT_KEY_FILE:-$HOME/.atalay-terminal/client-key${STAGING:+-staging}}"
+GEN=Sources/AtalayTerminal/ClientKey+Build.swift
+FLAGS=()
+if [ -f "$KEYFILE" ]; then
+  python3 - "$KEYFILE" "$GEN" <<'PY'
+import os, sys
+kid, secret = open(sys.argv[1]).read().strip().split(':')
+key = bytes.fromhex(secret)
+mask = os.urandom(len(key))
+data = bytes(a ^ b for a, b in zip(key, mask))
+nums = lambda b: ', '.join(str(x) for x in b)
+with open(sys.argv[2], 'w') as f:
+    f.write('// Written by build-app.sh; never committed (.gitignore). See ClientKey.swift.\n'
+            'extension ClientKey {\n'
+            f'    static let embedded = (id: "{kid}", mask: [UInt8]([{nums(mask)}]), data: [UInt8]([{nums(data)}]))\n'
+            '}\n')
+PY
+  FLAGS=(-Xswiftc -DCLIENT_KEY)
+else
+  rm -f "$GEN"
+fi
+
+# (Bash 3.2 calls an empty array unbound, hence the ${FLAGS[@]+…} form.)
+swift build -c release ${FLAGS[@]+"${FLAGS[@]}"}
 BIN="$(swift build -c release --show-bin-path)/atalay-terminal"
 # The icon is redrawn when the logo or its drawing script changed.
 if [ ! -f build/AppIcon.icns ] || [ tools/icon-logo.png -nt build/AppIcon.icns ] || [ tools/make-icon.swift -nt build/AppIcon.icns ]; then
@@ -32,7 +58,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 if [ "${UNIVERSAL:-}" = 1 ]; then
   # Command Line Tools can't build both architectures at once: a second build for Intel, joined with lipo.
-  X86=(swift build -c release --triple x86_64-apple-macosx13.0 --scratch-path .build-x86_64)
+  X86=(swift build -c release --triple x86_64-apple-macosx13.0 --scratch-path .build-x86_64 ${FLAGS[@]+"${FLAGS[@]}"})
   "${X86[@]}"
   lipo -create "$BIN" "$("${X86[@]}" --show-bin-path)/atalay-terminal" -output "$APP/Contents/MacOS/atalay-terminal"
 else

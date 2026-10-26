@@ -374,8 +374,10 @@ final class Cloud {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             req.setValue("application/json", forHTTPHeaderField: "content-type")
         }
+        ClientKey.sign(&req)
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
+            ClientKey.learn(from: response)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let json = (try? JSONSerialization.jsonObject(with: data)) ?? [String: Any]()
             if (200..<300).contains(status) { return json }
@@ -399,7 +401,9 @@ final class Cloud {
             req.setValue("application/json", forHTTPHeaderField: "content-type")
         }
         if let token { req.setValue("Bearer " + token, forHTTPHeaderField: "authorization") }
+        ClientKey.sign(&req)
         let (data, response) = try await URLSession.shared.data(for: req)
+        ClientKey.learn(from: response)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String ?? ""

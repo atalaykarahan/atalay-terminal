@@ -14,6 +14,10 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Top bar: the 5-hour and weekly limits don't show for new installs; to decide: hide them while there's no data, so the bar isn't cluttered?
 - Terminals: behave one to one like iTerm2 on macOS (e.g. 24-bit colour, which Apple's screen can't pass on)
 
+## 0.9.0
+
+- Security: only the released app can use friends, messages and levels; older versions need this update to keep earning XP
+
 ## 0.8.0
 
 - Leaderboard: everyone's level and week, and a friend request one click away

@@ -8,6 +8,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:?usage: scripts/release.sh <version> [notes]}"
+# The key the build signs its API calls with, registered with that API before anyone has the build
+# (scripts/client-key.sh; a local API pairs with the staging key).
+case "${ATALAY_API_URL:-}" in
+  http://127.0.0.1* | http://localhost*) export ATALAY_CLIENT_KEY_FILE="$HOME/.atalay-terminal/client-key-staging" ;;
+esac
+scripts/client-key.sh
 PLIST=Resources/Info.plist
 BUILD=$(( $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST") + 1 ))
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
