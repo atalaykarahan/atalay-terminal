@@ -105,6 +105,12 @@ window.Social = (() => {
         if (f) f.unread = 0;
         break;
       }
+      // A friend's new level, sent quietly (no notice): whatever shows them updates.
+      case 'friend_xp': {
+        const f = friend(ev.id);
+        if (f) f.xp = { ...(f.xp || {}), level: ev.level, rank: ev.rank };
+        break;
+      }
     }
     emit(ev);
   }
@@ -154,6 +160,9 @@ window.Social = (() => {
     read: (id) => api('POST', 'v1/messages/read', { with: id }),
     // Whether friends see your active time (today, this week, in total); your level shows either way.
     setActivity: (show) => api('PATCH', 'v1/me/activity', { show }),
+    // Everyone with XP, by the last 7 days ('week') or ever ('all'); and whether you're listed there.
+    leaderboard: (by) => api('GET', `v1/leaderboard?by=${by === 'all' ? 'all' : 'week'}`),
+    setBoard: (show) => api('PATCH', 'v1/me/leaderboard', { show }),
     setStatus: (status) =>
       api('PATCH', 'v1/me/status', { status }).then((r) => {
         if (!r.error) event({ type: 'status', status: r.status });

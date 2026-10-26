@@ -42,6 +42,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.setFrameAutosaveName("atalay-terminal.main")
         super.init(window: window)
         window.delegate = self
+        MessagePanel.dashboard = window
         overlay.manager = self
         buildLayout()
         wireEngine()
@@ -110,7 +111,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         Social.shared.onEvent = { [weak self] json in
             self?.radar.push("social", json)
             MessagePanel.notices.push(json)
-            MessagePanel.chat.push(json)
+            MessagePanel.pushToChats(json)
             if json.contains(#""type":"xp""#) { Cloud.shared.apply(xpEvent: json) }
         }
         // The "update available" notice was clicked: the dashboard in front, on its "what's new" screen.
@@ -148,6 +149,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case "ready":
             // A reloaded page has no menu open.
             for c in chats.values { c.stepBack() }
+            MessagePanel.stepAside(false)
             engine.requestInit()
             lastVisibility = ""
             dashboardVisibilityChanged()
@@ -159,7 +161,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case "newTerminal": overlay.showNewTerminal()
         case "openTerminal": if let id = msg["id"] as? String { chats[id]?.show() }
         // A menu (friends, settings, an update) opened or closed on the dashboard.
-        case "modal": for c in chats.values { msg["open"] as? Bool == true ? c.stepAside() : c.stepBack() }
+        case "modal":
+            let open = msg["open"] as? Bool == true
+            for c in chats.values { open ? c.stepAside() : c.stepBack() }
+            MessagePanel.stepAside(open)
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
         default: break
         }
@@ -336,6 +341,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func showDashboard() {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // Friend chats stay above the dashboard when it's clicked, like the terminals.
+    func windowDidBecomeKey(_ notification: Notification) {
+        MessagePanel.pinAll()
     }
 
     /// A terminal in `cwd`, not a chat: a new conversation starts with `claude`, an earlier one in that folder

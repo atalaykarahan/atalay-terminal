@@ -8,9 +8,11 @@
 //    screen for a few seconds.
 //  · chat: the conversation in its own window, opened mid-screen the first time and dragged anywhere by its header.
 // In the app each part is its own panel (Swift injects __MESSAGES_ROLE__ "notices" or "chat", places and moves the
-// panels); in staging both live in the dashboard page.
+// panels), and every friend's chat has a panel of its own (__MESSAGES_FRIEND__), so several stay on screen side by
+// side; in staging both live in the dashboard page, with one chat window that switches between friends.
 window.Messages = (() => {
   const APP_ROLE = window.__MESSAGES_ROLE__;
+  const FRIEND = window.__MESSAGES_FRIEND__ || null; // the one friend an app chat panel is for
   // The app's dashboard leaves messages to the panels.
   if (window.__RADAR_APP__ && !APP_ROLE) return null;
   const ROLE = APP_ROLE || 'both';
@@ -47,8 +49,8 @@ window.Messages = (() => {
     if (btn) btn.disabled = !ta.value.trim() || ta.disabled;
   }
 
-  // The friend whose chat window is open: no pop-ups for them, the chat shows their messages.
-  let showing = null;
+  // Friends whose chat window is open: no pop-ups for them, their chat shows their messages.
+  let showing = new Set();
 
   // ======================= notices =======================
   const notes = NOTICES ? mount('msgbox') : null;
@@ -465,7 +467,7 @@ window.Messages = (() => {
   function notice(ev) {
     switch (ev.type) {
       case 'message':
-        if (ev.message.mine || showing === ev.with) return;
+        if (ev.message.mine || showing.has(ev.with)) return;
         Sfx.play('message');
         if (!Social.dnd()) showPeek({ kind: 'message', from: ev.from || Social.friend(ev.with), body: ev.message.body, at: ev.message.at });
         return;
@@ -492,7 +494,7 @@ window.Messages = (() => {
         // Only offline -> online counts, not away/busy changes; and not while their chat is open, or over a message
         // or request on screen.
         const f = Social.friend(ev.id);
-        if (!f || ev.was !== 'offline' || Date.now() - (offlineAt.get(ev.id) || 0) < BACK_MS || showing === ev.id) return;
+        if (!f || ev.was !== 'offline' || Date.now() - (offlineAt.get(ev.id) || 0) < BACK_MS || showing.has(ev.id)) return;
         if (peek && peek.kind !== 'online') return;
         Sfx.play('online');
         if (Social.dnd()) return;
@@ -518,7 +520,7 @@ window.Messages = (() => {
   function tellShowing() {
     const id = isOpen ? current : null;
     if (ROLE === 'chat') post({ type: 'showing', id });
-    else showing = id;
+    else showing = new Set(id ? [id] : []);
   }
 
   function sizeChat(focus) {
@@ -536,8 +538,12 @@ window.Messages = (() => {
   }
 
   async function open(id) {
+    // An app chat panel holds one friend; another friend's chat opens in a panel of its own, next to this one.
+    if (FRIEND && id && id !== FRIEND) return post({ type: 'openChat', id });
+    // A panel opened just now may not have the friends list yet.
+    if (!Social.state()) await Social.load();
     const s = Social.state();
-    id = id || current || (s && (s.friends.find((f) => f.unread) || s.friends[0])?.id);
+    id = id || FRIEND || current || (s && (s.friends.find((f) => f.unread) || s.friends[0])?.id);
     if (!id || !Social.friend(id)) return;
     const fresh = !isOpen;
     current = id;
@@ -788,12 +794,53 @@ window.Messages = (() => {
     if (CHAT) chatEvent(ev);
   });
 
+  // ======================= copy and paste =======================
+  // In the app Swift catches ⌘V, ⌘C, ⌘X and ⌘A in these panels (they sit outside the menu's usual path, and the
+  // notices don't even bring the app forward) and does the clipboard; the text editing happens here.
+  const typing = () => {
+    const el = document.activeElement;
+    return el && el.tagName === 'TEXTAREA' && !el.disabled ? el : null;
+  };
+  function pasteText(text) {
+    const ta = typing();
+    if (!ta || !text) return false;
+    ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }
+  // The selected text: in the reply box, else on the page (a message); `cut` takes it out of the reply box.
+  function copyText(cut) {
+    const ta = typing();
+    if (ta && ta.selectionEnd > ta.selectionStart) {
+      const text = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+      if (cut) {
+        ta.setRangeText('', ta.selectionStart, ta.selectionEnd, 'end');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return text;
+    }
+    return String(getSelection() || '');
+  }
+  function selectAll() {
+    const ta = typing();
+    if (ta) return ta.select();
+    const list = document.querySelector('.mb-list');
+    if (!list) return;
+    const r = document.createRange();
+    r.selectNodeContents(list);
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+  }
+
   // ======================= the app's panels =======================
   if (APP_ROLE) {
     window.__messages = {
       event: (ev) => Social.event(ev),
       open: (id) => open(id),
-      showing: (id) => (showing = id),
+      showing: (ids) => (showing = new Set(ids || [])),
+      paste: (text) => pasteText(text),
+      copy: (cut) => copyText(cut),
+      selectAll: () => selectAll(),
       update: (u) => updateNotice(u),
       xp: (x) => progress({ xp: x }),
       focus: (on) => setFocus(on),

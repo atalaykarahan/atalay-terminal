@@ -1,7 +1,7 @@
 'use strict';
 
-// Hacker name (asked once, on first launch), the main menu (your profile, friends, requests, settings, your status)
-// and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
+// Hacker name (asked once, on first launch), the main menu (your profile, friends, the leaderboard, requests,
+// settings, your status) and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
 // tag (#0427) and name + tag is unique, like Discord. In the app, Swift's Cloud talks to the API,
 // pushes its state through window.__radar.cloud and answers the page through the "cloud" handler (with replies).
 // In staging the server proxies the same calls and the page asks for the state every half minute.
@@ -286,6 +286,7 @@ window.Cloud = (() => {
         <div class="mn-tabs">
           <button type="button" data-tab="profile">PROFILE</button>
           <button type="button" data-tab="friends">FRIENDS <i class="cnt hot" data-count="unread"></i></button>
+          <button type="button" data-tab="board">LEADERBOARD</button>
           <button type="button" data-tab="requests">REQUESTS <i class="cnt hot" data-count="requests"></i></button>
           <button type="button" data-tab="settings">SETTINGS</button>
         </div>
@@ -296,6 +297,7 @@ window.Cloud = (() => {
             <p class="hk-status mn-add-status"></p>
             <div class="mn-list mn-friends"></div>
           </section>
+          <section class="mn-page mn-board" data-page="board"></section>
           <section class="mn-page" data-page="requests">
             <div class="hk-h">INCOMING</div><div class="mn-list mn-in"></div>
             <div class="hk-h">SENT</div><div class="mn-list mn-out"></div>
@@ -306,7 +308,9 @@ window.Cloud = (() => {
             <p class="hk-status"></p>
             <div class="hk-h">ACTIVITY</div>
             <div class="hk-row"><span>show my active time to friends<small>today, this week and in total · your level shows either way</small></span>
-              <button type="button" class="hk-sw" role="switch" aria-checked="true" title="Show my active time to friends"><i></i></button></div>
+              <button type="button" class="hk-sw act" role="switch" aria-checked="true" title="Show my active time to friends"><i></i></button></div>
+            <div class="hk-row"><span>show my name on the leaderboard<small>off: you keep your place as Anonymous, and nobody can add you from there</small></span>
+              <button type="button" class="hk-sw brd" role="switch" aria-checked="true" title="Show my name on the leaderboard"><i></i></button></div>
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
@@ -357,7 +361,9 @@ window.Cloud = (() => {
       if (e.key === 'Enter') request();
     });
 
-    q('.hk-sw').onclick = toggleActivity;
+    q('.hk-sw.act').onclick = toggleActivity;
+    q('.hk-sw.brd').onclick = toggleBoard;
+    q('.mn-board').addEventListener('click', boardAction);
     q('.mn-copy').onclick = () => copyHandle();
     q('.mn-status').onclick = (e) => {
       e.stopPropagation();
@@ -400,6 +406,7 @@ window.Cloud = (() => {
     if (save) save.hidden = which !== 'settings';
     const focus = which === 'friends' ? q('.mn-handle-in') : which === 'settings' ? q('.mn-settings .hk-input') : null;
     if (focus) setTimeout(() => focus.focus(), 60);
+    if (which === 'board') loadBoard();
   }
 
   async function copyHandle() {
@@ -650,12 +657,150 @@ window.Cloud = (() => {
   }
 
   function renderActivity() {
-    const sw = q('.hk-sw');
-    if (!sw) return;
-    const on = S.xp ? S.xp.show !== false : true;
-    sw.classList.toggle('on', on);
-    sw.setAttribute('aria-checked', String(on));
-    sw.disabled = !S.xp;
+    for (const [cls, on] of [['act', S.xp ? S.xp.show !== false : true], ['brd', S.xp ? S.xp.board !== false : true]]) {
+      const sw = q(`.hk-sw.${cls}`);
+      if (!sw) continue;
+      sw.classList.toggle('on', on);
+      sw.setAttribute('aria-checked', String(on));
+      sw.disabled = !S.xp;
+    }
+  }
+
+  async function toggleBoard() {
+    if (!S.xp) return;
+    const show = S.xp.board === false;
+    const r = await Social.setBoard(show);
+    if (r.error) return toast(errorText(r.error));
+    S.xp = { ...S.xp, board: show };
+    renderActivity();
+    board = null;
+    toast(show ? 'your name shows on the leaderboard again' : "you're Anonymous on the leaderboard · only you see your name there");
+  }
+
+  // ---------- the leaderboard: everyone with XP, the last 7 days or ever, and a friend request one click away ----------
+  let boardBy = 'week';
+  let board = null; // the API's answer: { by, rows, me }
+  let boardSeq = 0;
+
+  async function loadBoard() {
+    const seq = ++boardSeq;
+    renderBoard();
+    const r = await Social.leaderboard(boardBy);
+    if (seq !== boardSeq) return;
+    board = r;
+    renderBoard();
+  }
+
+  const boardUser = (id) => (board && !board.error ? [...board.rows, board.me].find((u) => u && u.id === id) : null);
+
+  // What you can do about someone on the board: nothing (you, or someone Anonymous), message (a friend), wait (asked
+  // them), or ask.
+  function boardButton(u, key) {
+    if (u.me || !u.id) return '';
+    if (u.friend) return `<button type="button" class="mn-btn" data-${key}="chat" title="Message">✉</button>`;
+    if (u.requested) return '<span class="lb-state">request sent</span>';
+    return `<button type="button" class="mn-btn go" data-${key}="add" title="${u.asked ? 'They asked you: accept' : 'Send a friend request'}">${u.asked ? '✓ accept' : '+ add'}</button>`;
+  }
+
+  function boardRow(u) {
+    const r = Xp.rank(u.level);
+    // Hid their name, like on Riot's ladders: their place, level and score, nothing that tells who they are.
+    if (!u.id) {
+      return (
+        `<div class="lb-row anon${u.pos <= 3 ? ' top' : ''}" style="--rc:${r.color}"><span class="lb-pos">${u.pos}</span>` +
+        `<div class="lb-who"><span class="mn-name"><b class="lb-anon">Anonymous</b>${Xp.badge(u.level)}</span><small>${esc(r.name)}</small></div>` +
+        `<span class="lb-spark off"></span><span class="lb-score">${boardBy === 'week' ? `+${Xp.num(u.week)}` : Xp.num(u.xp)} XP</span><span class="lb-act"></span></div>`
+      );
+    }
+    const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
+    const spark = u.days
+      ? `<span class="lb-spark">${u.days.map((s) => `<i style="height:${s ? Math.max(12, Math.min(100, (s / 28_800) * 100)).toFixed(0) : 0}%"></i>`).join('')}</span>`
+      : '<span class="lb-spark off" title="keeps their active time to themselves"></span>';
+    return (
+      `<div class="lb-row${u.me ? ' me' : ''}${u.pos <= 3 ? ' top' : ''}" data-id="${esc(u.id)}" style="--rc:${r.color}">` +
+      `<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${tagged(u)}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
+      `${u.me && u.anon ? '<em class="lb-hid" title="Others see you as Anonymous">hidden</em>' : ''}</span>` +
+      `<small>${esc(r.name)}${active === null ? '' : ` · ${Xp.dur(active)} this week`}</small></div>${spark}` +
+      `<span class="lb-score">${boardBy === 'week' ? `+${Xp.num(u.week)}` : Xp.num(u.xp)} XP</span><span class="lb-act">${boardButton(u, 'act')}</span></div>`
+    );
+  }
+
+  function renderBoard() {
+    const el = q('.mn-board');
+    if (!el) return;
+    const head =
+      `<div class="lb-head"><div class="lb-seg"><button type="button" data-by="week" class="${boardBy === 'week' ? 'on' : ''}">THIS WEEK</button>` +
+      `<button type="button" data-by="all" class="${boardBy === 'all' ? 'on' : ''}">ALL TIME</button></div>` +
+      `<span class="lb-note">${boardBy === 'week' ? 'XP earned over the last 7 days' : 'XP ever'} · click someone for their week</span></div>`;
+    if (!board || board.error) {
+      const why = !board ? (S.reachable ? 'loading…' : "can't reach the server · the leaderboard comes back with the connection") : errorText(board.error);
+      return setHTML(el, `${head}<div class="mn-empty">${why}</div>`);
+    }
+    const rows = board.rows.map(boardRow).join('');
+    const mine = board.me && board.me.pos > board.rows.length ? `<div class="lb-gap">· · ·</div>${boardRow(board.me)}` : '';
+    const absent = board.me ? '' : `<p class="lb-foot">you'll show up here once you have some XP</p>`;
+    setHTML(el, head + (rows ? `<div class="lb-list">${rows}${mine}</div>` : '<div class="mn-empty">no one on the leaderboard yet</div>') + absent);
+  }
+
+  async function boardAction(e) {
+    const seg = e.target.closest('[data-by]');
+    if (seg) {
+      if (seg.dataset.by === boardBy) return;
+      boardBy = seg.dataset.by;
+      board = null;
+      return loadBoard();
+    }
+    const row = e.target.closest('.lb-row');
+    const u = row && row.dataset.id && boardUser(row.dataset.id);
+    if (!u) return;
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'chat') {
+      close();
+      return Social.openChat(u.id);
+    }
+    if (act === 'add') return addFromBoard(u, e.target.closest('button'));
+    if (u.me) return showTab('profile');
+    boardCard(u);
+  }
+
+  async function addFromBoard(u, button) {
+    if (button) button.disabled = true;
+    const r = await Social.request(Social.handle(u));
+    if (r.error && r.error !== 'already_requested' && r.error !== 'already_friends') {
+      if (button) button.disabled = false;
+      return toast(REQUEST_ERRORS[r.error] || errorText(r.error));
+    }
+    Sfx.play('accept');
+    if (r.friend || r.error === 'already_friends') u.friend = true;
+    else u.requested = true;
+    toast(u.friend ? `you and ${Social.handle(u)} are friends now` : `request sent to ${Social.handle(u)}`);
+    renderBoard();
+    if (q('.mn-confirm')) boardCard(u);
+  }
+
+  // Someone's card from the board: their rank and level, their week, and a friend request (or a message, a friend).
+  function boardCard(u) {
+    q('.mn-confirm')?.remove();
+    const r = Xp.rank(u.level);
+    const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
+    const card = document.createElement('div');
+    card.className = 'mn-confirm';
+    card.innerHTML =
+      `<div class="mn-ask pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(u.level, 'pf-band')}` +
+      `<div class="pf-rank"><small>#${u.pos} on the leaderboard</small>${tagged(u)}<span>Level ${u.level} · ${esc(r.name)}</span></div></div>` +
+      `<div class="pf-stats">${stat('THIS WEEK', `+${Xp.num(u.week)} XP`)}${stat('ACTIVE', active === null ? '—' : Xp.dur(active))}${stat('TOTAL', `${Xp.num(u.xp)} XP`)}</div>` +
+      (u.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(u.days, r.color)}` : '<p>keeps their active time to themselves</p>') +
+      `<div class="mn-ask-btns"><button type="button" class="mn-btn" data-ans="close">close</button>${boardButton(u, 'ans')}</div></div>`;
+    card.onclick = (e) => {
+      const b = e.target.closest('[data-ans]');
+      if (e.target === card || (b && b.dataset.ans === 'close')) return card.remove();
+      if (b && b.dataset.ans === 'chat') {
+        close();
+        Social.openChat(u.id);
+      }
+      if (b && b.dataset.ans === 'add') addFromBoard(u, b);
+    };
+    q('.pk.menu').appendChild(card);
   }
 
   async function toggleActivity() {

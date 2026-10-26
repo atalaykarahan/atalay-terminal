@@ -10,7 +10,11 @@ enum Detached {
     /// unbundled) `atld-`.
     static let prefix: String = {
         guard let id = Bundle.main.bundleIdentifier else { return "atld-" }
-        return id.hasSuffix(".staging") ? "atls-" : "atl-"
+        guard id.hasSuffix(".staging") else { return "atl-" }
+        // Staging only: a demo recording runs a second set of sessions apart from the usual ones
+        // (ATALAY_SESSION_PREFIX=atdm-, with CLAUDE_CONFIG_DIR pointing at demo data).
+        if let p = ProcessInfo.processInfo.environment["ATALAY_SESSION_PREFIX"], p.count > 1, p.hasSuffix("-") { return p }
+        return "atls-"
     }()
 
     /// The prefixes of every build, for finding a session another build of the app runs (to mirror it).

@@ -26,9 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HangWatchdog.shared.start()
         Cloud.shared.installUpdatesRightAway = CommandLine.arguments.contains("--update")
         Cloud.shared.start()
-        // Load the message panels' pages now, so a message can pop up at any time.
+        // Load the notices' page now, so a message can pop up at any time (chats load when opened).
         _ = MessagePanel.notices
-        _ = MessagePanel.chat
         handleLaunchArguments()
     }
 
@@ -75,7 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // While the level-up takeover plays, keys do nothing, as if the app were hacked for a moment (MessagePanel);
         // once its lock is over, a key ends it.
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp], handler: { event in
-            MessagePanel.holds(event) ? nil : event
+            if MessagePanel.holds(event) { return nil }
+            // ⌘V, ⌘C, ⌘X and ⌘A in the message panels (MessagePanel.editKey).
+            if event.type == .keyDown, MessagePanel.editKey(event) { return nil }
+            return event
         }) { monitors.append(m) }
 
         // Four-finger click anywhere in the app opens the shortcut pie at the pointer (three fingers are taken: many

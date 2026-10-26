@@ -5,12 +5,23 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Chats: ⌘W closes a friend's chat window
+- Reminder: add Alper's suggestions from the chat here before planning the next features
 - Settings: a feedback form, so complaints and requests go straight to the developer
 - Messages: the reply box at the bottom right doesn't close while you're typing in it (today it can close when another message arrives)
 - Messages: replying from the bottom-right box doesn't switch you to the app (today Enter brings the app forward, even from another desktop)
 - Shortcut wheel: also opens with the mouse's middle button, for people without a trackpad (today only a four-finger click)
 - Top bar: the 5-hour and weekly limits don't show for new installs; to decide: hide them while there's no data, so the bar isn't cluttered?
 - Terminals: behave one to one like iTerm2 on macOS (e.g. 24-bit colour, which Apple's screen can't pass on)
+
+## 0.8.0
+
+- Leaderboard: everyone's level and week, and a friend request one click away
+- Hide your name on the leaderboard in Settings: you keep your place as Anonymous
+- Each friend's chat opens in its own window, so several stay on screen
+- Copy and paste work in chats and in the reply box
+- A friend's new level shows in your chat right away
+- The chat or terminal you clicked last is on top, and chats stay above the dashboard
 
 ## 0.7.0
 

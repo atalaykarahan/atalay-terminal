@@ -58,6 +58,8 @@ final class Cloud {
         let show: Bool
         /// Active seconds on each of the last 7 days, today last.
         let days: [Int]?
+        /// Listed on the leaderboard.
+        let board: Bool?
     }
 
     struct State: Equatable {
@@ -444,14 +446,14 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
             case "social":
                 // Only the friends and messages endpoints; the page never reaches anything else with the token.
                 let path = body["path"] as? String ?? ""
-                guard path == "v1/me/status" || path == "v1/me/activity" || ["v1/social", "v1/friends", "v1/messages"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
                       !path.contains("..") else {
                     replyHandler(["error": "bad_path"], nil)
                     return
                 }
                 replyHandler(await cloud.social(body["method"] as? String ?? "GET", path, body: body["body"]), nil)
             case "openChat":
-                MessagePanel.chat.open(friend: body["id"] as? String ?? "")
+                MessagePanel.openChat(friend: body["id"] as? String ?? "")
                 replyHandler(true, nil)
             default:
                 replyHandler(nil, "unknown message")

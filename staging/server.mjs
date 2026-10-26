@@ -1347,7 +1347,7 @@ async function cloudState() {
 const errorCode = (e) => (e.status ? e.code || `http_${e.status}` : 'offline');
 
 // Friends and messages for the page: the same endpoints the app's bridge allows, with this Mac's token.
-const SOCIAL_PATH = /^v1\/(me\/(status|activity)$|social$|friends(\/|$)|messages(\/|\?|$))/;
+const SOCIAL_PATH = /^v1\/(me\/(status|activity|leaderboard)$|social$|leaderboard(\?|$)|friends(\/|$)|messages(\/|\?|$))/;
 async function socialCall({ method = 'GET', path: p = '', body } = {}) {
   const token = readToken();
   if (!token) return { error: 'signed_out' };

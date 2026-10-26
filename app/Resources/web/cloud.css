@@ -210,3 +210,34 @@
 .xw-d span { color: var(--dim); font-size: 0.8em; }
 .xw-d.today span { color: rgb(var(--rc)); font-weight: 700; }
 .pf-card .xw { height: 96px; margin-bottom: 14px; }
+
+/* ===== the leaderboard (main menu) ===== */
+.lb-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.lb-seg { display: flex; flex: none; overflow: hidden; border: 1px solid rgba(var(--glow), 0.45); border-radius: 6px; }
+.lb-seg button { height: 26px; padding: 0 12px; border: 0; background: transparent; color: var(--dim); font: inherit; font-weight: 700; letter-spacing: 0.12em; cursor: pointer; }
+.lb-seg button:hover { color: var(--hi); }
+.lb-seg button.on { background: var(--accent); color: var(--ink); }
+.lb-note { overflow: hidden; color: var(--dim); font-size: 0.9em; white-space: nowrap; text-overflow: ellipsis; }
+.lb-list { display: flex; flex-direction: column; gap: 2px; }
+.lb-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 62px 96px 92px; align-items: center; gap: 10px; min-height: 44px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.lb-row:hover { background: rgba(var(--glow), 0.08); }
+.lb-row.me { background: rgba(var(--glow), 0.13); box-shadow: inset 3px 0 0 var(--accent); }
+.lb-pos { color: var(--dim); font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+.lb-row.top .lb-pos { color: var(--amber); text-shadow: 0 0 8px rgba(255, 210, 63, 0.6); }
+.lb-who { display: flex; flex-direction: column; min-width: 0; }
+.lb-who b { color: var(--hi); font-weight: 700; white-space: nowrap; }
+.lb-who b i { color: var(--accent-soft); font-style: normal; font-weight: 400; opacity: 0.85; }
+.lb-who small { overflow: hidden; color: var(--dim); white-space: nowrap; text-overflow: ellipsis; }
+.lb-you { padding: 1px 5px; border-radius: 3px; background: var(--accent); color: var(--ink); font-size: 0.75em; font-style: normal; font-weight: 800; letter-spacing: 0.06em; }
+.lb-spark { display: flex; align-items: flex-end; gap: 2px; height: 22px; }
+.lb-spark i { flex: 1; min-height: 1px; border-radius: 1px; background: rgb(var(--rc)); box-shadow: 0 0 4px rgba(var(--rc), 0.5); }
+.lb-spark.off { border-bottom: 1px dashed var(--dim2); opacity: 0.5; }
+.lb-score { color: var(--hi); font-weight: 700; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lb-act { display: flex; justify-content: flex-end; }
+.lb-state { color: var(--dim); font-size: 0.9em; white-space: nowrap; }
+.lb-gap { color: var(--dim2); text-align: center; letter-spacing: 0.3em; }
+.lb-foot { margin: 12px 0 0; color: var(--dim); text-align: center; }
+.lb-row.anon { cursor: default; }
+.lb-row.anon:hover { background: transparent; }
+.lb-anon { color: var(--dim) !important; font-style: italic; }
+.lb-hid { padding: 1px 5px; border: 1px solid var(--dim2); border-radius: 3px; color: var(--dim); font-size: 0.75em; font-style: normal; font-weight: 700; }
