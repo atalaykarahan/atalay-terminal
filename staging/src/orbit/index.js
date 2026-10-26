@@ -632,30 +632,42 @@ function assignOrbits() {
   for (const o of NODES.values()) o.fresh = false;
 }
 
-// Sessions take the spots from the top down and cars from the bottom up, so the two stay apart; whatever parks keeps
-// its spot until it leaves.
+// Sessions take the spots from the top down and cars from the bottom up, so the two stay apart. The spot a chat or a
+// car takes the first time it parks is its own until it ends, like a tab: it comes back there every time it parks
+// again, and nothing else parks there meanwhile.
 const CAR_SLOTS = [6, 7, 4, 5, 2, 3, 0, 1, 13, 14, 15, 16, 17];
+const homeSlot = new Map(); // 's:<session id>' or 'c:<car id>' -> its spot
+const parkKey = (o) => (o.sid ? 's:' + o.sid : 'c:' + o.id);
 function assignParking() {
   for (let i = 0; i < slotOwner.length; i++) {
     const o = slotOwner[i];
     if (o && (o.dying || o.homeKind !== 'park')) slotOwner[i] = null;
   }
+  const live = new Set([...NODES.values(), ...SHIPS.values()].filter((o) => !o.dying).map(parkKey));
+  for (const k of homeSlot.keys()) if (!live.has(k)) homeSlot.delete(k);
+  const reserved = new Set(homeSlot.values());
   for (const o of [...NODES.values(), ...SHIPS.values()]) if (o.homeKind !== 'park' || o.dying) o.slot = -1;
   const sessions = [...NODES.values()]
     .filter((n) => !n.dying && n.homeKind === 'park')
     .sort((a, b) => (a.status === 'waiting' ? 0 : 1) - (b.status === 'waiting' ? 0 : 1) || (a.s.statusSince || 0) - (b.s.statusSince || 0));
   const cars = [...SHIPS.values()].filter((s) => !s.dying && s.homeKind === 'park').sort((a, b) => a.parkedAt - b.parkedAt);
-  const free = (order) => {
-    const i = order.find((k) => !slotOwner[k]);
+  const free = (o, order) => {
+    const mine = homeSlot.get(parkKey(o));
+    if (mine !== undefined && !slotOwner[mine]) return mine;
+    const open = (k) => !slotOwner[k] && !reserved.has(k);
+    const i = order.find(open);
     if (i !== undefined) return i;
-    const j = slotOwner.findIndex((x) => !x);
-    return j < 0 ? slotOwner.length : j;
+    for (let k = 0; ; k++) if (open(k)) return k;
   };
   for (const [list, order] of [[sessions, []], [cars, CAR_SLOTS]]) {
     for (const o of list) {
       if (o.slot >= 0 && slotOwner[o.slot] === o) continue;
-      o.slot = free(order);
+      o.slot = free(o, order);
       slotOwner[o.slot] = o;
+      if (!homeSlot.has(parkKey(o))) {
+        homeSlot.set(parkKey(o), o.slot);
+        reserved.add(o.slot);
+      }
     }
   }
 }
@@ -757,15 +769,26 @@ function syncShips(list) {
     s.el.classList.toggle('idle', !t.running);
     s.el.classList.toggle('parked', kind === 'park');
   }
-  for (const s of SHIPS.values()) {
-    if (seen.has(s.id) || s.dying) continue;
-    s.dying = now;
-    sparks(s.pos, ICE, 18, 80);
-  }
+  for (const s of SHIPS.values()) if (!seen.has(s.id) && !s.dying) explode(s, now);
   assignParking();
   if (hover?.kind === 'ship') refreshTip();
   if (!followedOnce && location.hash === '#car' && SHIPS.size) followedOnce = followShip();
   poke();
+}
+
+// A terminal ended: the car blows up where it is (sparks in its colours, a shockwave) and is gone in a blink.
+function explode(s, now) {
+  s.dying = now;
+  sparks(s.pos, ICE, 44, 260);
+  sparks(s.pos, colorOf('#ffb057'), 30, 170);
+  sparks(s.pos, WHITE, 18, 110);
+  ripple({ pos: s.pos.clone(), scale: s.size / LANE.SIZE }, '#8fd3ff', 70, 650);
+  poke();
+}
+// The app says so the moment End is pressed, before the terminals list catches up.
+function shipGone(id) {
+  const s = SHIPS.get(id);
+  if (s && !s.dying) explode(s, performance.now());
 }
 
 // A ship joins the lane in the middle of the widest gap, never on top of another.
@@ -861,7 +884,7 @@ function updateShips(dt, now) {
         s.base = size;
       }
     }
-    s.grow += ((s.dying ? 0 : 1) - s.grow) * damp(s.dying ? 7 : 3.5, dt);
+    s.grow += ((s.dying ? 0 : 1) - s.grow) * damp(s.dying ? 24 : 3.5, dt);
     s.size = Math.max(0.01, s.base * s.grow);
     s.m.group.position.copy(s.pos);
     s.m.group.scale.setScalar(s.size);
@@ -928,11 +951,19 @@ addEventListener('keydown', (e) => {
 });
 
 // ---------- cinematic camera ----------
-// Like a game's idle camera (GTA's): after a minute with no input on the dashboard, the camera goes from shot to
-// shot on its own, chasing or circling whatever moves (sessions on their orbits, terminal cars) and now and then
-// circling the core. Any input hands the camera back and the view flies home.
-const CINE = { IDLE_MS: 60_000, SHOT_MS: 9000, SHOT_JITTER: 4000 };
+// Like a game's idle camera (GTA's): after five minutes away from the keyboard, the camera goes from shot to shot on
+// its own, following or circling whatever moves (sessions on their orbits, terminal cars) and now and then circling
+// the core. Away means no input anywhere on the Mac (the app reports it; typing in a terminal window counts), not
+// just on the dashboard. Any input hands the camera back and the view flies home. The ◉ button turns it off.
+const CINE = { IDLE_MS: 300_000, SHOT_MS: 9000, SHOT_JITTER: 4000 };
 let lastInput = performance.now(), cine = null;
+let cineOn = (() => {
+  try {
+    return localStorage.getItem('cinematic') !== 'off';
+  } catch {
+    return true;
+  }
+})();
 const cineTag = el('div', 'cine-tag', '◉ cinematic · move the mouse to take over');
 host.parentElement.appendChild(cineTag);
 const _cam = new THREE.Vector3(), _dir = new THREE.Vector3(), _side = new THREE.Vector3();
@@ -945,6 +976,24 @@ function noteInput() {
   resetView();
 }
 for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) addEventListener(type, noteInput, { passive: true, capture: true });
+// The app's word on the last input anywhere on the Mac (seconds ago).
+function systemIdle(sec) {
+  const at = performance.now() - sec * 1000;
+  if (at > lastInput) lastInput = at;
+  if (cine && sec < 3) noteInput();
+}
+function setCinematic(on) {
+  cineOn = on;
+  try {
+    localStorage.setItem('cinematic', on ? 'on' : 'off');
+  } catch {}
+  const b = document.querySelector('#viewctl [data-v="cine"]');
+  if (b) {
+    b.classList.toggle('off', !on);
+    b.title = on ? 'Cinematic camera when you are away (5 min): on · click to turn off' : 'Cinematic camera: off · click to turn on';
+  }
+  if (!on && cine) noteInput();
+}
 
 function subjects() {
   const out = [{ kind: 'core', key: 'core' }];
@@ -966,7 +1015,7 @@ function subjectPos(c) {
   return SHIPS.get(c.key) === c.s && onLane(c.s) ? c.s.pos : null;
 }
 function startCinematic() {
-  if (follow || press || !viewReady) return false;
+  if (!cineOn || follow || press || !viewReady) return false;
   cine = nextShot(performance.now());
   camAnim = null;
   R.hideTip();
@@ -985,23 +1034,27 @@ function stepCinematic(dt, now) {
     p = subjectPos(cine);
     if (!p) return;
   }
+  // Framing: far enough that the subject stays well inside the picture (it was so close a hexagon overflowed it), and
+  // from outside its orbit, so the other sessions pass behind it rather than between it and the camera.
+  const far = cine.kind === 'core' ? 620 : cine.kind === 'car' ? 260 : 360;
   if (cine.style === 'chase') {
-    // behind and above, along the way it moves
+    // behind it along the way it moves, out from the core and above
     if (cine.prev) _dir.subVectors(p, cine.prev);
     if (!cine.prev || _dir.lengthSq() < 1e-6) _dir.set(-p.z, 0, p.x);
     _dir.y = 0;
     _dir.normalize();
-    _side.set(_dir.z, 0, -_dir.x);
-    _cam.copy(p).addScaledVector(_dir, -125).addScaledVector(_side, 35).add(tmp.b.set(0, 55, 0));
+    _side.set(p.x, 0, p.z);
+    if (_side.lengthSq() < 1) _side.set(1, 0, 0);
+    _side.normalize();
+    _cam.copy(p).addScaledVector(_dir, -far * 0.75).addScaledVector(_side, far * 0.5).add(tmp.b.set(0, far * 0.4, 0));
     cine.prev = (cine.prev || new THREE.Vector3()).copy(p);
   } else {
-    cine.ang += dt * 0.16;
-    const r = cine.kind === 'core' ? 470 : 150, h = cine.kind === 'core' ? 230 : 70;
-    _cam.set(p.x + Math.cos(cine.ang) * r, p.y + h, p.z + Math.sin(cine.ang) * r);
+    cine.ang += dt * 0.12;
+    _cam.set(p.x + Math.cos(cine.ang) * far, p.y + far * 0.42, p.z + Math.sin(cine.ang) * far);
   }
-  const k = damp(1.3, dt);
-  controls.target.lerp(p, k);
-  camera.position.lerp(_cam, k);
+  // The aim follows quickly (a fast subject never slips out of the picture), the camera glides.
+  controls.target.lerp(p, damp(3, dt));
+  camera.position.lerp(_cam, damp(1.1, dt));
   poke(600);
 }
 
@@ -1505,6 +1558,7 @@ mm.addEventListener('pointermove', (e) => {
 for (const b of document.querySelectorAll('#viewctl button')) {
   b.addEventListener('click', () => {
     if (b.dataset.v === 'reset') return resetView();
+    if (b.dataset.v === 'cine') return setCinematic(!cineOn);
     const off = camera.position.clone().sub(controls.target);
     off.setLength(clamp(off.length() * (b.dataset.v === 'in' ? 0.7 : 1.4), controls.minDistance, controls.maxDistance));
     flyCamera(controls.target, controls.target.clone().add(off), 420);
@@ -1630,5 +1684,6 @@ function activity(visible, focused) {
   ACT.focused = focused;
   wake();
 }
-window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, terminals: syncShips, follow: followShip, cinematic: startCinematic };
+setCinematic(cineOn);
+window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, terminals: syncShips, terminalGone: shipGone, follow: followShip, cinematic: startCinematic, idle: systemIdle };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);

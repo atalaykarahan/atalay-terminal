@@ -60,9 +60,12 @@ enum Theme {
         "bash": "shell", "agent": "agents", "mcp": "mcp", "plan": "plan",
     ]
 
-    // ANSI palette for the terminals (normal 0-7, bright 8-15), tuned to the brand.
+    // ANSI palette for the terminals (normal 0-7, bright 8-15), tuned to the brand. Through screen Claude only gets
+    // these 16 colours (its colour check reads TERM=screen-256color as 16), and its diff paints whole lines in the
+    // normal red and green. So those two are Claude's own dark diff colours, as iTerm2 shows them, with light text at
+    // 8:1 and 7:1 (the neon green carried it at 1.1:1); used as text, minimum contrast lifts them (TerminalFactory).
     static let ansi: [UInt32] = [
-        0x1A120B, 0xFF4D4D, 0x3DFFA8, 0xFFD23F, 0x5B8CFF, 0xE879F9, 0x00E5FF, 0xF5EBE0,
+        0x1A120B, 0x7A2936, 0x225C2B, 0xFFD23F, 0x5B8CFF, 0xE879F9, 0x00E5FF, 0xF5EBE0,
         0x4D3F33, 0xFF7A7A, 0x7DFFC4, 0xFFE28A, 0x9FB4FF, 0xF0ABFC, 0x6FF2FF, 0xFFFFFF,
     ]
 }

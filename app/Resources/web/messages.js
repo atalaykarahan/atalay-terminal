@@ -4,6 +4,8 @@
 //  · notices: a new message, friend request or new friend pops up at the screen's bottom-right corner for a while,
 //    with a quick reply or accept/decline; clicking it opens the chat. Closed, it's gone. A friend coming online
 //    shows there for a moment too, like on Steam, and so does a new version of the app (a click shows what's new).
+//    Your own progress shows there as well: the daily bonus as a strip, a new level or rank as a takeover of the whole
+//    screen for a few seconds.
 //  · chat: the conversation in its own window, opened mid-screen the first time and dragged anywhere by its header.
 // In the app each part is its own panel (Swift injects __MESSAGES_ROLE__ "notices" or "chat", places and moves the
 // panels); in staging both live in the dashboard page.
@@ -17,7 +19,12 @@ window.Messages = (() => {
   const post = (msg) => native && native.postMessage(msg);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const time = (at) => new Date(at).toTimeString().slice(0, 5);
-  const who = (p) => (p ? `${Social.dot(p.presence)}<span>${esc(Social.handle(p))}</span>` : '');
+  // A friend's level shows next to their name (from the friends list; live events carry only the name).
+  const who = (p) => {
+    if (!p) return '';
+    const xp = p.xp || Social.friend(p.id)?.xp;
+    return `${Social.dot(p.presence)}<span>${esc(Social.handle(p))}</span>${xp ? Xp.badge(xp.level) : ''}`;
+  };
   const PEEK_MS = 12_000;
   const ONLINE_MS = 6000; // "is now online" goes sooner
   // A friend back after less than this offline (a dropped connection, a short sleep) isn't news.
@@ -47,13 +54,15 @@ window.Messages = (() => {
   const notes = NOTICES ? mount('msgbox') : null;
   let peek = null;
   let peekTimer = 0;
-  let later = null; // an update notice waiting for the one on screen
+  const queue = []; // notices waiting for the one on screen (an update, the daily bonus)
 
   function sizeNotes() {
     if (ROLE !== 'notices') return;
     const box = notes.firstElementChild;
-    // Layout size, not the on-screen one: the slide-in animation scales the box while it starts.
-    post(box ? { type: 'layout', w: box.offsetWidth + 16, h: box.offsetHeight + 16 } : { type: 'layout', w: 0, h: 0 });
+    // Layout size, not the on-screen one: the slide-in animation scales the box while it starts. The level-up takeover
+    // has the whole screen (a notice can wait under it).
+    if (takeover) return post({ type: 'layout', w: 1, h: 1, place: 'screen' });
+    post(box ? { type: 'layout', w: box.offsetWidth + 16, h: box.offsetHeight + 16, place: 'corner' } : { type: 'layout', w: 0, h: 0 });
   }
 
   function showPeek(p) {
@@ -63,7 +72,11 @@ window.Messages = (() => {
     notes.innerHTML = peekHTML(p);
     if (again) notes.firstElementChild.classList.remove('in');
     sizeNotes();
-    peekTimer = setTimeout(hidePeek, p.kind === 'online' ? ONLINE_MS : PEEK_MS);
+    if (p.kind === 'xp' && !p.heard) {
+      p.heard = true;
+      Sfx.play('xp');
+    }
+    peekTimer = setTimeout(hidePeek, p.kind === 'online' || p.kind === 'xp' ? ONLINE_MS : PEEK_MS);
   }
 
   function hidePeek() {
@@ -76,11 +89,7 @@ window.Messages = (() => {
       if (peek) return;
       notes.innerHTML = '';
       sizeNotes();
-      if (later) {
-        const p = later;
-        later = null;
-        showPeek(p);
-      }
+      if (queue.length && !takeover) showPeek(queue.shift());
     }, 190);
   }
 
@@ -101,6 +110,12 @@ window.Messages = (() => {
         `<div class="mb peek update in" data-act="update" title="See what's new"><div class="mb-border"></div>` +
         `<div class="mb-head"><span class="mb-tag">UPDATE</span><span class="mb-who"><span>Version ${esc(p.version)} is out</span>` +
         `<small>see what's new ›</small></span></div></div>`
+      );
+    } else if (p.kind === 'xp') {
+      return (
+        `<div class="mb peek xp in" data-act="profile" title="See your profile"><div class="mb-border"></div>` +
+        `<div class="mb-head"><span class="mb-tag">+${p.gained} XP</span><span class="mb-who"><span>Daily bonus</span>` +
+        `<small>welcome back${p.level ? ` · level ${p.level}` : ''}</small></span></div></div>`
       );
     } else if (p.kind === 'online') {
       // One thin strip, no buttons: a click opens the chat. Friends coming online together share it.
@@ -137,6 +152,10 @@ window.Messages = (() => {
         hidePeek();
         // The dashboard shows what's new (in the app, Swift brings its window to the front).
         return APP_ROLE ? post({ type: 'openUpdate' }) : window.Cloud?.openUpdate();
+      }
+      if (act === 'profile') {
+        hidePeek();
+        return APP_ROLE ? post({ type: 'openProfile' }) : window.Cloud?.openMenu('profile');
       }
       if (act === 'open') {
         const id = peekFriend();
@@ -182,8 +201,260 @@ window.Messages = (() => {
   function updateNotice(u) {
     if (!NOTICES || !u || Social.dnd()) return;
     const p = { kind: 'update', version: u.version };
-    if (peek && peek.kind !== 'update') later = p;
+    if (takeover || (peek && peek.kind !== 'update')) queue.push(p);
     else showPeek(p);
+  }
+
+  // ======================= your progress =======================
+  // Yours alone, like in an MMO: the daily bonus slides in as a strip. A new level or rank takes the whole screen over,
+  // as if the app were hacked: the screen glitches, a console types the breach, LEVEL UP decrypts across it and
+  // confetti rains from the top. Keys do nothing for the first moments (in the app, clicks neither); then any key or
+  // click ends it, else it stays long enough to read everything on it: 3 s plus 60 ms a character, at most 10 s
+  // (reading-time rules for notices, e.g. WebAIM's 3 s + 60 ms, Dynatrace's 50 ms a character). Friends aren't told;
+  // they see the new level on your profile. It plays only while the app is in front and not on do not disturb: a level
+  // gained while you look elsewhere waits until you're back.
+  let seenLevel = 0; // the level last seen, so a level-up shows once (and never for the level you start with)
+  try {
+    seenLevel = Number(localStorage.getItem('xpLevel')) || 0;
+  } catch {}
+  // In front: the app tells (focus), staging asks the page.
+  let focused = !APP_ROLE && document.hasFocus() && !document.hidden;
+  let pending = null; // the level-up waiting to play: the highest level, the one before, whether a rank changed
+  let takeover = null; // the one on screen
+
+  function progress(ev) {
+    if (!NOTICES) return;
+    const x = ev.xp;
+    if (x && x.level) {
+      if (seenLevel && x.level > seenLevel) {
+        const from = pending ? pending.from : seenLevel;
+        pending = { level: x.level, from, rankUp: Xp.rank(x.level).name !== Xp.rank(from).name };
+        play();
+      }
+      if (x.level !== seenLevel) {
+        seenLevel = x.level;
+        try {
+          localStorage.setItem('xpLevel', String(seenLevel));
+        } catch {}
+      }
+    }
+    if (ev.reason === 'daily' && ev.gained > 0 && !Social.dnd()) {
+      const p = { kind: 'xp', gained: ev.gained, level: x ? x.level : 0 };
+      if (takeover || (peek && peek.kind !== 'online')) queue.push(p);
+      else showPeek(p);
+    }
+  }
+
+  function setFocus(on) {
+    focused = !!on;
+    if (focused) setTimeout(play, 350);
+  }
+
+  function play() {
+    if (!pending || takeover || !focused || Social.dnd()) return;
+    const c = pending;
+    pending = null;
+    takeover = showTakeover(c);
+    // Only now, with the takeover set, does the panel ask for the whole screen (in the app).
+    sizeNotes();
+  }
+
+  // Keys do nothing while it plays: in the app Swift drops them (never longer than 4 s), here the page does.
+  const swallow = (e) => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+  // After the lock a key ends the takeover (here; in the app Swift catches the key and calls skip).
+  const skipKey = (e) => {
+    swallow(e);
+    if (e.type === 'keydown') skip();
+  };
+  function lockKeys(ms) {
+    if (APP_ROLE) return post({ type: 'lock', ms });
+    for (const t of ['keydown', 'keypress', 'keyup']) addEventListener(t, swallow, true);
+  }
+  function unlockKeys() {
+    if (APP_ROLE) return post({ type: 'lock', ms: 0 });
+    for (const t of ['keydown', 'keypress', 'keyup']) {
+      removeEventListener(t, swallow, true);
+      if (takeover) addEventListener(t, skipKey, true);
+    }
+  }
+  function freeKeys() {
+    if (!APP_ROLE) for (const t of ['keydown', 'keypress', 'keyup']) removeEventListener(t, swallow, true), removeEventListener(t, skipKey, true);
+  }
+
+  // A key or a click once the lock is over: out now instead of waiting.
+  function skip() {
+    if (takeover && takeover.free) takeover.out();
+  }
+
+  const GLYPHS = '!<>-_\\/[]{}=+*^?#$%&@01ABCDEFXZ';
+  // The glitch and the confetti in the app's warm colours (orange, light orange, amber, red, white).
+  const BAR_COLORS = ['248, 128, 8', '255, 176, 87', '255, 210, 63', '255, 77, 77', '255, 255, 255'];
+
+  function showTakeover(c) {
+    const r = Xp.rank(c.level);
+    const word = c.rankUp ? 'RANK UP' : 'LEVEL UP';
+    const article = /^[AEIOU]/.test(r.name) ? 'AN' : 'A';
+    const sub = c.rankUp ? `YOU ARE NOW ${article} ${r.name.toUpperCase()}` : `LEVEL ${c.level}`;
+    const lv = c.rankUp ? `LEVEL ${c.level}` : r.name.toUpperCase();
+    const me = Social.state()?.me;
+    const lines = [
+      '[!] INTRUSION DETECTED',
+      `> operator ${me ? Social.handle(me).toLowerCase() : 'unknown'}`,
+      '> injecting experience ......... OK',
+      c.rankUp ? `> rank ${Xp.rank(c.from).name.toUpperCase()} → ${r.name.toUpperCase()} .... OK` : `> level ${c.from} → ${c.level} .................. OK`,
+      '> ACCESS GRANTED',
+    ];
+    // Time to read it all once it's on screen: every character but the dot leaders.
+    const chars = [word, sub, lv, ...lines].join('').replace(/\.{2,}/g, '').length;
+    const readMs = Math.min(10_000, 3000 + 60 * chars);
+    const lockMs = c.rankUp ? 3500 : 2500;
+    const timers = [];
+    const at = (ms, f) => timers.push(setTimeout(f, ms));
+    const bars = Array.from({ length: 14 }, () => {
+      const color = Math.random() < 0.4 ? r.color : BAR_COLORS[(Math.random() * BAR_COLORS.length) | 0];
+      return `<i style="--l:${(Math.random() * 70 - 10).toFixed(1)}vw;--t:${(Math.random() * 100).toFixed(1)}vh;--w:${(30 + Math.random() * 80).toFixed(1)}vw;` +
+        `--h:${(0.3 + Math.random() * 5).toFixed(2)}vh;--c:rgb(${color})"></i>`;
+    }).join('');
+    const el = document.createElement('div');
+    el.id = 'takeover';
+    el.className = `tk ${c.rankUp ? 'rank' : 'level'} glitch`;
+    el.style.setProperty('--rc', r.color);
+    el.innerHTML =
+      `<div class="tk-veil"></div><div class="tk-noise"></div><canvas class="tk-confetti"></canvas><div class="tk-bars">${bars}</div>` +
+      '<pre class="tk-log"></pre><div class="tk-center">' +
+      (c.rankUp ? Xp.headband(c.level, 'tk-band') : '') +
+      '<div class="tk-title" data-text=""><span></span></div>' +
+      `<div class="tk-sub">${c.rankUp ? `YOU ARE NOW ${article} <b>${esc(r.name.toUpperCase())}</b>` : `LEVEL <b>${c.level}</b>`}</div>` +
+      `<div class="tk-lv">${esc(lv)}</div></div><div class="tk-hint">press any key to continue</div><div class="tk-scan"></div>`;
+    document.body.appendChild(el);
+    const t = { el, timers, free: false, stop: () => {} };
+    lockKeys(lockMs);
+    Sfx.play('glitch');
+
+    // The breach, typed line by line at the top left.
+    const log = el.querySelector('.tk-log');
+    const shown = lines.map((l, i) => (i === 0 ? `<span class="warn">${esc(l)}</span>` : esc(l)));
+    shown.forEach((_, i) => at(90 + i * 120, () => (log.innerHTML = shown.slice(0, i + 1).join('\n') + '<i></i>')));
+
+    // Out: it glitches away, then it's gone (a key or a click after the lock brings this forward).
+    let leaving = false;
+    t.out = () => {
+      if (leaving) return;
+      leaving = true;
+      timers.forEach(clearTimeout);
+      el.classList.add('out');
+      at(500, () => endTakeover(t));
+    };
+
+    // LEVEL UP decrypts from noise and lands; from then on it stays for the reading time.
+    const title = el.querySelector('.tk-title');
+    const span = title.firstElementChild;
+    const t0 = performance.now() + 380;
+    const decrypt = () => {
+      const p = Math.max(0, Math.min(1, (performance.now() - t0) / 560));
+      const fixed = Math.floor(p * word.length);
+      const text = [...word].map((ch, i) => (i < fixed || ch === ' ' ? ch : GLYPHS[(Math.random() * GLYPHS.length) | 0])).join('');
+      span.textContent = text;
+      title.dataset.text = text;
+      if (p < 1) return at(40, decrypt);
+      title.classList.add('on');
+      el.classList.remove('glitch');
+      Sfx.play(c.rankUp ? 'rankup' : 'levelup');
+      el.querySelector('.tk-band')?.classList.add('on');
+      at(160, () => el.querySelector('.tk-sub').classList.add('on'));
+      at(300, () => el.querySelector('.tk-lv').classList.add('on'));
+      // An aftershock halfway through, then out once it could be read.
+      at(readMs / 2, () => el.classList.add('glitch'));
+      at(readMs / 2 + 130, () => el.classList.remove('glitch'));
+      at(readMs, t.out);
+    };
+    at(260, decrypt);
+    at(900, () => (t.stop = confetti(el.querySelector('.tk-confetti'), r.color)));
+    // The lock ends: keys and clicks are back, and any of them ends it.
+    at(lockMs, () => {
+      t.free = true;
+      el.classList.add('free');
+      unlockKeys();
+    });
+    el.addEventListener('mousedown', () => skip());
+    return t;
+  }
+
+  function endTakeover(t) {
+    t.timers.forEach(clearTimeout);
+    t.stop();
+    t.el.remove();
+    unlockKeys();
+    freeKeys();
+    takeover = null;
+    sizeNotes();
+    // Another level-up waiting plays first; notices (the daily bonus) come after the last one.
+    if (queue.length && !peek && !pending) showPeek(queue.shift());
+    setTimeout(play, 600);
+  }
+
+  // Confetti raining from the top of the screen, in the rank's colour and the app's: a few waves, then it falls out
+  // until the takeover ends (stop).
+  function confetti(canvas, rc) {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const g = canvas.getContext('2d');
+    const colors = [`rgb(${rc})`, `rgb(${rc})`, '#f88008', '#ffb057', '#ffd23f', '#ffffff', '#ff4d4d'];
+    const bits = [];
+    const spawn = (n) => {
+      for (let i = 0; i < n; i++) {
+        bits.push({
+          x: Math.random() * innerWidth * dpr, y: -(10 + Math.random() * innerHeight * 0.3) * dpr,
+          vx: (Math.random() - 0.5) * 2.2 * dpr, vy: (2 + Math.random() * 3) * dpr,
+          w: (5 + Math.random() * 6) * dpr, h: (8 + Math.random() * 9) * dpr,
+          a: Math.random() * 6.28, va: (Math.random() - 0.5) * 0.3, sway: Math.random() * 6.28,
+          c: colors[(Math.random() * colors.length) | 0],
+        });
+      }
+    };
+    const waves = [[0, 8], [600, 12], [1700, 16], [3000, 22]]; // when, and one piece per this many pixels of width
+    const start = performance.now();
+    let last = start, wave = 0, raf = 0;
+    const frame = (now) => {
+      // The app's panel grows to the whole screen just as this starts: follow its size.
+      if (canvas.width !== Math.round(innerWidth * dpr) || canvas.height !== Math.round(innerHeight * dpr)) {
+        canvas.width = Math.round(innerWidth * dpr);
+        canvas.height = Math.round(innerHeight * dpr);
+      }
+      const dt = Math.min(3, (now - last) / 16.7);
+      last = now;
+      while (wave < waves.length && now - start >= waves[wave][0]) spawn(Math.round(innerWidth / waves[wave++][1]));
+      g.clearRect(0, 0, canvas.width, canvas.height);
+      for (let i = bits.length - 1; i >= 0; i--) {
+        const b = bits[i];
+        b.vy = Math.min(b.vy + 0.05 * dpr * dt, 7 * dpr);
+        b.sway += 0.08 * dt;
+        b.x += (b.vx + Math.sin(b.sway) * 0.9 * dpr) * dt;
+        b.y += b.vy * dt;
+        b.a += b.va * dt;
+        if (b.y > canvas.height + 20 * dpr) {
+          bits.splice(i, 1);
+          continue;
+        }
+        g.save();
+        g.translate(b.x, b.y);
+        g.rotate(b.a);
+        g.fillStyle = b.c;
+        g.fillRect(-b.w / 2, -b.h / 2, b.w, Math.max(1, b.h * Math.abs(Math.cos(b.a * 1.7))));
+        g.restore();
+      }
+      if (bits.length || wave < waves.length) raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }
+
+  if (NOTICES && !APP_ROLE) {
+    addEventListener('focus', () => setFocus(!document.hidden));
+    addEventListener('blur', () => setFocus(false));
+    document.addEventListener('visibilitychange', () => setFocus(!document.hidden && document.hasFocus()));
   }
 
   function say(msg) {
@@ -209,6 +480,12 @@ window.Messages = (() => {
         return;
       case 'request_gone':
         if (peek && peek.kind === 'request' && peek.request.id === ev.id) hidePeek();
+        return;
+      case 'xp':
+        return progress(ev);
+      case 'status':
+        // Do not disturb ended: a level-up it held plays now.
+        if (ev.status !== 'dnd') play();
         return;
       case 'presence': {
         if (ev.presence === 'offline') return void offlineAt.set(ev.id, Date.now());
@@ -518,10 +795,13 @@ window.Messages = (() => {
       open: (id) => open(id),
       showing: (id) => (showing = id),
       update: (u) => updateNotice(u),
+      xp: (x) => progress({ xp: x }),
+      focus: (on) => setFocus(on),
+      skip: () => skip(),
     };
     Social.load();
     post({ type: 'ready' });
   }
 
-  return { open, close, canChat: CHAT, peek: () => peek, isOpen: () => isOpen, update: updateNotice };
+  return { open, close, canChat: CHAT, peek: () => peek, isOpen: () => isOpen, update: updateNotice, progress, focus: setFocus };
 })();

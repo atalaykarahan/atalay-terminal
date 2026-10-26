@@ -72,22 +72,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installMonitors() {
-        // Three-finger click anywhere in the app opens the shortcut pie at the pointer. With two-finger
+        // While the level-up takeover plays, keys do nothing, as if the app were hacked for a moment (MessagePanel);
+        // once its lock is over, a key ends it.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp], handler: { event in
+            MessagePanel.holds(event) ? nil : event
+        }) { monitors.append(m) }
+
+        // Four-finger click anywhere in the app opens the shortcut pie at the pointer (three fingers are taken: many
+        // people drag or scroll with them, and each such drag opened the pie). With two-finger
         // secondary click on, macOS delivers it as a right click, so that is caught before any context menu.
         if let m = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
-            guard Trackpad.threeFingersDown, let self else { return event }
+            guard Trackpad.fourFingersDown, let self else { return event }
             self.controller.overlay.showShortcuts(at: NSEvent.mouseLocation)
             return nil
         }) { monitors.append(m) }
 
-        // Shift+Return inserts a newline in Claude Code (ESC CR), unless the running program
-        // enabled the kitty keyboard protocol, in which case SwiftTerm encodes the key itself.
+        // The mouse wheel over a terminal goes to the program in front when that is Claude (see ChatTerminalView).
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { event in
+            guard let hit = event.window?.contentView?.hitTest(event.locationInWindow),
+                  let tv = sequence(first: hit, next: { $0.superview }).first(where: { $0 is ChatTerminalView }) as? ChatTerminalView,
+                  tv.wheelGoesToProgram() else { return event }
+            tv.allowMouseReporting = true
+            DispatchQueue.main.async { tv.allowMouseReporting = false }
+            return event
+        }) { monitors.append(m) }
+
+        // Fn+Control with an arrow (or F, C, R) tiles a chat window like macOS does, which it doesn't for windows
+        // pinned above the dashboard. On Apple keyboards Fn turns the arrows into Home/End/Page Up/Page Down.
         if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
-            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard event.keyCode == 36 || event.keyCode == 76, mods == .shift,
-                  let tv = event.window?.firstResponder as? ChatTerminalView,
+            if MessagePanel.holds(event) { return nil }
+            let mods = event.modifierFlags.intersection([.control, .option, .command, .shift])
+            guard mods == .control, CGEventSource.flagsState(.combinedSessionState).contains(.maskSecondaryFn),
+                  [123, 124, 125, 126, 115, 119, 116, 121, 3, 8, 15].contains(event.keyCode),
+                  let chat = event.window?.delegate as? ChatWindowController else { return event }
+            chat.tile(key: event.keyCode)
+            return nil
+        }) { monitors.append(m) }
+
+        // Editing keys the Mac way, in Claude's prompt and the shell's line: Shift/Option+Return a new line (ESC CR),
+        // Option+Delete deletes a word back, Option+fn+Delete a word ahead, Option+←/→ jump a word. Option types
+        // characters otherwise, so these go as Meta by hand. Not when the program enabled the kitty keyboard
+        // protocol: SwiftTerm encodes keys itself then.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { event in
+            if MessagePanel.holds(event) { return nil }
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
+            guard mods == .shift || mods == .option, let tv = event.window?.firstResponder as? ChatTerminalView,
                   tv.keyboardEnhancementFlags.isEmpty else { return event }
-            tv.send(data: [0x1B, 0x0D][...])
+            let bytes: [UInt8]
+            switch (event.keyCode, mods == .option) {
+            case (36, _), (76, _): bytes = [0x1B, 0x0D]
+            case (51, true): bytes = [0x1B, 0x7F]
+            case (117, true): bytes = [0x1B, 0x64]
+            case (123, true): bytes = [0x1B, 0x62]
+            case (124, true): bytes = [0x1B, 0x66]
+            default: return event
+            }
+            tv.send(data: bytes[...])
             return nil
         }) { monitors.append(m) }
     }

@@ -5,18 +5,26 @@ import AppKit
 /// keeps working: on the next launch the windows attach again (MainWindowController.restoreSessions).
 enum Detached {
     static let screen = "/usr/bin/screen"
-    /// A development run (`./dev.sh`, unbundled) keeps its own sessions, so it never attaches to or ends the installed
-    /// app's chats while both are open.
-    static let prefix = Bundle.main.bundleIdentifier == nil ? "atld-" : "atl-"
+    /// Each build keeps its own sessions, so it never attaches to or ends another's chats while both are open: the
+    /// installed app `atl-`, the staging build (`STAGING=1 ./build-app.sh`) `atls-`, a development run (`./dev.sh`,
+    /// unbundled) `atld-`.
+    static let prefix: String = {
+        guard let id = Bundle.main.bundleIdentifier else { return "atld-" }
+        return id.hasSuffix(".staging") ? "atls-" : "atl-"
+    }()
+
+    /// The prefixes of every build, for finding a session another build of the app runs (to mirror it).
+    static let allPrefixes = ["atl-", "atls-", "atld-"]
 
     static var available: Bool { FileManager.default.isExecutableFile(atPath: screen) }
 
-    /// Shared by the session and the display attached to it.
+    /// Shared by the session and the display attached to it. Each build has its own, so a newer build's settings never
+    /// reach the installed app's sessions.
     static let rcPath: String = {
         let base = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: HOME + "/Library/Application Support")).appendingPathComponent("atalay-terminal")
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        let url = base.appendingPathComponent("screenrc")
+        let url = base.appendingPathComponent(prefix == "atl-" ? "screenrc" : "screenrc-" + prefix.dropLast())
         let rc = """
         # Written by Atalay's Terminal for its chat sessions. The command key is Ctrl-^ so Ctrl-A reaches Claude.
         startup_message off
@@ -49,7 +57,12 @@ enum Detached {
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: screen)
-            p.arguments = ["-c", rc, "-U", "-dmS", name, shell] + shellArgs
+            // The shell starts once the session has its window's size, at the top. screen starts a session at 80×24,
+            // and growing it to the window's size moves the cursor down by the rows it adds, so a shell started there
+            // drew its prompt mid-window: wait for the resize, then home the cursor.
+            let waitForSize = "i=0; while [ \"$(stty size 2>/dev/null)\" = '24 80' ] && [ $i -lt 30 ]; do sleep 0.05; i=$((i+1)); done; "
+                + "printf '\\033[H\\033[2J'; exec \"$@\""
+            p.arguments = ["-c", rc, "-U", "-dmS", name, "/bin/sh", "-c", waitForSize, "sh", shell] + shellArgs
             p.currentDirectoryURL = URL(fileURLWithPath: cwd)
             p.environment = env
             var ok = false
@@ -75,9 +88,47 @@ enum Detached {
         try? p.run()
     }
 
+    // MARK: history across restarts
+
+    /// A window that attaches to a running session after the app restarted (an update, a quit) only gets what screen
+    /// repaints: the rows on screen. So on quit each window's scrollback is kept here, and the new window takes it
+    /// back before it attaches. (screen's own copy of the history, `hardcopy -h`, mangles every character past
+    /// Latin-1: ğ, ş, box drawing, Claude's symbols.)
+    private static let historyDir: URL = {
+        let dir = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: HOME + "/Library/Application Support")).appendingPathComponent("atalay-terminal/history")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    static func saveHistory(_ name: String, text: String, rows: Int) {
+        let url = historyDir.appendingPathComponent(name + ".txt")
+        try? ("\(rows)\n" + text).write(to: url, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// The kept scrollback (without the rows that were on screen, which screen repaints), once: the file goes.
+    static func takeHistory(_ name: String) -> [String] {
+        let url = historyDir.appendingPathComponent(name + ".txt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        var lines = text.components(separatedBy: "\n")
+        guard let rows = Int(lines.removeFirst()) else { return [] }
+        lines = lines.map { String($0.reversed().drop(while: { $0 == " " }).reversed()) }
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        lines = Array(lines.dropLast(rows))
+        while lines.first?.isEmpty == true { lines.removeFirst() }
+        return Array(lines.suffix(10_000))
+    }
+
+    static func forgetHistory(_ name: String) {
+        try? FileManager.default.removeItem(at: historyDir.appendingPathComponent(name + ".txt"))
+    }
+
     /// Ends the session: screen closes it, then the shell and everything in it get a hangup. screen alone left
     /// the shell running (login started it), an orphan holding a pty after every ended chat.
     static func quit(_ name: String) {
+        forgetHistory(name)
         let shell = shellPid(name)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: screen)
@@ -98,11 +149,12 @@ enum Detached {
 
     // MARK: processes (libproc, no `ps`)
 
-    /// The session name when `pid` is the screen daemon of one of our sessions.
-    private static func daemonName(_ pid: Int32) -> String? {
-        guard Proc.name(pid) == "screen", let args = Proc.arguments(pid), let i = args.firstIndex(of: "-dmS"),
-              i + 1 < args.count, args[i + 1].hasPrefix(prefix) else { return nil }
-        return args[i + 1]
+    /// The session name when `pid` is the screen daemon of one of our sessions (`anyBuild`: of any build's).
+    private static func daemonName(_ pid: Int32, anyBuild: Bool = false) -> String? {
+        guard Proc.name(pid) == "screen", let args = Proc.arguments(pid), let i = args.firstIndex(of: "-dmS"), i + 1 < args.count
+        else { return nil }
+        let name = args[i + 1]
+        return (anyBuild ? allPrefixes : [prefix]).contains(where: name.hasPrefix) ? name : nil
     }
 
     private static let shells: Set<String> = ["zsh", "bash", "fish", "sh", "ksh", "tcsh", "csh"]
@@ -127,9 +179,9 @@ enum Detached {
         return nil
     }
 
-    /// The shell of a named session (maps live sessions to their window).
+    /// The shell of a named session (maps live sessions to their window), a mirrored one's too.
     static func shellPid(_ name: String) -> Int32? {
-        Proc.all().first(where: { daemonName($0) == name }).flatMap(shellProcess(under:))
+        Proc.all().first(where: { daemonName($0, anyBuild: true) == name }).flatMap(shellProcess(under:))
     }
 
     struct RunningSession {
@@ -161,11 +213,11 @@ enum Detached {
         return out
     }
 
-    /// Name of the session that hosts this process, if any.
-    static func sessionName(hosting pid: Int32) -> String? {
+    /// Name of the session that hosts this process, if any (`anyBuild`: a session of another build too).
+    static func sessionName(hosting pid: Int32, anyBuild: Bool = false) -> String? {
         var cur = pid
         for _ in 0..<8 {
-            if let n = daemonName(cur) { return n }
+            if let n = daemonName(cur, anyBuild: anyBuild) { return n }
             guard let parent = Proc.parent(cur), parent > 1 else { return nil }
             cur = parent
         }

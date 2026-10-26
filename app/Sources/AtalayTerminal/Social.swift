@@ -124,7 +124,7 @@ final class Social {
     }
 
     /// Seconds since the last input on this Mac (IOHIDSystem's HIDIdleTime, in nanoseconds).
-    private static func idleSeconds() -> Double {
+    static func idleSeconds() -> Double {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOHIDSystem"))
         defer { IOObjectRelease(service) }
         guard service != 0,

@@ -11,3 +11,20 @@
 
 .cnt { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--ink); font-size: 0.82em; font-style: normal; font-weight: 700; line-height: 1; }
 .cnt.hot { background: var(--warn); color: #fff; box-shadow: 0 0 10px rgba(255, 46, 99, 0.6); }
+
+/* ===== levels (xp.js): "Lv 23" next to names, and a rank's headband ===== */
+.lvb { display: inline-flex; align-items: center; flex: none; height: 15px; padding: 0 5px; border: 1px solid rgba(var(--rc), 0.7); border-radius: 3px; background: rgba(var(--rc), 0.13); color: rgb(var(--rc)); font-size: 0.78em; font-style: normal; font-weight: 700; letter-spacing: 0.04em; line-height: 1; text-shadow: 0 0 8px rgba(var(--rc), 0.55); white-space: nowrap; vertical-align: middle; }
+.lvb[data-act] { cursor: pointer; }
+.lvb[data-act]:hover { background: rgba(var(--rc), 0.3); }
+
+.hb { display: block; width: 84px; height: auto; overflow: visible; filter: drop-shadow(0 0 10px rgba(var(--rc), 0.45)); }
+.hb .hb-cloth, .hb .hb-tail { fill: rgb(var(--rc)); }
+.hb .hb-tail { opacity: 0.7; }
+.hb .hb-fold { fill: rgba(0, 0, 0, 0.24); }
+.hb .hb-seam { fill: none; stroke: rgba(255, 255, 255, 0.3); stroke-width: 0.8; stroke-dasharray: 3 2.5; }
+.hb .hb-plate { fill: #aeb8c3; stroke: #4b545e; stroke-width: 1.5; }
+.hb .hb-hi { fill: rgba(255, 255, 255, 0.45); }
+.hb .hb-lo { fill: rgba(0, 0, 0, 0.14); }
+.hb .hb-sheen { fill: rgba(255, 255, 255, 0.14); }
+.hb .hb-bevel { fill: none; stroke: rgba(255, 255, 255, 0.5); stroke-width: 0.8; }
+.hb .hb-rivets { fill: #6c7681; }

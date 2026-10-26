@@ -46,7 +46,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         buildLayout()
         wireEngine()
         observeVisibility()
-        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.pushTerminals() } }
+        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                // A Claude session at work is work (Activity, for XP); so is a busy job in a terminal (pushTerminals).
+                if self?.briefs.values.contains(where: { $0.live && $0.status == "busy" }) == true { Activity.work() }
+                self?.pushTerminals()
+                // How long since the last input anywhere on the Mac: the orbit's cinematic camera waits for five
+                // minutes of it, and typing in a terminal window counts.
+                self?.radar.push("idle", String(format: "%.1f", Social.idleSeconds()))
+            }
+        }
         t.tolerance = 0.5
         RunLoop.main.add(t, forMode: .common)
     }
@@ -96,16 +105,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         ])
         radar.onMessage = { [weak self] in self?.handleRadar($0) }
         Cloud.shared.onChange = { [weak self] _ in self?.pushCloud() }
-        // Friends and messages: the dashboard (menu, badges) and both message panels hear every live event.
+        // Friends and messages: the dashboard (menu, badges) and both message panels hear every live event. Your own
+        // XP changing (the daily bonus, a new level) also updates what Cloud knows, so the top bar shows it at once.
         Social.shared.onEvent = { [weak self] json in
             self?.radar.push("social", json)
             MessagePanel.notices.push(json)
             MessagePanel.chat.push(json)
+            if json.contains(#""type":"xp""#) { Cloud.shared.apply(xpEvent: json) }
         }
         // The "update available" notice was clicked: the dashboard in front, on its "what's new" screen.
         MessagePanel.onOpenUpdate = { [weak self] in
             self?.showDashboard()
             self?.radar.push("openUpdate", "null")
+        }
+        // The daily bonus notice was clicked: the dashboard in front, on your profile.
+        MessagePanel.onOpenProfile = { [weak self] in
+            self?.showDashboard()
+            self?.radar.push("openProfile", "null")
         }
         if UserDefaults.standard.bool(forKey: "sidebarHidden") { side.isHidden = true }
     }
@@ -130,6 +146,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func handleRadar(_ msg: [String: Any]) {
         switch msg["type"] as? String {
         case "ready":
+            // A reloaded page has no menu open.
+            for c in chats.values { c.stepBack() }
             engine.requestInit()
             lastVisibility = ""
             dashboardVisibilityChanged()
@@ -140,6 +158,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
         case "openTerminal": if let id = msg["id"] as? String { chats[id]?.show() }
+        // A menu (friends, settings, an update) opened or closed on the dashboard.
+        case "modal": for c in chats.values { msg["open"] as? Bool == true ? c.stepAside() : c.stepBack() }
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
         default: break
         }
@@ -158,11 +178,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let running = Detached.runningSessions(registry: registry)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                // Chats come back hidden (the dashboard shows them); a terminal without Claude has no card there,
-                // so its window comes back on screen.
+                // Everything comes back hidden, so a launch doesn't throw windows on screen: chats are hexagons on the
+                // orbit and in the sidebar, terminals flying (or parked) cars, and a click on one opens its window.
                 for s in running where !self.chats.values.contains(where: { $0.detached?.name == s.name }) {
                     self.openWindow(cwd: s.cwd, claudeArgs: s.claude ? [] : nil, sessionId: s.sessionId, title: s.title,
-                                    detached: DetachedLink(name: s.name), show: !s.claude)
+                                    detached: DetachedLink(name: s.name), show: false, restored: true)
                 }
             }
         }
@@ -239,6 +259,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 if let prev = terminalCPU[shell], now > prev.at, ns >= prev.ns {
                     cpu = Double(ns - prev.ns) / ((now - prev.at) * 1e9) * 100
                 }
+                // A build, tests, a dev server recompiling: work (Activity). An idle dev server isn't.
+                if cpu >= 5 { Activity.work() }
                 terminalCPU[shell] = (ns, now)
                 measured.insert(shell)
             }
@@ -366,13 +388,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             openWindow(cwd: cwd, claudeArgs: [], sessionId: sid, title: title, detached: DetachedLink(name: name))
             return
         }
+        // Running in another Atalay's Terminal (the installed app and the staging build side by side): a mirror here,
+        // a second screen on the same chat. Both windows show it live and type into the one Claude; closing the mirror
+        // leaves the chat running there.
+        if let name = Detached.sessionName(hosting: pid, anyBuild: true) {
+            if let c = chats.values.first(where: { $0.detached?.name == name }) { return c.show() }
+            openWindow(cwd: cwd, claudeArgs: [], sessionId: sid, title: "⧉ " + title, detached: DetachedLink(name: name), mirror: true)
+            return
+        }
         // The conversation is running in another terminal (e.g. iTerm2).
         let busy = b.status == "busy"
         var buttons = ["Open a Copy", "Cancel"]
         if !busy { buttons.insert("Move It Here", at: 0) }
         let r = ask("“\(clip(title, 60))” is open in another terminal",
-                    busy ? "It's working right now, so it can't be moved. Opening a copy duplicates the conversation here; both continue separately."
-                         : "Moving it closes Claude in the other terminal and continues the conversation in a window here. A copy lets both continue separately.",
+                    (busy ? "It's working right now, so it can't be moved. " : "Moving it closes Claude in the other terminal and continues the conversation in a window here. ")
+                        + "A copy is a separate conversation from this point on: what you write in one doesn't reach the other.",
                     buttons)
         // A copy of a Claude running in iTerm2 ends that original when it ends.
         let copied = ITerm.tab(of: pid).map { ITermOrigin(tty: $0, claude: pid) }
@@ -421,9 +451,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @discardableResult
     private func openWindow(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String,
-                            detached: DetachedLink?, attach: Bool = true, show: Bool = true) -> ChatWindowController {
+                            detached: DetachedLink?, attach: Bool = true, show: Bool = true, mirror: Bool = false,
+                            restored: Bool = false) -> ChatWindowController {
         let c = ChatWindowController(cwd: cwd, claudeArgs: claudeArgs, sessionId: sessionId, title: title,
-                                     fontSize: fontSize, frame: nextChatFrame(), manager: self, detached: detached)
+                                     fontSize: fontSize, frame: nextChatFrame(), manager: self, detached: detached, mirror: mirror)
+        c.takesHistory = restored
         chats[c.id] = c
         if let sessionId, let b = briefs[sessionId] { c.apply(b) } else { c.apply(nil) }
         if show { c.show() }
@@ -438,6 +470,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let k = CGFloat(cascade % 6) - 2.5
         cascade += 1
         return NSRect(x: base.midX - w / 2 + k * 28, y: base.midY - h / 2 - k * 24, width: w, height: h)
+    }
+
+    /// A terminal ended with its End button: its car explodes on the orbit now, not at the next terminals update.
+    func terminalEnding(_ id: String) {
+        radar.push("terminalGone", "\"\(id)\"")
     }
 
     func removeChat(_ id: String) {
@@ -477,7 +514,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     var runningChatCount: Int { chats.values.filter { !$0.hud.exited && $0.detached == nil }.count }
 
     func terminateAll() {
-        for c in chats.values { c.terminal.terminate() }
+        for c in chats.values {
+            c.saveHistory()
+            c.terminal.terminate()
+        }
     }
 
     private func takeOver(pid: Int32, then: @escaping () -> Void, failed: @escaping () -> Void) {

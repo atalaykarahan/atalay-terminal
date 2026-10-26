@@ -73,6 +73,14 @@ enum Proc {
     }
 
     /// Short executable name (p_comm), e.g. "screen".
+    /// The process group in front on `pid`'s terminal: the shell's foreground job, or the shell itself.
+    static func foregroundGroup(_ pid: Int32) -> Int32? {
+        var bsd = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, size) == size, bsd.e_tpgid > 0 else { return nil }
+        return Int32(bsd.e_tpgid)
+    }
+
     static func name(_ pid: Int32) -> String? {
         var buf = [CChar](repeating: 0, count: 64)
         guard proc_name(pid, &buf, UInt32(buf.count)) > 0 else { return nil }

@@ -14,8 +14,8 @@ struct Release: Codable, Equatable {
     let notes: String
 }
 
-/// This Mac's identity for the API: SHA-256 of its hardware UUID (IOPlatformUUID) with an app-specific salt. It stays
-/// the same when the app is reinstalled or the disk is erased, and it reveals nothing about the hardware itself.
+/// Which Mac an account belongs to: SHA-256 of its hardware UUID (IOPlatformUUID) with an app-specific salt, so it
+/// reveals nothing about the hardware. It signs nobody in (other software can read the UUID); the token does.
 enum DeviceID {
     static let hash: String = {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
@@ -37,6 +37,29 @@ enum DeviceID {
 final class Cloud {
     static let shared = Cloud()
 
+    /// Your level and active time as the API counts them (api/src/xp.ts); the pages show them as they are.
+    struct XP: Codable, Equatable {
+        let level: Int
+        let rank: String
+        /// Total XP, where this level started and where the next one starts (nil at the last level).
+        let xp: Int
+        let from: Int
+        let to: Int?
+        /// Active seconds today, and how many more of them count double.
+        let today: Int
+        let rested: Int
+        /// Days this week with 30+ active minutes, the goal, full weeks in a row before this one, the XP bonus (%).
+        let week: Int
+        let goal: Int
+        let streak: Int
+        let bonus: Int
+        /// Active seconds ever; whether friends see the active time.
+        let total: Int
+        let show: Bool
+        /// Active seconds on each of the last 7 days, today last.
+        let days: [Int]?
+    }
+
     struct State: Equatable {
         var reachable = false
         /// Nil until the API answered; false means the user still has to pick a hacker name.
@@ -52,6 +75,7 @@ final class Cloud {
         var updateError: String?
         /// Why the API refused a name picked offline ("name_full", …), for the page to show once.
         var nameError: String?
+        var xp: XP?
     }
 
     /// What became of a name the user picked.
@@ -62,12 +86,18 @@ final class Cloud {
         var s = State()
         s.hackerName = UserDefaults.standard.string(forKey: "pendingHackerName") ?? UserDefaults.standard.string(forKey: "hackerName")
         s.tag = UserDefaults.standard.object(forKey: "hackerTag") as? Int
+        s.xp = UserDefaults.standard.data(forKey: "xp").flatMap { try? JSONDecoder().decode(XP.self, from: $0) }
         return s
     }() {
         didSet {
             guard state != oldValue else { return }
             if state.hackerName != oldValue.hackerName { UserDefaults.standard.set(state.hackerName, forKey: "hackerName") }
             if state.tag != oldValue.tag { UserDefaults.standard.set(state.tag, forKey: "hackerTag") }
+            // Your XP: kept for an offline launch, and the notices panel plays the fanfare when the level went up.
+            if state.xp != oldValue.xp, let x = state.xp {
+                UserDefaults.standard.set(try? JSONEncoder().encode(x), forKey: "xp")
+                MessagePanel.notices.xp(x)
+            }
             onChange?(state)
             Social.shared.sync(state)
             // A build newer than the one on offer before (or the first one this launch): the "update available" notice.
@@ -137,8 +167,8 @@ final class Cloud {
         }
     }
 
-    /// Every minute, at launch and when the network returns. Signed in: a heartbeat. Without a token (first launch,
-    /// reinstall, erased disk, launched offline): ask whether this Mac is known.
+    /// Every minute, at launch and when the network returns. Signed in: a heartbeat. Without a token (first launch, a
+    /// lost token, launched offline): ask the API, which no longer recognises a Mac by its hash, so the user picks a name.
     func beat() async {
         guard !beating else { return }
         beating = true
@@ -146,11 +176,12 @@ final class Cloud {
         if let token { await heartbeat(token) } else { await identify() }
     }
 
-    /// Keeps this Mac online, picks up updates and sends a name picked offline.
+    /// Keeps this Mac online, says whether its user is working (XP), picks up updates and sends a name picked offline.
     private func heartbeat(_ token: String) async {
-        struct Answer: Decodable { let hackerName: String; let tag: Int; let online: Int; let update: Release? }
+        struct Answer: Decodable { let hackerName: String; let tag: Int; let online: Int; let update: Release?; let xp: XP? }
+        let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60]
         do {
-            let a: Answer = try await call("POST", "v1/heartbeat", body: client, token: token)
+            let a: Answer = try await call("POST", "v1/heartbeat", body: client.merging(work) { $1 }, token: token)
             var name = a.hackerName, tag = a.tag
             if let wanted = pendingName {
                 switch await send(name: wanted, token: token) {
@@ -173,10 +204,11 @@ final class Cloud {
             s.tag = tag
             s.online = a.online
             s.update = build > 0 ? a.update : nil
+            s.xp = a.xp ?? s.xp
             state = s
             if installUpdatesRightAway, state.update != nil { installUpdate() }
         } catch Failure.status(401, _) {
-            // Another install of this Mac identified itself and got a new token.
+            // The token isn't valid anymore: start over.
             self.token = nil
             await identify()
         } catch {
@@ -304,6 +336,13 @@ final class Cloud {
         }
     }
 
+    /// A live event with your XP (the daily bonus, a new level): the same state a heartbeat brings, now.
+    func apply(xpEvent json: String) {
+        struct Event: Decodable { let type: String; let xp: XP? }
+        guard let e = try? JSONDecoder().decode(Event.self, from: Data(json.utf8)), e.type == "xp", let x = e.xp else { return }
+        state.xp = x
+    }
+
     // MARK: friends and messages
 
     /// A one-use ticket for the live socket (it can't carry the token in a header from every client).
@@ -378,6 +417,7 @@ extension Cloud {
             "online": s.online, "version": version, "build": build,
             "update": s.update.map { ["version": $0.version, "build": $0.build, "notes": $0.notes] as [String: Any] } ?? NSNull(),
             "updating": s.updating ?? NSNull(), "updateError": s.updateError ?? NSNull(), "nameError": s.nameError ?? NSNull(),
+            "xp": s.xp.flatMap { try? JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) } ?? NSNull(),
         ]
     }
 }
@@ -404,7 +444,7 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
             case "social":
                 // Only the friends and messages endpoints; the page never reaches anything else with the token.
                 let path = body["path"] as? String ?? ""
-                guard path == "v1/me/status" || ["v1/social", "v1/friends", "v1/messages"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+                guard path == "v1/me/status" || path == "v1/me/activity" || ["v1/social", "v1/friends", "v1/messages"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
                       !path.contains("..") else {
                     replyHandler(["error": "bad_path"], nil)
                     return

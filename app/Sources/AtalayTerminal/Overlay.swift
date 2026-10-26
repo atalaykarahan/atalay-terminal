@@ -182,7 +182,7 @@ final class OverlayController: NSObject, WKScriptMessageHandlerWithReply, WKNavi
 
     var isVisible: Bool { panel.isVisible }
 
-    /// Pie menu centred on a screen point (three-finger click).
+    /// Pie menu centred on a screen point (four-finger click).
     func showShortcuts(at point: NSPoint) {
         let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
         let f = screen.frame

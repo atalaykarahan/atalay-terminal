@@ -1,7 +1,9 @@
 // Draws the 1024px app icon: Atalay's logo (tools/icon-logo.png) centred on a dark, starry squircle with a soft glow.
-// The logo file has empty space around the mark, so it is cropped to its visible pixels first.
-// Usage: swift tools/make-icon.swift tools/icon-logo.png out.png
+// The logo file has empty space around the mark, so it is cropped to its visible pixels first. The staging build's
+// icon has a cyan mark and a yellow STAGING sash, so it never passes for the installed app.
+// Usage: swift tools/make-icon.swift tools/icon-logo.png out.png [staging]
 import CoreGraphics
+import CoreText
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -11,11 +13,13 @@ func rgb(_ hex: UInt32, _ a: CGFloat = 1) -> CGColor {
 }
 
 let args = CommandLine.arguments
-guard args.count == 3, let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil),
+let staging = args.count == 4 && args[3] == "staging"
+guard args.count == 3 || staging, let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil),
       let logo = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-    FileHandle.standardError.write(Data("usage: swift tools/make-icon.swift logo.png out.png\n".utf8))
+    FileHandle.standardError.write(Data("usage: swift tools/make-icon.swift logo.png out.png [staging]\n".utf8))
     exit(2)
 }
+let accent: UInt32 = staging ? 0x00E5FF : 0xF88008
 
 // Bounding box of the logo's visible pixels (rows top-down, as `cropping(to:)` expects).
 let lw = logo.width, lh = logo.height
@@ -30,7 +34,20 @@ for y in 0..<lh {
         minY = min(minY, y); maxY = max(maxY, y)
     }
 }
-let mark = logo.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1))!
+let cropped = logo.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1))!
+
+// The mark in one colour, keeping its shape.
+func tinted(_ image: CGImage, _ hex: UInt32) -> CGImage {
+    let r = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.draw(image, in: r)
+    ctx.setBlendMode(.sourceIn)
+    ctx.setFillColor(rgb(hex))
+    ctx.fill(r)
+    return ctx.makeImage()!
+}
+let mark = staging ? tinted(cropped, accent) : cropped
 
 let size = 1024
 let cg = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
@@ -61,7 +78,7 @@ func rnd() -> CGFloat {
     seed = seed &* 6364136223846793005 &+ 1442695040888963407
     return CGFloat(seed >> 33) / CGFloat(UInt64(1) << 31)
 }
-for (center, hex, radius, alpha) in [(CGPoint(x: 290, y: 730), 0x9D6BFF, 400.0, 0.16), (CGPoint(x: 740, y: 300), 0xF88008, 430.0, 0.13)]
+for (center, hex, radius, alpha) in [(CGPoint(x: 290, y: 730), 0x9D6BFF, 400.0, 0.16), (CGPoint(x: 740, y: 300), accent, 430.0, 0.13)]
     as [(CGPoint, UInt32, CGFloat, CGFloat)] {
     let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [rgb(hex, alpha), rgb(hex, 0)] as CFArray, locations: [0, 1])!
     cg.drawRadialGradient(g, startCenter: center, startRadius: 0, endCenter: center, endRadius: radius, options: [])
@@ -106,7 +123,7 @@ cg.restoreGState()
 // A thin inner rim catches the light, like the dashboard's glass panels.
 cg.addPath(CGPath(roundedRect: CGRect(x: inset + 3, y: inset + 3, width: 1024 - 2 * inset - 6, height: 1024 - 2 * inset - 6),
                   cornerWidth: 183, cornerHeight: 183, transform: nil))
-cg.setStrokeColor(rgb(0xF88008, 0.22))
+cg.setStrokeColor(rgb(accent, 0.22))
 cg.setLineWidth(4)
 cg.strokePath()
 
@@ -114,9 +131,30 @@ cg.strokePath()
 let box: CGFloat = 824 * 0.62
 let scale = min(box / CGFloat(mark.width), box / CGFloat(mark.height))
 let mw = CGFloat(mark.width) * scale, mh = CGFloat(mark.height) * scale
-cg.setShadow(offset: .zero, blur: 42, color: rgb(0xF88008, 0.55))
+cg.setShadow(offset: .zero, blur: 42, color: rgb(accent, 0.55))
 cg.interpolationQuality = .high
 cg.draw(mark, in: CGRect(x: c.x - mw / 2, y: c.y - mh / 2, width: mw, height: mh))
+
+// Staging: a yellow sash across the top-right corner.
+if staging {
+    cg.saveGState()
+    cg.translateBy(x: 1024 - inset - 140, y: 1024 - inset - 140)
+    cg.rotate(by: -.pi / 4)
+    cg.setShadow(offset: CGSize(width: 0, height: -6), blur: 18, color: rgb(0x000000, 0.5))
+    cg.setFillColor(rgb(0xFFD23F))
+    cg.fill(CGRect(x: -420, y: -62, width: 840, height: 124))
+    cg.setShadow(offset: .zero, blur: 0, color: nil)
+    let attrs: [NSAttributedString.Key: Any] = [
+        NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName("Menlo-Bold" as CFString, 64, nil),
+        NSAttributedString.Key(kCTForegroundColorAttributeName as String): rgb(0x1A0D00),
+        NSAttributedString.Key(kCTKernAttributeName as String): 5,
+    ]
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: "STAGING", attributes: attrs))
+    let b = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
+    cg.textPosition = CGPoint(x: -b.width / 2 - b.minX, y: -b.height / 2 - b.minY)
+    CTLineDraw(line, cg)
+    cg.restoreGState()
+}
 cg.restoreGState()
 
 let out = URL(fileURLWithPath: args[2])

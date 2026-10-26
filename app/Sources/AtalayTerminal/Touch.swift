@@ -1,13 +1,13 @@
 import AppKit
 
 /// Finger count on the trackpad, read through the private MultitouchSupport framework (the same
-/// technique MiddleClick uses). Only used to recognise a three-finger click inside the app.
+/// technique MiddleClick uses). Only used to recognise a four-finger click inside the app.
 private var mtFingers: Int32 = 0
-private var mtLastThree: Double = 0
+private var mtLastFour: Double = 0
 
 private let contactCallback: @convention(c) (Int32, UnsafeMutableRawPointer?, Int32, Double, Int32) -> Int32 = { _, _, fingers, _, _ in
     mtFingers = fingers
-    if fingers >= 3 { mtLastThree = ProcessInfo.processInfo.systemUptime }
+    if fingers >= 4 { mtLastFour = ProcessInfo.processInfo.systemUptime }
     return 0
 }
 
@@ -38,8 +38,8 @@ enum Trackpad {
         return CFArrayGetCount(list) > 0
     }
 
-    /// True when three or more fingers are (or were a moment ago) on the trackpad.
-    static var threeFingersDown: Bool {
-        mtFingers >= 3 || ProcessInfo.processInfo.systemUptime - mtLastThree < 0.25
+    /// True when four or more fingers are (or were a moment ago) on the trackpad.
+    static var fourFingersDown: Bool {
+        mtFingers >= 4 || ProcessInfo.processInfo.systemUptime - mtLastFour < 0.25
     }
 }

@@ -1,6 +1,7 @@
 'use strict';
 
-// Hacker name (asked once, on first launch), the main menu (friends, requests, settings, your status) and app updates. Names can repeat: the API gives every Mac a
+// Hacker name (asked once, on first launch), the main menu (your profile, friends, requests, settings, your status)
+// and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
 // tag (#0427) and name + tag is unique, like Discord. In the app, Swift's Cloud talks to the API,
 // pushes its state through window.__radar.cloud and answers the page through the "cloud" handler (with replies).
 // In staging the server proxies the same calls and the page asks for the state every half minute.
@@ -22,8 +23,15 @@ window.Cloud = (() => {
     app_only: 'updates install in the app, not in staging',
   };
   const errorText = (code) => ERRORS[code] || `didn't work (${code})`;
+  // The app moves the chat windows pinned above the dashboard out of the way while a menu is open.
+  const tellModal = (open) => {
+    try {
+      window.webkit.messageHandlers.radar.postMessage({ type: 'modal', open });
+    } catch {}
+  };
   const tagText = (t) => (t ? `#${String(t).padStart(4, '0')}` : '');
-  const ARROW = '<svg viewBox="0 0 16 16"><path d="M8 2.5v7.5M4.6 6.8 8 10.2l3.4-3.4M3 13.5h10"/></svg>';
+  // A download arrow over a tray; while an update downloads, the arrow keeps dropping into the tray.
+  const ARROW = '<svg viewBox="0 0 16 16"><path class="ar" d="M8 2.5v7.5M4.6 6.8 8 10.2l3.4-3.4"/><path d="M3 13.5h10"/></svg>';
 
   let S = null; // latest state
   let modal = null; // 'first' | 'menu' | 'update'
@@ -45,9 +53,16 @@ window.Cloud = (() => {
   function render(s) {
     if (!s) return;
     S = s;
-    // Long names get tighter letters so the top bar still fits.
+    // Long names get tighter letters so the top bar still fits. Over the name: your rank and level once the API told
+    // them; under it, how far into the level you are.
     const long = s.hackerName && s.hackerName.length > 11 ? ' class="long"' : '';
-    setHTML(stack, s.hackerName ? `<small>HACKER</small><b${long}>${esc(s.hackerName)}<i class="htag">${tagText(s.tag)}</i></b>` : "<small>ATALAY'S</small><b>TERMINAL</b>");
+    const x = s.xp, r = x && Xp.rank(x.level);
+    const title = r ? `<small class="rk" style="--rc:${r.color}">${esc(r.name.toUpperCase())} · LV ${x.level}</small>` : '<small>HACKER</small>';
+    const bar = r ? `<i class="xpb" style="--rc:${r.color}"><i style="width:${Xp.pct(x).toFixed(1)}%"></i></i>` : '';
+    setHTML(stack, s.hackerName ? `${title}<b${long}>${esc(s.hackerName)}<i class="htag">${tagText(s.tag)}</i></b>${bar}` : "<small>ATALAY'S</small><b>TERMINAL</b>");
+    brand.title = r
+      ? `Level ${x.level} · ${r.name} · ${x.to ? `${Xp.num(x.xp - x.from)} / ${Xp.num(x.to - x.from)} XP` : `${Xp.num(x.xp)} XP`} · today ${Xp.dur(x.today)}`
+      : 'Profile, friends and settings';
     if (waitFor && (Date.now() > waitFor.until || waitFor.test(s))) {
       const w = waitFor;
       waitFor = null;
@@ -72,7 +87,13 @@ window.Cloud = (() => {
     shownNameError = s.nameError;
     if (s.reachable && s.registered === false) openFirst();
     else if (modal === 'first' && s.registered) close();
-    if (modal === 'menu') renderInfo();
+    if (modal === 'menu') {
+      renderInfo();
+      renderProfile();
+      renderActivity();
+    }
+    // Staging shows level-ups on this page (the app's notices panel gets them from Swift).
+    if (!h && x) window.Messages?.progress?.({ xp: x });
     // Friends and messages need a signed-in Mac.
     if (s.registered && s.reachable && !Social.state()) Social.load();
     badges();
@@ -111,6 +132,7 @@ window.Cloud = (() => {
     if (!S || !S.update || modal === 'first' || modal === 'update') return;
     const u = S.update, lines = noteLines(u.notes);
     modal = 'update';
+    tellModal(true);
     root.className = 'on';
     root.innerHTML = `
       <div class="pk hk upd crt-on">
@@ -221,6 +243,7 @@ window.Cloud = (() => {
   function openFirst() {
     if (modal === 'first') return;
     modal = 'first';
+    tellModal(true);
     root.className = 'on first';
     root.innerHTML = `
       <div class="pk hk crt-on">
@@ -253,6 +276,7 @@ window.Cloud = (() => {
     if (modal === 'menu') return showTab(which || tab);
     if (modal) return;
     modal = 'menu';
+    tellModal(true);
     root.className = 'on';
     root.innerHTML = `
       <div class="pk hk menu crt-on">
@@ -260,11 +284,13 @@ window.Cloud = (() => {
         <div class="pk-title"><span class="lights"><i class="l-close" title="Close"></i><i class="l-min"></i><i class="l-max"></i></span><img class="hk-logo" src="logo.png" alt=""><b>MAIN MENU</b>
           <span class="mn-me"><span class="mn-handle"></span><button class="mn-copy" type="button" title="Copy your name#tag, so friends can add you">⧉</button><button class="mn-status" type="button" title="Your status"></button></span></div>
         <div class="mn-tabs">
+          <button type="button" data-tab="profile">PROFILE</button>
           <button type="button" data-tab="friends">FRIENDS <i class="cnt hot" data-count="unread"></i></button>
           <button type="button" data-tab="requests">REQUESTS <i class="cnt hot" data-count="requests"></i></button>
           <button type="button" data-tab="settings">SETTINGS</button>
         </div>
         <div class="mn-body">
+          <section class="mn-page mn-profile" data-page="profile"></section>
           <section class="mn-page" data-page="friends">
             <label class="hk-field mn-add"><span class="hk-prompt">+</span><input class="mn-handle-in" maxlength="21" spellcheck="false" autocomplete="off" placeholder="add a friend · name#0427"><button class="mn-send" type="button" disabled>send request</button></label>
             <p class="hk-status mn-add-status"></p>
@@ -278,6 +304,9 @@ window.Cloud = (() => {
             <div class="hk-h">HACKER NAME</div>
             <label class="hk-field"><span class="hk-prompt">$</span><input class="hk-input fit" maxlength="${MAX}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="hacker name"><span class="hk-tag" title="Your tag: names can repeat, name + tag can't">${tagText(S.tag)}</span><span class="hk-count"></span></label>
             <p class="hk-status"></p>
+            <div class="hk-h">ACTIVITY</div>
+            <div class="hk-row"><span>show my active time to friends<small>today, this week and in total · your level shows either way</small></span>
+              <button type="button" class="hk-sw" role="switch" aria-checked="true" title="Show my active time to friends"><i></i></button></div>
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
@@ -328,6 +357,7 @@ window.Cloud = (() => {
       if (e.key === 'Enter') request();
     });
 
+    q('.hk-sw').onclick = toggleActivity;
     q('.mn-copy').onclick = () => copyHandle();
     q('.mn-status').onclick = (e) => {
       e.stopPropagation();
@@ -345,6 +375,8 @@ window.Cloud = (() => {
     };
     showTab(which || 'friends');
     renderInfo();
+    renderProfile();
+    renderActivity();
     renderSocial();
     // Whatever changed while you weren't looking (a missed live event, another device) shows when the menu opens.
     Social.load();
@@ -431,8 +463,12 @@ window.Cloud = (() => {
         ? s.friends
             .map((f) => {
               const line = f.last ? `${f.last.mine ? 'you: ' : ''}${esc(f.last.body)}` : esc(Social.PRESENCE[f.presence].label);
-              return `<div class="mn-row" data-id="${esc(f.id)}">${Social.dot(f.presence)}<div class="mn-main" data-act="chat">${tagged(f)}<small>${line}</small></div>` +
-                `${f.unread ? `<i class="cnt hot">${f.unread}</i>` : ''}<button class="mn-btn" type="button" data-act="chat" title="Message (right-click for more)">✉</button></div>`;
+              // Their level (a click shows their profile) and how long they've worked today, if they share it.
+              const lv = f.xp ? Xp.badge(f.xp.level, 'profile') : '';
+              const today = f.xp && f.xp.today ? `<span class="mn-today" title="Active today">today ${Xp.dur(f.xp.today)}</span>` : '';
+              return `<div class="mn-row" data-id="${esc(f.id)}">${Social.dot(f.presence)}<div class="mn-main" data-act="chat"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
+                `${today}${f.unread ? `<i class="cnt hot">${f.unread}</i>` : ''}<button class="mn-btn" type="button" data-act="profile" title="Profile: level and hours">◎</button>` +
+                '<button class="mn-btn" type="button" data-act="chat" title="Message (right-click for more)">✉</button></div>';
             })
             .join('')
         : `<div class="mn-empty">no friends yet · send them your tag: <b>${esc(S.hackerName || '')}${tagText(S.tag)}</b></div>`,
@@ -466,6 +502,8 @@ window.Cloud = (() => {
       case 'chat':
         close();
         return Social.openChat(id);
+      case 'profile':
+        return Social.friend(id) && friendProfile(Social.friend(id));
       case 'accept':
         el.disabled = true;
         return done(await Social.accept(id));
@@ -494,10 +532,10 @@ window.Cloud = (() => {
     const menu = document.createElement('div');
     menu.className = 'mn-ctx';
     menu.innerHTML =
-      '<button type="button" data-ctx="chat">✉ message</button><button type="button" data-ctx="copy">⧉ copy name#tag</button>' +
-      '<hr><button type="button" class="danger" data-ctx="remove">✕ remove friend</button>';
+      '<button type="button" data-ctx="chat">✉ message</button><button type="button" data-ctx="profile">◎ view profile</button>' +
+      '<button type="button" data-ctx="copy">⧉ copy name#tag</button><hr><button type="button" class="danger" data-ctx="remove">✕ remove friend</button>';
     menu.style.left = `${Math.min(e.clientX - box.left, box.width - 190)}px`;
-    menu.style.top = `${Math.min(e.clientY - box.top, box.height - 120)}px`;
+    menu.style.top = `${Math.min(e.clientY - box.top, box.height - 150)}px`;
     menu.onclick = async (ev) => {
       const b = ev.target.closest('[data-ctx]');
       if (!b) return;
@@ -506,6 +544,7 @@ window.Cloud = (() => {
         close();
         return Social.openChat(f.id);
       }
+      if (b.dataset.ctx === 'profile') return friendProfile(f);
       if (b.dataset.ctx === 'copy') {
         try {
           await navigator.clipboard.writeText(Social.handle(f));
@@ -540,6 +579,100 @@ window.Cloud = (() => {
     ask.querySelector('[data-ans="no"]').focus();
   }
 
+  // ---------- levels: your profile, a friend's card, sharing your active time ----------
+  const stat = (label, value, note) => `<div><label>${label}</label><b>${value}</b>${note ? `<small>${note}</small>` : ''}</div>`;
+
+  // Your rank's headband, level and XP, today's time and the rested bonus, the week, the streak, and the ranks ahead.
+  function renderProfile() {
+    const el = q('.mn-profile');
+    if (!el) return;
+    const x = S.xp;
+    if (!x) {
+      const why = S.reachable ? 'loading…' : "can't reach the server · your level comes back with the connection";
+      return setHTML(el, `<div class="mn-empty">${why}</div>`);
+    }
+    const r = Xp.rank(x.level);
+    const rested =
+      x.rested > 0
+        ? `<b>rested</b> · the next ${Xp.dur(x.rested)} today earn double XP`
+        : x.today >= 10 * 3600
+          ? '<b>10 hours today</b> · no more XP until tomorrow · take a break'
+          : x.today >= 8 * 3600
+            ? '<b>past 8 hours today</b> · half XP up to 10 hours · take a break'
+            : 'rested again tomorrow · the first 2 hours each day earn double XP';
+    const ranks = Xp.RANKS.map((k) => {
+      const state = x.level > k.to ? 'done' : x.level >= k.from ? 'now' : 'next';
+      return `<div class="pf-rk ${state}" style="--rc:${k.color}"><i></i><b>${k.name}</b><span>level ${k.from}–${k.to}</span><em>${state === 'done' ? '✓' : state === 'now' ? 'you' : ''}</em></div>`;
+    }).join('');
+    setHTML(
+      el,
+      `<div class="pf-head" style="--rc:${r.color}">${Xp.headband(x.level, 'pf-band')}` +
+        `<div class="pf-rank"><small>RANK</small><b>${esc(r.name)}</b><span>Level ${x.level}</span></div></div>` +
+        `<div class="pf-xp" style="--rc:${r.color}"><div class="pf-bar"><i style="width:${Xp.pct(x).toFixed(1)}%"></i></div><div class="pf-xpline">` +
+        (x.to
+          ? `<span>${Xp.num(x.xp - x.from)} / ${Xp.num(x.to - x.from)} XP</span><span>${Xp.num(x.to - x.xp)} XP to level ${x.level + 1}</span>`
+          : `<span>${Xp.num(x.xp)} XP</span><span>top level</span>`) +
+        `</div></div><p class="pf-rested">${rested}</p>` +
+        `<div class="pf-stats">${stat('TODAY', Xp.dur(x.today))}${stat('THIS WEEK', `${x.week}/${x.goal} days`, x.week >= x.goal ? 'goal reached' : '30+ min a day')}` +
+        `${stat('STREAK', `${x.streak} ${x.streak === 1 ? 'week' : 'weeks'}`, x.bonus ? `+${x.bonus}% XP` : `${x.goal} days a week`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
+        (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color)}` : '') +
+        `<div class="hk-h">RANKS</div><div class="pf-ranks">${ranks}</div>` +
+        '<p class="pf-rules">1 XP for every active minute, up to 10 hours a day · the first 2 hours count double · +50 for showing up · ' +
+        `${x.goal} days a week keep a streak, +10% XP for every week of it</p>`,
+    );
+  }
+
+  // A friend's card: their rank and level, and their active time unless they keep it to themselves.
+  function friendProfile(f) {
+    q('.mn-confirm')?.remove();
+    const x = f.xp || { level: 1, today: null, days: null, week: null, total: null };
+    const r = Xp.rank(x.level);
+    const card = document.createElement('div');
+    card.className = 'mn-confirm';
+    card.innerHTML =
+      `<div class="mn-ask pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(x.level, 'pf-band')}` +
+      `<div class="pf-rank"><small>${Social.dot(f.presence)} ${esc(Social.PRESENCE[f.presence || 'offline'].label)}</small>${tagged(f)}` +
+      `<span>Level ${x.level} · ${esc(r.name)}</span></div></div>` +
+      (x.total === null
+        ? '<p>keeps their active time to themselves</p>'
+        : `<div class="pf-stats">${stat('TODAY', x.today === null ? '—' : Xp.dur(x.today))}${stat('THIS WEEK', `${x.week}/3 days`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
+          (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color)}` : '')) +
+      '<div class="mn-ask-btns"><button type="button" class="mn-btn" data-ans="close">close</button><button type="button" class="mn-btn go" data-ans="chat">✉ message</button></div></div>';
+    card.onclick = (e) => {
+      const b = e.target.closest('[data-ans]');
+      if (e.target === card || (b && b.dataset.ans === 'close')) return card.remove();
+      if (b && b.dataset.ans === 'chat') {
+        close();
+        Social.openChat(f.id);
+      }
+    };
+    q('.pk.menu').appendChild(card);
+  }
+
+  function renderActivity() {
+    const sw = q('.hk-sw');
+    if (!sw) return;
+    const on = S.xp ? S.xp.show !== false : true;
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-checked', String(on));
+    sw.disabled = !S.xp;
+  }
+
+  async function toggleActivity() {
+    if (!S.xp) return;
+    const show = S.xp.show === false;
+    const r = await Social.setActivity(show);
+    if (r.error) return toast(errorText(r.error));
+    S.xp = { ...S.xp, show };
+    renderActivity();
+    toast(show ? 'friends see your active time again' : 'your active time is hidden from friends · your level still shows');
+  }
+
+  // Your XP changed (the daily bonus, a new level): show it now rather than at the next heartbeat.
+  Social.on((ev) => {
+    if (ev.type === 'xp' && ev.xp && S) render({ ...S, xp: ev.xp });
+  });
+
   function badges() {
     const n = Social.unread() + Social.requests();
     const b = brand.querySelector('.bdg'), me = brand.querySelector('.bme');
@@ -565,9 +698,11 @@ window.Cloud = (() => {
     if (b) b.onclick = openUpdate;
   }
 
+
   function close() {
     if (!modal) return;
     modal = null;
+    tellModal(false);
     root.onmousedown = null;
     const pk = q('.pk');
     if (pk) pk.classList.replace('crt-on', 'crt-off');

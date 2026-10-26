@@ -1333,7 +1333,7 @@ async function cloudState() {
         try {
           const a = await api('POST', 'v1/heartbeat', app.build ? { build: app.build } : {}, token);
           const u = a.update;
-          return { ...s, reachable: true, registered: true, hackerName: a.hackerName, tag: a.tag, online: a.online, update: u && { version: u.version, build: u.build, notes: u.notes } };
+          return { ...s, reachable: true, registered: true, hackerName: a.hackerName, tag: a.tag, online: a.online, update: u && { version: u.version, build: u.build, notes: u.notes }, xp: a.xp || null };
         } catch (e) {
           if (e.status !== 401) throw e;
         }
@@ -1347,7 +1347,7 @@ async function cloudState() {
 const errorCode = (e) => (e.status ? e.code || `http_${e.status}` : 'offline');
 
 // Friends and messages for the page: the same endpoints the app's bridge allows, with this Mac's token.
-const SOCIAL_PATH = /^v1\/(me\/status$|social$|friends(\/|$)|messages(\/|\?|$))/;
+const SOCIAL_PATH = /^v1\/(me\/(status|activity)$|social$|friends(\/|$)|messages(\/|\?|$))/;
 async function socialCall({ method = 'GET', path: p = '', body } = {}) {
   const token = readToken();
   if (!token) return { error: 'signed_out' };

@@ -20,6 +20,10 @@ final class ChatHUD: ObservableObject {
     let terminalDir: String?
     @Published var exited = false
     @Published var attached = true
+    /// Above every app's windows (floating), like an always-on-top pin.
+    @Published var onTop = false
+    /// A second screen on a chat another build of the app runs: closing it leaves the chat running.
+    var mirror = false
     @Published var chips: [TickerChip] = []
     /// False while the window is hidden, so its clocks stop ticking.
     @Published var visible = false
@@ -194,11 +198,13 @@ private struct HUDRow: View {
             if let b = hud.brief, !b.spark.isEmpty, hud.status != "terminal" {
                 SparkView(values: b.spark, hex: hex).frame(width: 96, height: 18)
             }
-            HUDButton(symbol: hud.attached ? "pin.fill" : "pin.slash", active: hud.attached,
-                      help: hud.attached ? "Pinned above the dashboard. Click to make it a free window." : "Free window. Click to pin it above the dashboard.",
+            HUDButton(symbol: hud.onTop ? "pin.fill" : "pin", active: hud.onTop,
+                      help: hud.onTop ? "Pinned on top of every app, on any desktop. Click to put it back above the dashboard."
+                          : "Pin on top of every app (Discord, Chrome…). It leaves the dashboard, even a full-screen one.",
                       hex: hex, action: onTogglePin)
             HUDButton(symbol: "square.grid.2x2", active: false, help: "Back to the dashboard (this chat keeps running)", hex: hex, action: onDashboard)
-            HUDButton(symbol: "power", active: false, help: hud.status == "terminal" ? "Close this terminal" : "End this chat",
+            HUDButton(symbol: "power", active: false,
+                      help: hud.mirror ? "Close this mirror (the chat keeps running in the other app)" : hud.status == "terminal" ? "Close this terminal" : "End this chat",
                       hex: 0xFF4D4D, action: onEnd)
         }
         .font(.mono(10.5))
@@ -551,6 +557,24 @@ final class BeamView: NSView {
 
 // MARK: - chat window
 
+/// The header is the window's title bar, so a double-click on its title row does what a double-click on any title
+/// bar does (System Settings → Desktop & Dock): fill the screen and back, minimize, or nothing.
+private final class HeaderHostingView<Content: View>: NSHostingView<Content> {
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let fromTop = isFlipped ? p.y : bounds.height - p.y
+        if event.clickCount == 2, fromTop < 32, let w = window {
+            switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+            case "Minimize": w.miniaturize(nil)
+            case "None": break
+            default: w.zoom(nil)
+            }
+            return
+        }
+        super.mouseDown(with: event)
+    }
+}
+
 @MainActor
 final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalProcessTerminalViewDelegate {
     let id = UUID().uuidString
@@ -570,14 +594,20 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private let border = NeonBorderView()
     private let flash = FlashView()
     private let beam = BeamView()
+    /// How much is selected, and what ⌘C copied, in small type at the terminal's bottom-right, as Claude Code shows it.
+    private let selectionBadge = NSTextField(labelWithString: "")
+    private var copiedUntil = Date.distantPast
+    /// Out of the way while the dashboard shows a menu (see stepAside).
+    private var steppedAside = false
 
     /// `claudeArgs` nil opens a plain terminal in `cwd`.
     init(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, fontSize: CGFloat, frame: NSRect,
-         manager: MainWindowController, detached: DetachedLink? = nil) {
+         manager: MainWindowController, detached: DetachedLink? = nil, mirror: Bool = false) {
         self.cwd = cwd
         self.sessionId = sessionId
         self.detached = detached
         self.hud = ChatHUD(terminalDir: claudeArgs == nil ? cwd : nil)
+        hud.mirror = mirror
         self.manager = manager
         let w = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: false)
@@ -600,6 +630,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         } else {
             terminal = TerminalFactory.make(chatId: id, cwd: cwd, claudeArgs: claudeArgs, fontSize: fontSize, delegate: self)
         }
+        terminal.sessionShell = { [weak self] in self?.detached?.shellPid ?? 0 }
+        terminal.onSelection = { [weak self] text in self?.showSelection(text) }
+        terminal.onCopy = { [weak self] text in self?.showCopied(text) }
         buildLayout()
         // GPU text rendering: glyphs come from an atlas and cells are drawn as quads, far less CPU than
         // Core Graphics when Claude streams output. Falls back to Core Graphics if Metal can't start.
@@ -662,7 +695,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             CATransaction.commit()
         }
 
-        let header = NSHostingView(rootView: ChatHeaderView(
+        let header = HeaderHostingView(rootView: ChatHeaderView(
             hud: hud,
             onTogglePin: { [weak self] in self?.togglePin() },
             onDashboard: { [weak self] in self?.manager?.showDashboard() },
@@ -674,7 +707,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             root.addSubview(v)
             pin(v, to: root)
         }
-        for v in [glass, tint, header, terminal!, ticker, border, flash] as [NSView] {
+        selectionBadge.font = Theme.mono(10.5, .semibold)
+        selectionBadge.textColor = Theme.accent
+        selectionBadge.drawsBackground = true
+        selectionBadge.backgroundColor = NSColor.black.withAlphaComponent(0.55)
+        selectionBadge.isHidden = true
+        for v in [glass, tint, header, terminal!, ticker, selectionBadge, border, flash] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
@@ -692,7 +730,33 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             terminal.bottomAnchor.constraint(equalTo: ticker.topAnchor, constant: -4),
             terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
             terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
+            selectionBadge.trailingAnchor.constraint(equalTo: terminal.trailingAnchor, constant: -10),
+            selectionBadge.bottomAnchor.constraint(equalTo: terminal.bottomAnchor, constant: -6),
         ])
+    }
+
+    private static func lineCount(_ text: String) -> Int {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        return max(1, lines.count - (text.hasSuffix("\n") ? 1 : 0))
+    }
+
+    private func showSelection(_ text: String?) {
+        guard Date() >= copiedUntil else { return }
+        guard let text, !text.isEmpty else { return selectionBadge.isHidden = true }
+        let n = Self.lineCount(text)
+        selectionBadge.stringValue = n == 1 ? " 1 line selected · \(text.count) chars " : " \(n) lines selected "
+        selectionBadge.isHidden = false
+    }
+
+    private func showCopied(_ text: String) {
+        let n = Self.lineCount(text)
+        selectionBadge.stringValue = n == 1 ? " copied 1 line " : " copied \(n) lines "
+        selectionBadge.isHidden = false
+        copiedUntil = Date().addingTimeInterval(2.5)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in
+            guard let self else { return }
+            self.showSelection(self.terminal.getSelection())
+        }
     }
 
     private func pin(_ v: NSView, to p: NSView) {
@@ -818,17 +882,117 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     // MARK: actions
 
+    /// The pin: on top of every app's windows (Discord, Chrome…), on any desktop. A window rides above the dashboard
+    /// by default, as its child, and goes behind other apps with it; pinned, it leaves the dashboard (a child takes
+    /// its parent's level, and can't leave a full-screen dashboard's Space) and floats. Unpinned, it rides on the
+    /// dashboard again.
     func togglePin() {
         guard let w = window else { return }
-        hud.attached.toggle()
-        if hud.attached, let parent = manager?.window, parent.isVisible {
-            parent.addChildWindow(w, ordered: .above)
-        } else {
+        hud.onTop.toggle()
+        hud.attached = !hud.onTop
+        if hud.onTop {
             w.parent?.removeChildWindow(w)
+            w.collectionBehavior = [.managed, .participatesInCycle]
+            w.level = .floating
+            if isShown {
+                // Ordered in again, it goes where an ordinary window may be: off a full-screen dashboard's Space.
+                w.orderOut(nil)
+                w.makeKeyAndOrderFront(nil)
+            }
+        } else {
+            w.level = .normal
+            w.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
+            if let parent = manager?.window, parent.isVisible { parent.addChildWindow(w, ordered: .above) }
         }
     }
 
+    // MARK: tiling (Fn+Control+arrows, like macOS)
+
+    enum Tile { case left, right, top, bottom, topLeft, topRight, bottomLeft, bottomRight, fill }
+    private var tile: Tile?
+    private var tiledFrame: NSRect?
+    private var untiledFrame: NSRect?
+
+    /// macOS tiles windows with Fn+Control and the arrows (F fills, C centres, R returns), but not a window pinned
+    /// above the dashboard (a child window), so the app does it for its chat windows. A second arrow makes a quarter:
+    /// left then up is the top-left quarter.
+    func tile(key: UInt16) {
+        guard let w = window, let screen = (w.screen ?? NSScreen.main)?.visibleFrame else { return }
+        if let tiledFrame, w.frame != tiledFrame { tile = nil }
+        let t = tile
+        let next: Tile?
+        switch key {
+        case 123, 115: next = [.top, .topLeft, .topRight].contains(t) ? .topLeft : [.bottom, .bottomLeft, .bottomRight].contains(t) ? .bottomLeft : .left
+        case 124, 119: next = [.top, .topLeft, .topRight].contains(t) ? .topRight : [.bottom, .bottomLeft, .bottomRight].contains(t) ? .bottomRight : .right
+        case 126, 116: next = [.left, .topLeft, .bottomLeft].contains(t) ? .topLeft : [.right, .topRight, .bottomRight].contains(t) ? .topRight : .top
+        case 125, 121: next = [.left, .topLeft, .bottomLeft].contains(t) ? .bottomLeft : [.right, .topRight, .bottomRight].contains(t) ? .bottomRight : .bottom
+        case 3: next = .fill
+        case 8:
+            var f = w.frame
+            f.origin = NSPoint(x: screen.midX - f.width / 2, y: screen.midY - f.height / 2)
+            return place(f, as: nil)
+        case 15:
+            guard let back = untiledFrame else { return }
+            untiledFrame = nil
+            return place(back, as: nil)
+        default: return
+        }
+        guard let next else { return }
+        let gap: CGFloat = 8
+        let s = screen.insetBy(dx: gap / 2, dy: gap / 2)
+        let halfW = s.width / 2, halfH = s.height / 2
+        let r: NSRect
+        switch next {
+        case .left: r = NSRect(x: s.minX, y: s.minY, width: halfW, height: s.height)
+        case .right: r = NSRect(x: s.midX, y: s.minY, width: halfW, height: s.height)
+        case .top: r = NSRect(x: s.minX, y: s.midY, width: s.width, height: halfH)
+        case .bottom: r = NSRect(x: s.minX, y: s.minY, width: s.width, height: halfH)
+        case .topLeft: r = NSRect(x: s.minX, y: s.midY, width: halfW, height: halfH)
+        case .topRight: r = NSRect(x: s.midX, y: s.midY, width: halfW, height: halfH)
+        case .bottomLeft: r = NSRect(x: s.minX, y: s.minY, width: halfW, height: halfH)
+        case .bottomRight: r = NSRect(x: s.midX, y: s.minY, width: halfW, height: halfH)
+        case .fill: r = s
+        }
+        if tile == nil { untiledFrame = w.frame }
+        place(r.insetBy(dx: gap / 2, dy: gap / 2), as: next)
+    }
+
+    private func place(_ frame: NSRect, as t: Tile?) {
+        guard let w = window else { return }
+        tile = t
+        tiledFrame = t == nil ? nil : frame
+        w.setFrame(frame, display: true, animate: true)
+        fitSession()
+    }
+
+    /// The dashboard's menus (friends, settings, updates) open on the dashboard, under the windows pinned above it:
+    /// those step out of the way meanwhile. Always-on-top windows stay.
+    func stepAside() {
+        guard let w = window, isShown, !hud.onTop, !steppedAside else { return }
+        steppedAside = true
+        w.parent?.removeChildWindow(w)
+        w.orderOut(nil)
+    }
+
+    func stepBack() {
+        guard steppedAside, let w = window else { return }
+        steppedAside = false
+        guard isShown else { return }
+        if hud.attached, let parent = manager?.window, parent.isVisible { parent.addChildWindow(w, ordered: .above) }
+        w.orderFront(nil)
+    }
+
     func endChat() {
+        // A mirror only closes: the chat runs on in the app that owns it.
+        if hud.mirror {
+            let finish = { [weak self] in
+                guard let self else { return }
+                self.terminal.terminate()
+                self.manager?.removeChat(self.id)
+            }
+            if !hide(then: finish) { finish() }
+            return
+        }
         // A copy takes its original along: the Claude it was copied from stops in its iTerm2 tab, which closes.
         // Only while that Claude still runs there.
         let original = origin.flatMap { o in Proc.info(o.claude)?.tty == o.tty && Proc.name(o.claude)?.hasPrefix("claude") == true ? o : nil }
@@ -852,8 +1016,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             a.addButton(withTitle: "Cancel")
             guard a.runModal() == .alertFirstButtonReturn else { return }
         }
-        // The dashboard drops the session now, while the window powers off, so it can't be clicked open again.
+        // The dashboard drops the session now, while the window powers off, so it can't be clicked open again; a
+        // terminal's car blows up on the orbit at the same moment.
         manager?.dismiss(sessionId: sessionId, pid: hud.brief?.live == true ? hud.brief?.pid : nil)
+        manager?.terminalEnding(id)
         if let original { manager?.dismiss(sessionId: manager?.sessionId(of: original.claude), pid: original.claude) }
         let finish = { [weak self] in
             guard let self else { return }
@@ -868,17 +1034,38 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     private var attached = false
     /// Becomes a display of the detached session.
+    /// Restored after a restart: takes back its kept scrollback before it attaches (see Detached.saveHistory).
+    var takesHistory = false
+    /// The terminal's height in rows, as it last reported it.
+    private var termRows = 0
+
     func attachSession() {
         guard let detached, !attached else { return }
         attached = true
-        TerminalFactory.attach(terminal, screenName: detached.name, cwd: cwd, fit: isShown)
+        if takesHistory {
+            takesHistory = false
+            let history = Detached.takeHistory(detached.name)
+            if !history.isEmpty {
+                // Then blank rows push it all above the screen, where screen's repaint can't overwrite it.
+                terminal.feed(text: history.joined(separator: "\r\n") + String(repeating: "\r\n", count: max(termRows, 60) + 1))
+            }
+        }
+        // A mirror shows the chat at the size its own app gave it, and never resizes it under that app's window.
+        TerminalFactory.attach(terminal, screenName: detached.name, cwd: cwd, fit: isShown && !hud.mirror)
         fitSession()
+    }
+
+    /// On quit: this window's scrollback, for the window that attaches to the session next time.
+    func saveHistory() {
+        guard let detached, attached, !hud.mirror, !hud.exited else { return }
+        let text = String(decoding: terminal.getBufferAsData(kind: .normal), as: UTF8.self)
+        Detached.saveHistory(detached.name, text: text, rows: termRows)
     }
 
     private var fitWork: DispatchWorkItem?
     /// Fits the session to this window once its size has settled, so Claude draws at the window's size.
     func fitSession() {
-        guard let detached, attached, isShown else { return }
+        guard let detached, attached, isShown, !hud.mirror else { return }
         fitWork?.cancel()
         let name = detached.name
         let work = DispatchWorkItem { Detached.fit(name) }
@@ -907,8 +1094,30 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     // MARK: NSWindowDelegate
 
+    // A window pinned above the dashboard is the dashboard's child, and a child minimized on its own left the
+    // dashboard black. So it lets go of the dashboard on its way to the Dock and pins again when it comes back.
+    func windowWillMiniaturize(_ notification: Notification) {
+        guard let w = window else { return }
+        w.parent?.removeChildWindow(w)
+    }
+
+    // The window clicked last comes to the front of the others pinned above the dashboard: AppKit doesn't reorder a
+    // parent's child windows on a click.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let w = window, let parent = w.parent, parent.childWindows?.last != w else { return }
+        parent.removeChildWindow(w)
+        parent.addChildWindow(w, ordered: .above)
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        guard let w = window, hud.attached, let parent = manager?.window, parent.isVisible else { return }
+        parent.addChildWindow(w, ordered: .above)
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if hud.exited {
+        if hud.mirror {
+            endChat()
+        } else if hud.exited {
             hide { [weak self] in
                 guard let self else { return }
                 self.manager?.removeChat(self.id)
@@ -923,7 +1132,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     // MARK: LocalProcessTerminalViewDelegate
 
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) { fitSession() }
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        termRows = newRows
+        fitSession()
+    }
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 

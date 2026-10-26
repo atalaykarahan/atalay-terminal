@@ -8,6 +8,8 @@ import WebKit
 /// - chat: the conversation, in a window the user drags by its header like any other (mid-screen the first time,
 ///   then where it was left).
 /// The notices also say when a new version of the app is out; a click on that one shows the dashboard's "what's new".
+/// A level-up takes the notices panel over the whole screen, keys locked for its first moments and then any key ending
+/// it, only while the app is in front (the page waits for that).
 /// The page decides the size and asks for it, and asks to be moved while the header is dragged.
 @MainActor
 final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
@@ -17,6 +19,22 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     static let chat = MessagePanel(.chat)
     /// The update notice was clicked (the main window shows what's new).
     static var onOpenUpdate: (() -> Void)?
+    /// The daily bonus notice was clicked (the main window shows your profile).
+    static var onOpenProfile: (() -> Void)?
+    /// Until when keys do nothing (the level-up takeover; AppDelegate drops them).
+    private static var keysLockedUntil: TimeInterval = 0
+    static var keysLocked: Bool { ProcessInfo.processInfo.systemUptime < keysLockedUntil }
+    /// The takeover is on screen: once the lock is over, a key ends it instead of reaching a window.
+    private(set) static var takeoverOn = false
+    /// For the app's key monitors (whichever sees a key first): true when it goes nowhere because the takeover is on;
+    /// after the takeover's lock a key also ends it.
+    static func holds(_ event: NSEvent) -> Bool {
+        guard keysLocked || takeoverOn else { return false }
+        if !keysLocked, event.type == .keyDown { notices.skipTakeover() }
+        return true
+    }
+    /// Brings the panel back if the takeover's page never says it ended (a crashed page must not keep the screen).
+    private var takeoverGuard: DispatchWorkItem?
 
     private final class Panel: NSPanel {
         override var canBecomeKey: Bool { true }
@@ -67,6 +85,23 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         panel.contentView = webView
         let dir = RadarView.webDirectory()
         webView.loadFileURL(dir.appendingPathComponent("messages.html"), allowingReadAccessTo: dir)
+        if role == .notices {
+            // The level-up waits for the app to be in front.
+            for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.tellFocus() }
+                }
+            }
+        }
+    }
+
+    private func tellFocus() {
+        run("window.__messages && __messages.focus && __messages.focus(\(NSApp.isActive))")
+    }
+
+    /// A key after the takeover's lock: it ends now.
+    func skipTakeover() {
+        run("window.__messages && __messages.skip && __messages.skip()")
     }
 
     /// A live event from the API (JSON text).
@@ -79,6 +114,12 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         guard let data = try? JSONSerialization.data(withJSONObject: ["version": update.version, "build": update.build]),
               let json = String(data: data, encoding: .utf8) else { return }
         run("window.__messages && __messages.update && __messages.update(\(json))")
+    }
+
+    /// Your XP as the last heartbeat or live event had it: a new level plays the fanfare (once, the page keeps count).
+    func xp(_ x: Cloud.XP) {
+        guard let data = try? JSONEncoder().encode(x), let json = String(data: data, encoding: .utf8) else { return }
+        run("window.__messages && __messages.xp && __messages.xp(\(json))")
     }
 
     /// Opens the conversation with a friend (chat panel).
@@ -111,10 +152,14 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             let scripts = waiting
             waiting = []
             scripts.forEach(run)
+            if role == .notices { tellFocus() }
         case "layout":
             let size = CGSize(width: number("w"), height: number("h"))
-            guard size.width >= 1, size.height >= 1 else { return panel.orderOut(nil) }
-            role == .notices ? placeNotice(size) : placeChat(size, focus: body["focus"] as? Bool == true)
+            guard size.width >= 1, size.height >= 1 else {
+                endTakeover()
+                return panel.orderOut(nil)
+            }
+            role == .notices ? placeNotice(size, screen: body["place"] as? String == "screen") : placeChat(size, focus: body["focus"] as? Bool == true)
         case "drag":
             guard role == .chat else { return }
             var origin = panel.frame.origin
@@ -126,6 +171,11 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             UserDefaults.standard.set([panel.frame.minX, panel.frame.maxY], forKey: Self.originKey)
         case "openUpdate":
             Self.onOpenUpdate?()
+        case "openProfile":
+            Self.onOpenProfile?()
+        case "lock":
+            // Never longer than 4 s, whatever the page asks.
+            Self.keysLockedUntil = ProcessInfo.processInfo.systemUptime + min(max(number("ms"), 0), 4000) / 1000
         case "showing":
             // The chat shows this friend: no pop-ups for them meanwhile.
             MessagePanel.notices.run("window.__messages && __messages.showing(\(Self.literal(body["id"] as? String)))")
@@ -136,11 +186,39 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         }
     }
 
-    /// Bottom-right corner of the screen the user is on, clear of the Dock and the menu bar.
-    private func placeNotice(_ size: CGSize) {
-        let v = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-        panel.setFrame(NSRect(x: v.maxX - size.width - 12, y: v.minY + 12, width: size.width, height: size.height), display: true)
+    /// Bottom-right corner of the screen the user is on, clear of the Dock and the menu bar. The level-up takeover has
+    /// that whole screen instead, above the menu bar and the Dock, and takes the clicks while it plays.
+    private func placeNotice(_ size: CGSize, screen: Bool) {
+        let s = NSScreen.main ?? NSScreen.screens[0]
+        if screen {
+            panel.level = .screenSaver
+            panel.setFrame(s.frame, display: true)
+            Self.takeoverOn = true
+            NSLog("Atalay's Terminal: level-up takeover on %@", NSStringFromRect(s.frame))
+            takeoverGuard?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.endTakeover()
+                    self?.panel.orderOut(nil)
+                }
+            }
+            takeoverGuard = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 16, execute: work)
+        } else {
+            endTakeover()
+            let v = s.visibleFrame
+            panel.setFrame(NSRect(x: v.maxX - size.width - 12, y: v.minY + 12, width: size.width, height: size.height), display: true)
+        }
         if !panel.isVisible { panel.orderFrontRegardless() }
+    }
+
+    /// The panel back to a notice's: its level, keys free.
+    private func endTakeover() {
+        takeoverGuard?.cancel()
+        takeoverGuard = nil
+        panel.level = .floating
+        Self.keysLockedUntil = 0
+        Self.takeoverOn = false
     }
 
     /// Where it was left (if that's still on a screen), else mid-screen; resizing keeps the top-left corner.
@@ -164,9 +242,14 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         }
     }
 
-    /// The page's process died: load it again (it reports "ready" and asks for the conversations anew).
+    /// The page's process died: load it again (it reports "ready" and asks for the conversations anew). A takeover it
+    /// was playing ends with it.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         ready = false
+        if role == .notices {
+            endTakeover()
+            panel.orderOut(nil)
+        }
         webView.reload()
     }
 }

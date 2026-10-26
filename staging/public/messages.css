@@ -101,6 +101,58 @@
 .mb-empty { padding: 40px 20px; color: var(--dim); text-align: center; }
 .mb-sub { color: var(--dim); font-weight: 400; font-size: 0.9em; }
 
+/* ===== your progress (messages.js): the daily bonus strip and the level-up fanfare ===== */
+.mb.peek.xp { width: auto; max-width: 372px; cursor: pointer; --glow: 255, 210, 63; }
+.mb.xp .mb-head { padding-right: 12px; }
+.mb.xp:hover { filter: brightness(1.15); }
+.mb.xp .mb-tag { background: var(--amber); }
+
+/* The level-up takeover: the whole screen "hacked" for a few seconds (messages.js). In the app it fills its own
+   see-through panel over every window; in staging it covers the page. */
+#takeover { --rc: 248, 128, 8; position: fixed; inset: 0; z-index: 2900; overflow: hidden; cursor: none; color: var(--hi); font-family: var(--font); }
+#takeover.free { cursor: pointer; }
+#takeover.out { pointer-events: none; animation: tk-out 0.5s steps(6) both; }
+.tk-veil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 46%, rgba(var(--rc), 0.2), transparent 62%), rgba(5, 3, 2, 0.84); animation: tk-veil 0.5s steps(6) both; }
+.tk-noise { position: absolute; inset: -40%; opacity: 0.08; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); animation: tk-noise 0.45s steps(6) infinite; }
+.tk.glitch .tk-noise { opacity: 0.3; }
+.tk-confetti { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tk-bars { position: absolute; inset: 0; opacity: 0; }
+.tk.glitch .tk-bars, #takeover.out .tk-bars { opacity: 1; }
+.tk-bars i { position: absolute; left: var(--l); top: var(--t); width: var(--w); height: var(--h); background: var(--c); opacity: 0.55; mix-blend-mode: screen; animation: tk-bar 0.16s steps(3) infinite alternate; }
+.tk-scan { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 3px); pointer-events: none; }
+.tk-log { position: absolute; left: 3vw; top: 4vh; margin: 0; color: rgb(var(--rc)); font: 700 clamp(11px, 1vw, 16px)/1.65 var(--font); letter-spacing: 0.06em; text-shadow: 0 0 8px rgba(var(--rc), 0.7); white-space: pre; }
+.tk-log .warn { color: #ff4d4d; text-shadow: 0 0 10px rgba(255, 77, 77, 0.85); }
+.tk-log i { display: inline-block; width: 0.6em; height: 1.05em; margin-left: 0.2em; vertical-align: -0.18em; background: currentColor; animation: tk-caret 0.5s steps(1) infinite; }
+.tk-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.tk.glitch .tk-center { animation: tk-shift 0.24s steps(4) infinite; }
+.tk-band { width: min(24vw, 340px); margin-bottom: 2.5vh; opacity: 0; }
+.tk-band.on { animation: tk-band 0.7s cubic-bezier(0.2, 1.4, 0.45, 1) both; }
+.tk-title { position: relative; color: #fff; font-size: min(15vw, 24vh); font-weight: 800; line-height: 1; letter-spacing: 0.04em; white-space: nowrap; text-shadow: 0 0 0.1em rgba(var(--rc), 0.95), 0 0 0.45em rgba(var(--rc), 0.55); }
+.tk-title::before, .tk-title::after { content: attr(data-text); position: absolute; left: 0; top: 0; text-shadow: none; mix-blend-mode: screen; }
+.tk-title::before { color: rgba(255, 210, 63, 0.85); transform: translateX(-0.035em); clip-path: inset(0 0 52% 0); animation: tk-slice-a 0.7s steps(5) infinite; }
+.tk-title::after { color: rgba(255, 77, 77, 0.85); transform: translateX(0.035em); clip-path: inset(50% 0 0 0); animation: tk-slice-b 0.55s steps(4) infinite; }
+.tk-title.on { animation: tk-land 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.3) both; }
+.tk-title.on::before, .tk-title.on::after { opacity: 0.55; }
+.tk-sub { margin-top: 2vh; font-size: min(3vw, 4.4vh); font-weight: 800; letter-spacing: 0.3em; opacity: 0; text-shadow: 0 0 14px rgba(var(--rc), 0.7), 0 2px 6px #000; }
+.tk-sub b { color: rgb(var(--rc)); }
+.tk-lv { margin-top: 1.2vh; color: rgba(var(--rc), 0.9); font-size: min(1.4vw, 2.2vh); font-weight: 700; letter-spacing: 0.5em; opacity: 0; text-shadow: 0 1px 4px #000; }
+.tk-sub.on, .tk-lv.on { animation: tk-up 0.4s ease-out both; }
+/* once the lock is over: any key or click ends it */
+.tk-hint { position: absolute; left: 0; right: 0; bottom: 7vh; color: rgba(var(--rc), 0.85); font-size: clamp(11px, 0.95vw, 15px); font-weight: 700; letter-spacing: 0.4em; text-align: center; text-transform: uppercase; opacity: 0; transition: opacity 0.4s; }
+.tk.free .tk-hint { opacity: 1; animation: tk-caret 1.1s steps(1) infinite; }
+
+@keyframes tk-veil { 0% { opacity: 0; } 20% { opacity: 0.9; } 40% { opacity: 0.25; } 60% { opacity: 1; } 80% { opacity: 0.55; } 100% { opacity: 1; } }
+@keyframes tk-noise { 0% { transform: translate(0, 0); } 20% { transform: translate(-6%, 4%); } 40% { transform: translate(5%, -3%); } 60% { transform: translate(-3%, -6%); } 80% { transform: translate(6%, 5%); } 100% { transform: translate(0, 0); } }
+@keyframes tk-bar { from { transform: translateX(-4vw); } to { transform: translateX(4vw); } }
+@keyframes tk-shift { 0% { transform: none; } 25% { transform: translate(-1.6vw, 0.4vh) skewX(-9deg); } 50% { transform: translate(1.1vw, -0.3vh); } 75% { transform: translate(-0.5vw, 0) skewX(6deg); } 100% { transform: none; } }
+@keyframes tk-slice-a { 0% { clip-path: inset(0 0 85% 0); } 20% { clip-path: inset(30% 0 42% 0); } 40% { clip-path: inset(72% 0 4% 0); } 60% { clip-path: inset(8% 0 62% 0); } 80% { clip-path: inset(46% 0 28% 0); } 100% { clip-path: inset(0 0 85% 0); } }
+@keyframes tk-slice-b { 0% { clip-path: inset(60% 0 12% 0); } 25% { clip-path: inset(14% 0 70% 0); } 50% { clip-path: inset(82% 0 2% 0); } 75% { clip-path: inset(36% 0 40% 0); } 100% { clip-path: inset(60% 0 12% 0); } }
+@keyframes tk-land { from { opacity: 0.4; transform: scale(1.25); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes tk-up { from { opacity: 0; transform: translateY(1.2vh); } to { opacity: 1; transform: none; } }
+@keyframes tk-band { from { opacity: 0; transform: translateY(-7vh) scale(1.5) rotate(-6deg); } to { opacity: 1; transform: none; } }
+@keyframes tk-caret { 50% { opacity: 0; } }
+@keyframes tk-out { 0% { opacity: 1; } 25% { opacity: 0.6; transform: translateX(-2vw) skewX(10deg); } 50% { opacity: 0.85; transform: translateX(1.2vw); } 75% { opacity: 0.3; transform: skewX(-6deg); } 100% { opacity: 0; transform: none; } }
+
 @keyframes mb-in { 0% { opacity: 0; transform: translateX(40px) scale(0.96); filter: brightness(2.2); } 60% { opacity: 1; filter: brightness(1.3); } 100% { opacity: 1; transform: none; filter: none; } }
 @keyframes mb-out { to { opacity: 0; transform: translateX(30px) scale(0.97); } }
 @keyframes mb-pop { 0% { opacity: 0; transform: scale(0.94); filter: brightness(2); } 100% { opacity: 1; transform: none; filter: none; } }

@@ -152,6 +152,8 @@ window.Social = (() => {
     history: (id, before) => api('GET', `v1/messages/${id}${before ? `?before=${before}` : ''}`),
     send: (to, body) => api('POST', 'v1/messages', { to, body }),
     read: (id) => api('POST', 'v1/messages/read', { with: id }),
+    // Whether friends see your active time (today, this week, in total); your level shows either way.
+    setActivity: (show) => api('PATCH', 'v1/me/activity', { show }),
     setStatus: (status) =>
       api('PATCH', 'v1/me/status', { status }).then((r) => {
         if (!r.error) event({ type: 'status', status: r.status });
