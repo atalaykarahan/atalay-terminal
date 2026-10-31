@@ -3,8 +3,8 @@
 #msgbox > * { pointer-events: auto; }
 
 .mb {
-  --glow: 248, 128, 8;
-  --dot-bg: #140b05;
+  --glow: var(--accent-rgb);
+  --dot-bg: rgb(var(--panel-rgb));
   position: relative;
   display: flex;
   flex-direction: column;
@@ -12,7 +12,7 @@
   border-radius: 10px;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 30%),
-    linear-gradient(170deg, rgba(42, 23, 8, var(--glass-a)) 0%, rgba(17, 10, 6, var(--glass-a)) 45%, rgba(10, 7, 5, var(--glass-a)) 100%);
+    linear-gradient(170deg, rgba(var(--glass-top-rgb), var(--glass-a)) 0%, rgba(var(--surface-rgb), var(--glass-a)) 45%, rgba(var(--bg-rgb), var(--glass-a)) 100%);
   -webkit-backdrop-filter: blur(24px) saturate(1.5);
   backdrop-filter: blur(24px) saturate(1.5);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 0 26px rgba(var(--glow), 0.32);
@@ -25,7 +25,7 @@
   z-index: 5;
   padding: 1.5px;
   border-radius: 10px;
-  background: conic-gradient(from var(--ang), #f88008, #ffd23f, #00e5ff, #f88008);
+  background: conic-gradient(from var(--ang), var(--accent), var(--amber), var(--cyan), var(--accent));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
@@ -58,9 +58,9 @@
 .mb.peek.online, .mb.peek.update { width: auto; max-width: 372px; cursor: pointer; }
 .mb.online .mb-head, .mb.update .mb-head { padding-right: 12px; }
 .mb.online:hover, .mb.update:hover { filter: brightness(1.15); }
-.mb.online { --glow: 61, 255, 168; }
+.mb.online { --glow: var(--green-rgb); }
 .mb.online .mb-tag { background: var(--green); }
-.mb.update { --glow: 0, 229, 255; }
+.mb.update { --glow: var(--cyan-rgb); }
 .mb.update .mb-tag { background: var(--cyan); }
 
 /* the input: a prompt line, as in the rest of the app */
@@ -81,7 +81,7 @@
 .mb.chat { transform-origin: 50% 40%; }
 .mb.chat.in { animation: mb-pop 0.36s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
 .mb.chat.out { animation: mb-drop 0.18s ease-in both; }
-.mb-gone { flex: none; margin: 0 10px; padding: 6px 10px; border: 1px solid rgba(255, 77, 77, 0.45); border-radius: 6px; background: rgba(255, 77, 77, 0.08); color: var(--red); font-size: 0.92em; text-align: center; }
+.mb-gone { flex: none; margin: 0 10px; padding: 6px 10px; border: 1px solid rgba(var(--red-rgb), 0.45); border-radius: 6px; background: rgba(var(--red-rgb), 0.08); color: var(--red); font-size: 0.92em; text-align: center; }
 .mb-gone[hidden] { display: none; }
 .mb-input textarea:disabled { cursor: not-allowed; }
 .mb-switch { display: flex; gap: 6px; flex: none; padding: 6px 10px 0; overflow-x: auto; scrollbar-width: none; }
@@ -93,7 +93,7 @@
 .mb-day { margin: 10px 0 6px; color: var(--dim2); font-size: 0.85em; text-align: center; letter-spacing: 0.12em; }
 .mb-msg { display: flex; flex-direction: column; align-items: flex-start; margin: 0 0 6px; animation: mb-line 0.25s ease-out both; }
 .mb-msg.mine { align-items: flex-end; }
-.mb-msg .b { max-width: 82%; padding: 6px 10px; border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 8px 8px 8px 2px; background: rgba(0, 229, 255, 0.07); color: var(--hi); font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.mb-msg .b { max-width: 82%; padding: 6px 10px; border: 1px solid rgba(var(--cyan-rgb), 0.35); border-radius: 8px 8px 8px 2px; background: rgba(var(--cyan-rgb), 0.07); color: var(--hi); font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .mb-msg.mine .b { border-color: rgba(var(--glow), 0.5); border-radius: 8px 8px 2px 8px; background: rgba(var(--glow), 0.13); }
 .mb-msg .t { margin-top: 2px; color: var(--dim2); font-size: 0.82em; }
 .mb-msg.sending .b { opacity: 0.6; }
@@ -103,7 +103,7 @@
 .mb-sub { color: var(--dim); font-weight: 400; font-size: 0.9em; }
 
 /* ===== your progress (messages.js): the daily bonus strip and the level-up fanfare ===== */
-.mb.peek.xp { width: auto; max-width: 372px; cursor: pointer; --glow: 255, 210, 63; }
+.mb.peek.xp { width: auto; max-width: 372px; cursor: pointer; --glow: var(--amber-rgb); }
 .mb.xp .mb-head { padding-right: 12px; }
 .mb.xp:hover { filter: brightness(1.15); }
 .mb.xp .mb-tag { background: var(--amber); }
@@ -113,7 +113,7 @@
 #takeover { --rc: 248, 128, 8; position: fixed; inset: 0; z-index: 2900; overflow: hidden; cursor: none; color: var(--hi); font-family: var(--font); }
 #takeover.free { cursor: pointer; }
 #takeover.out { pointer-events: none; animation: tk-out 0.5s steps(6) both; }
-.tk-veil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 46%, rgba(var(--rc), 0.2), transparent 62%), rgba(5, 3, 2, 0.84); animation: tk-veil 0.5s steps(6) both; }
+.tk-veil { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 46%, rgba(var(--rc), 0.2), transparent 62%), rgba(var(--deep-rgb), 0.84); animation: tk-veil 0.5s steps(6) both; }
 .tk-noise { position: absolute; inset: -40%; opacity: 0.08; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); animation: tk-noise 0.45s steps(6) infinite; }
 .tk.glitch .tk-noise { opacity: 0.3; }
 .tk-confetti { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -122,7 +122,7 @@
 .tk-bars i { position: absolute; left: var(--l); top: var(--t); width: var(--w); height: var(--h); background: var(--c); opacity: 0.55; mix-blend-mode: screen; animation: tk-bar 0.16s steps(3) infinite alternate; }
 .tk-scan { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 3px); pointer-events: none; }
 .tk-log { position: absolute; left: 3vw; top: 4vh; margin: 0; color: rgb(var(--rc)); font: 700 clamp(11px, 1vw, 16px)/1.65 var(--font); letter-spacing: 0.06em; text-shadow: 0 0 8px rgba(var(--rc), 0.7); white-space: pre; }
-.tk-log .warn { color: #ff4d4d; text-shadow: 0 0 10px rgba(255, 77, 77, 0.85); }
+.tk-log .warn { color: var(--red); text-shadow: 0 0 10px rgba(var(--red-rgb), 0.85); }
 .tk-log i { display: inline-block; width: 0.6em; height: 1.05em; margin-left: 0.2em; vertical-align: -0.18em; background: currentColor; animation: tk-caret 0.5s steps(1) infinite; }
 .tk-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .tk.glitch .tk-center { animation: tk-shift 0.24s steps(4) infinite; }
@@ -130,8 +130,8 @@
 .tk-band.on { animation: tk-band 0.7s cubic-bezier(0.2, 1.4, 0.45, 1) both; }
 .tk-title { position: relative; color: #fff; font-size: min(15vw, 24vh); font-weight: 800; line-height: 1; letter-spacing: 0.04em; white-space: nowrap; text-shadow: 0 0 0.1em rgba(var(--rc), 0.95), 0 0 0.45em rgba(var(--rc), 0.55); }
 .tk-title::before, .tk-title::after { content: attr(data-text); position: absolute; left: 0; top: 0; text-shadow: none; mix-blend-mode: screen; }
-.tk-title::before { color: rgba(255, 210, 63, 0.85); transform: translateX(-0.035em); clip-path: inset(0 0 52% 0); animation: tk-slice-a 0.7s steps(5) infinite; }
-.tk-title::after { color: rgba(255, 77, 77, 0.85); transform: translateX(0.035em); clip-path: inset(50% 0 0 0); animation: tk-slice-b 0.55s steps(4) infinite; }
+.tk-title::before { color: rgba(var(--amber-rgb), 0.85); transform: translateX(-0.035em); clip-path: inset(0 0 52% 0); animation: tk-slice-a 0.7s steps(5) infinite; }
+.tk-title::after { color: rgba(var(--red-rgb), 0.85); transform: translateX(0.035em); clip-path: inset(50% 0 0 0); animation: tk-slice-b 0.55s steps(4) infinite; }
 .tk-title.on { animation: tk-land 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.3) both; }
 .tk-title.on::before, .tk-title.on::after { opacity: 0.55; }
 .tk-sub { margin-top: 2vh; font-size: min(3vw, 4.4vh); font-weight: 800; letter-spacing: 0.3em; opacity: 0; text-shadow: 0 0 14px rgba(var(--rc), 0.7), 0 2px 6px #000; }

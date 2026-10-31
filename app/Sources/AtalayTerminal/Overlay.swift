@@ -154,6 +154,7 @@ final class OverlayController: NSObject, WKScriptMessageHandlerWithReply, WKNavi
         let config = WKWebViewConfiguration()
         webView = WKWebView(frame: .zero, configuration: config)
         super.init()
+        ThemeStore.shared.attach(webView)
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "overlay")
         webView.navigationDelegate = self
         panel.isOpaque = false

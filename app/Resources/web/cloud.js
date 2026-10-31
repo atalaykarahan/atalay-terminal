@@ -1,7 +1,7 @@
 'use strict';
 
-// Hacker name (asked once, on first launch), the main menu (your profile, friends, the leaderboard, requests,
-// settings, your status) and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
+// Hacker name (asked once, on first launch), the main menu (your profile, settings, your status), friends and messages,
+// the leaderboard and the themes (views of the activity bar, git.js), feedback and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
 // tag (#0427) and name + tag is unique, like Discord. Swift's Cloud talks to the API, pushes its state through
 // window.__radar.cloud and answers the page through the "cloud" handler (with replies).
 window.Cloud = (() => {
@@ -21,12 +21,12 @@ window.Cloud = (() => {
   };
   const tagText = (t) => (t ? `#${String(t).padStart(4, '0')}` : '');
   // A download arrow over a tray; while an update downloads, the arrow keeps dropping into the tray.
-  // A speech bubble: beside the main menu, it opens the feedback window.
+  // A speech bubble: the feedback window's title.
   const BUBBLE = '<svg viewBox="0 0 24 24"><path d="M5 4.5h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-7.5L6.5 21v-4H5a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2z"/><circle cx="8.2" cy="10.8" r="1.1"/><circle cx="12" cy="10.8" r="1.1"/><circle cx="15.8" cy="10.8" r="1.1"/></svg>';
   const ARROW = '<svg viewBox="0 0 16 16"><path class="ar" d="M8 2.5v7.5M4.6 6.8 8 10.2l3.4-3.4"/><path d="M3 13.5h10"/></svg>';
 
   let S = null; // latest state
-  let modal = null; // 'first' | 'menu' | 'update'
+  let modal = null; // 'first' | 'menu' | 'update' | 'feedback'
   let tab = 'friends';
   let shownError = null;
   let shownNameError = null;
@@ -268,23 +268,10 @@ window.Cloud = (() => {
           <span class="mn-me"><span class="mn-handle"></span><button class="mn-copy" type="button" title="Copy your name#tag, so friends can add you">⧉</button><button class="mn-status" type="button" title="Your status"></button></span></div>
         <div class="mn-tabs">
           <button type="button" data-tab="profile">PROFILE</button>
-          <button type="button" data-tab="friends">FRIENDS <i class="cnt hot" data-count="unread"></i></button>
-          <button type="button" data-tab="board">LEADERBOARD</button>
-          <button type="button" data-tab="requests">REQUESTS <i class="cnt hot" data-count="requests"></i></button>
           <button type="button" data-tab="settings">SETTINGS</button>
         </div>
         <div class="mn-body">
           <section class="mn-page mn-profile" data-page="profile"></section>
-          <section class="mn-page" data-page="friends">
-            <label class="hk-field mn-add"><span class="hk-prompt">+</span><input class="mn-handle-in" maxlength="21" spellcheck="false" autocomplete="off" placeholder="add a friend · name#0427"><button class="mn-send" type="button" disabled>send request</button></label>
-            <p class="hk-status mn-add-status"></p>
-            <div class="mn-list mn-friends"></div>
-          </section>
-          <section class="mn-page mn-board" data-page="board"></section>
-          <section class="mn-page" data-page="requests">
-            <div class="hk-h">INCOMING</div><div class="mn-list mn-in"></div>
-            <div class="hk-h">SENT</div><div class="mn-list mn-out"></div>
-          </section>
           <section class="mn-page mn-settings" data-page="settings">
             <div class="hk-h">HACKER NAME</div>
             <label class="hk-field"><span class="hk-prompt">$</span><input class="hk-input fit" maxlength="${MAX}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="hacker name"><span class="hk-tag" title="Your tag: names can repeat, name + tag can't">${tagText(S.tag)}</span><span class="hk-count"></span></label>
@@ -299,8 +286,7 @@ window.Cloud = (() => {
           </section>
         </div>
         <div class="pk-foot"><span class="pk-sel note">esc to close</span><button class="pk-cancel">close</button><button class="pk-ok mn-save" disabled>save name</button></div>
-      </div>
-      <button class="mn-fbk" type="button" title="Send feedback to the developer"><i>${BUBBLE}</i><span>feedback</span></button></div>`;
+      </div></div>`;
 
     // settings: the hacker name
     const settings = q('.mn-settings');
@@ -317,54 +303,21 @@ window.Cloud = (() => {
       if (e.key === 'Enter') submit();
     });
 
-    // friends: add by name#tag
-    const add = q('.mn-handle-in'), send = q('.mn-send'), addStatus = q('.mn-add-status');
-    const valid = () => /^[A-Za-z0-9_.-]+( [A-Za-z0-9_.-]+)*#\d{1,4}$/.test(add.value.trim());
-    add.addEventListener('input', () => {
-      send.disabled = !valid();
-      addStatus.className = 'hk-status mn-add-status';
-      addStatus.textContent = '';
-    });
-    const request = async () => {
-      if (!valid()) return;
-      send.disabled = true;
-      const r = await Social.request(add.value.trim());
-      const say = (cls, msg) => {
-        addStatus.className = `hk-status mn-add-status ${cls}`;
-        addStatus.textContent = msg;
-      };
-      if (r.error) {
-        send.disabled = false;
-        return say('bad', REQUEST_ERRORS[r.error] || errorText(r.error));
-      }
-      add.value = '';
-      say('ok', r.friend ? `you and ${Social.handle(r.friend)} are friends now` : `request sent to ${Social.handle(r.request.to)}`);
-    };
-    send.onclick = request;
-    add.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') request();
-    });
-
-    q('.mn-fbk').onclick = openFeedback;
     q('.hk-sw.act').onclick = toggleActivity;
     q('.hk-sw.brd').onclick = toggleBoard;
-    q('.mn-board').addEventListener('click', boardAction);
     q('.mn-copy').onclick = () => copyHandle();
     q('.mn-status').onclick = (e) => {
       e.stopPropagation();
       statusMenu();
     };
     root.querySelectorAll('.mn-tabs button').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
-    q('.mn-body').addEventListener('click', listAction);
-    q('.mn-body').addEventListener('contextmenu', friendMenu);
     q('.l-close').onclick = close;
     q('.pk-cancel').onclick = close;
     root.onmousedown = (e) => {
       if (e.target === root) close();
       else if (!e.target.closest('.mn-pick, .mn-status')) q('.mn-pick')?.remove();
-      if (!e.target.closest('.mn-ctx')) q('.mn-ctx')?.remove();
     };
-    showTab(which || 'friends');
+    showTab(which || 'profile');
     renderInfo();
     renderProfile();
     renderActivity();
@@ -377,21 +330,22 @@ window.Cloud = (() => {
   // Goes straight to the developer with who sent it and when, no e-mail; ⌘↩ sends, esc goes back to the menu. Up to
   // 4000 characters (the API and the database hold the same limit); the count shows once it's close.
   const FEEDBACK_MAX = 4000;
+  // Feedback (the activity bar's foot): a window of its own that sends straight to the developer.
   function openFeedback() {
-    if (modal !== 'menu' || q('.fbk-layer')) return;
-    const layer = document.createElement('div');
-    layer.className = 'fbk-layer';
-    layer.innerHTML = `
+    if (modal) return;
+    modal = 'feedback';
+    tellModal(true);
+    root.className = 'on';
+    root.innerHTML = `
       <div class="pk hk fbk crt-on">
         <div class="pk-border"></div>
-        <div class="pk-title"><span class="lights"><i class="l-close" title="Back to the menu"></i><i class="l-min"></i><i class="l-max"></i></span>${BUBBLE}<b>FEEDBACK</b></div>
+        <div class="pk-title"><span class="lights"><i class="l-close" title="Close"></i><i class="l-min"></i><i class="l-max"></i></span>${BUBBLE}<b>FEEDBACK</b></div>
         <div class="hk-body">
           <label class="hk-field fbk-field"><textarea class="fbk-in" maxlength="${FEEDBACK_MAX}" placeholder="A bug, an idea, something that bothers you…&#10;It goes straight to the developer with your name#tag, no e-mail needed."></textarea></label>
         </div>
         <div class="pk-foot"><span class="pk-sel hk-status fbk-status"></span><button class="pk-ok fbk-send" title="⌘↩" disabled>send</button></div>
       </div>`;
-    root.appendChild(layer);
-    const $ = (sel) => layer.querySelector(sel);
+    const $ = (sel) => root.querySelector(sel);
     const box = $('.fbk-in'), send = $('.fbk-send'), status = $('.fbk-status');
     const say = (cls, msg) => {
       status.className = `pk-sel hk-status fbk-status ${cls}`;
@@ -419,7 +373,7 @@ window.Cloud = (() => {
         return say('bad', errorText(r.error));
       }
       feedbackDraft = '';
-      layer.remove();
+      close();
       toast('feedback sent · thank you, every one is read');
     };
     send.onclick = submit;
@@ -429,9 +383,9 @@ window.Cloud = (() => {
         submit();
       }
     });
-    $('.l-close').onclick = () => layer.remove();
-    layer.onmousedown = (e) => {
-      if (e.target === layer) layer.remove();
+    $('.l-close').onclick = close;
+    root.onmousedown = (e) => {
+      if (e.target === root) close();
     };
     setTimeout(() => box.focus(), 60);
   }
@@ -452,9 +406,8 @@ window.Cloud = (() => {
     root.querySelectorAll('.mn-page').forEach((p) => (p.hidden = p.dataset.page !== which));
     const save = q('.mn-save');
     if (save) save.hidden = which !== 'settings';
-    const focus = which === 'friends' ? q('.mn-handle-in') : which === 'settings' ? q('.mn-settings .hk-input') : null;
+    const focus = which === 'settings' ? q('.mn-settings .hk-input') : null;
     if (focus) setTimeout(() => focus.focus(), 60);
-    if (which === 'board') loadBoard();
   }
 
   async function copyHandle() {
@@ -493,27 +446,27 @@ window.Cloud = (() => {
   };
   const tagged = (p) => `<b>${esc(p.name)}<i>#${String(p.tag).padStart(4, '0')}</i></b>`;
 
-  // Friends, requests and your status, from Social's snapshot.
+  // Your status (the menu), friends and requests (their view), from Social's snapshot.
   function renderSocial() {
     badges();
-    if (modal !== 'menu') return;
     const s = Social.state();
     const me = s?.me;
-    setHTML(q('.mn-handle'), S.hackerName ? `${esc(S.hackerName)}<i>${tagText(S.tag)}</i>` : '');
-    setHTML(q('.mn-status'), me ? `${Social.dot(me.status)}<span>${Social.PRESENCE[me.status].label}</span>▾` : `${Social.dot('offline')}<span>offline</span>`);
+    if (modal === 'menu') {
+      setHTML(q('.mn-handle'), S.hackerName ? `${esc(S.hackerName)}<i>${tagText(S.tag)}</i>` : '');
+      setHTML(q('.mn-status'), me ? `${Social.dot(me.status)}<span>${Social.PRESENCE[me.status].label}</span>▾` : `${Social.dot('offline')}<span>offline</span>`);
+    }
+    if (shown !== 'friends') return;
     const unread = Social.unread(), requests = Social.requests();
-    const cUnread = q('[data-count="unread"]'), cReq = q('[data-count="requests"]');
-    cUnread.textContent = unread;
-    cUnread.hidden = !unread;
-    cReq.textContent = requests;
-    cReq.hidden = !requests;
+    const online = s ? s.friends.filter((f) => f.presence && f.presence !== 'offline').length : 0;
+    setText(fq('.cv-friends .meta'), s ? `${s.friends.length} friends · ${online} online${unread ? ` · ${unread} unread` : ''}` : '');
+    setText(fq('.cv-requests .meta'), requests ? `${requests} waiting for you` : '');
     if (!s) {
       const why = S.reachable ? 'loading…' : "can't reach the server · friends come back with the connection";
-      setHTML(q('.mn-friends'), `<div class="mn-empty">${why}</div>`);
+      setHTML(fq('.mn-friends'), `<div class="mn-empty">${why}</div>`);
       return;
     }
     setHTML(
-      q('.mn-friends'),
+      fq('.mn-friends'),
       s.friends.length
         ? s.friends
             .map((f) => {
@@ -532,9 +485,9 @@ window.Cloud = (() => {
             .join('')
         : `<div class="mn-empty">no friends yet · send them your tag: <b>${esc(S.hackerName || '')}${tagText(S.tag)}</b></div>`,
     );
-    lightFires(q('.mn-friends'));
+    lightFires(fq('.mn-friends'));
     setHTML(
-      q('.mn-in'),
+      fq('.mn-in'),
       s.incoming.length
         ? s.incoming
             .map((r) => `<div class="mn-row" data-id="${esc(r.id)}">${Social.dot(r.from.presence)}<div class="mn-main">${tagged(r.from)}<small>wants to be your friend · ${ago(r.at)}</small></div>` +
@@ -543,7 +496,7 @@ window.Cloud = (() => {
         : '<div class="mn-empty">no requests</div>',
     );
     setHTML(
-      q('.mn-out'),
+      fq('.mn-out'),
       s.outgoing.length
         ? s.outgoing
             .map((r) => `<div class="mn-row" data-id="${esc(r.id)}"><i class="pdot p-offline"></i><div class="mn-main">${tagged(r.to)}<small>waiting · ${ago(r.at)}</small></div>` +
@@ -560,7 +513,6 @@ window.Cloud = (() => {
     const id = row.dataset.id;
     switch (el.dataset.act) {
       case 'chat':
-        close();
         return Social.openChat(id);
       case 'profile':
         return Social.friend(id) && friendProfile(Social.friend(id));
@@ -583,12 +535,12 @@ window.Cloud = (() => {
   // Right-click on a friend: message, copy their name#tag, or remove them (after a yes).
   function friendMenu(e) {
     const row = e.target.closest('.mn-friends .mn-row');
-    q('.mn-ctx')?.remove();
+    fq('.mn-ctx')?.remove();
     if (!row) return;
     e.preventDefault();
     const f = Social.friend(row.dataset.id);
     if (!f) return;
-    const box = q('.pk.menu').getBoundingClientRect();
+    const box = views.friends.getBoundingClientRect();
     const menu = document.createElement('div');
     menu.className = 'mn-ctx';
     menu.innerHTML =
@@ -600,10 +552,7 @@ window.Cloud = (() => {
       const b = ev.target.closest('[data-ctx]');
       if (!b) return;
       menu.remove();
-      if (b.dataset.ctx === 'chat') {
-        close();
-        return Social.openChat(f.id);
-      }
+      if (b.dataset.ctx === 'chat') return Social.openChat(f.id);
       if (b.dataset.ctx === 'profile') return friendProfile(f);
       if (b.dataset.ctx === 'copy') {
         try {
@@ -614,7 +563,7 @@ window.Cloud = (() => {
       }
       confirmRemove(f);
     };
-    q('.pk.menu').appendChild(menu);
+    views.friends.appendChild(menu);
   }
 
   function confirmRemove(f) {
@@ -635,7 +584,7 @@ window.Cloud = (() => {
       Sfx.play('decline');
       toast(`removed ${Social.handle(f)}`);
     };
-    q('.pk.menu').appendChild(ask);
+    views.friends.appendChild(ask);
     ask.querySelector('[data-ans="no"]').focus();
   }
 
@@ -682,7 +631,7 @@ window.Cloud = (() => {
 
   // A friend's card: their rank and level, and their active time unless they keep it to themselves.
   function friendProfile(f) {
-    q('.mn-confirm')?.remove();
+    fq('.mn-confirm')?.remove();
     const x = f.xp || { level: 1, today: null, days: null, week: null, total: null };
     const r = Xp.rank(x.level);
     const card = document.createElement('div');
@@ -699,12 +648,9 @@ window.Cloud = (() => {
     card.onclick = (e) => {
       const b = e.target.closest('[data-ans]');
       if (e.target === card || (b && b.dataset.ans === 'close')) return card.remove();
-      if (b && b.dataset.ans === 'chat') {
-        close();
-        Social.openChat(f.id);
-      }
+      if (b && b.dataset.ans === 'chat') Social.openChat(f.id);
     };
-    q('.pk.menu').appendChild(card);
+    views.friends.appendChild(card);
   }
 
   function renderActivity() {
@@ -725,6 +671,7 @@ window.Cloud = (() => {
     S.xp = { ...S.xp, board: show };
     renderActivity();
     board = null;
+    if (shown === 'board') loadBoard();
     toast(show ? 'your name shows on the leaderboard again' : "you're Anonymous on the leaderboard · only you see your name there");
   }
 
@@ -779,8 +726,7 @@ window.Cloud = (() => {
   }
 
   function renderBoard() {
-    const el = q('.mn-board');
-    if (!el) return;
+    const el = views.board.querySelector('.lb-host');
     const head =
       `<div class="lb-head"><div class="lb-seg"><button type="button" data-by="week" class="${boardBy === 'week' ? 'on' : ''}">THIS WEEK</button>` +
       `<button type="button" data-by="all" class="${boardBy === 'all' ? 'on' : ''}">ALL TIME</button></div>` +
@@ -794,6 +740,10 @@ window.Cloud = (() => {
     const absent = board.me ? '' : `<p class="lb-foot">you'll show up here once you have some XP</p>`;
     setHTML(el, head + (rows ? `<div class="lb-list">${rows}${mine}</div>` : '<div class="mn-empty">no one on the leaderboard yet</div>') + absent);
     lightFires(el);
+    el.querySelectorAll('.lb-row').forEach((r) => r.classList.toggle('sel', !!picked && r.dataset.id === picked));
+    // Someone's card shows from the start: the one picked before, you, or the first with a name.
+    const first = boardUser(picked) || board.me || board.rows.find((u) => u.id);
+    if (first && (first.id !== picked || !views.board.querySelector('.pf-card'))) boardCard(first);
   }
 
   // Burning cards (five hours of work today, on the leaderboard and among friends): flames burn along their bottom,
@@ -819,12 +769,8 @@ window.Cloud = (() => {
     const u = row && row.dataset.id && boardUser(row.dataset.id);
     if (!u) return;
     const act = e.target.closest('[data-act]')?.dataset.act;
-    if (act === 'chat') {
-      close();
-      return Social.openChat(u.id);
-    }
+    if (act === 'chat') return Social.openChat(u.id);
     if (act === 'add') return addFromBoard(u, e.target.closest('button'));
-    if (u.me) return showTab('profile');
     boardCard(u);
   }
 
@@ -840,32 +786,45 @@ window.Cloud = (() => {
     else u.requested = true;
     toast(u.friend ? `you and ${Social.handle(u)} are friends now` : `request sent to ${Social.handle(u)}`);
     renderBoard();
-    if (q('.mn-confirm')) boardCard(u);
+    if (picked === u.id) boardCard(u);
   }
 
-  // Someone's card from the board: their rank and level, their week, and a friend request (or a message, a friend).
-  function boardCard(u) {
-    q('.mn-confirm')?.remove();
+  // Someone's card from the board, in their own theme (the one they picked in their app; the default before themes
+  // existed): their rank and level, their week, a friend request (or a message, a friend), and their theme, yours in one
+  // click.
+  let picked = null;
+  async function boardCard(u) {
+    picked = u.id;
+    views.board.querySelectorAll('.lb-row').forEach((r) => r.classList.toggle('sel', r.dataset.id === u.id));
+    const list = await themeList();
+    if (picked !== u.id) return;
+    const t = list && (list.themes.find((x) => x.id === (u.theme || 'atalay')) || list.themes[0]);
+    const host = views.board.querySelector('.cv-card');
+    host.setAttribute('style', t ? themeStyle(t.tokens) : '');
+    host.querySelector('.meta').textContent = t ? `in their theme · ${t.name}` : '';
     const r = Xp.rank(u.level);
     const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
-    const card = document.createElement('div');
-    card.className = 'mn-confirm';
-    card.innerHTML =
-      `<div class="mn-ask pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(u.level, 'pf-band')}` +
-      `<div class="pf-rank"><small>#${u.pos} on the leaderboard</small>${tagged(u)}<span>Level ${u.level} · ${esc(r.name)}</span></div></div>` +
+    const theirs = !t ? '' : u.me ? '<em>yours</em>' : t.id === list.chosen ? '<em>you use it too</em>'
+      : '<button type="button" class="mn-btn go" data-ans="theme" title="Use their theme">use this theme</button>';
+    setHTML(host.querySelector('.pf-host'),
+      `<div class="pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(u.level, 'pf-band')}` +
+      `<div class="pf-rank"><small>#${u.pos} on the leaderboard${u.me ? ' · you' : ''}</small>${tagged(u)}<span>Level ${u.level} · ${esc(r.name)}</span></div></div>` +
       `<div class="pf-stats">${stat('LAST 24H', u.last24 == null ? '—' : Xp.dur(u.last24))}${stat('THIS WEEK', `+${Xp.num(u.week)} XP`)}${stat('ACTIVE', active === null ? '—' : Xp.dur(active))}${stat('TOTAL', `${Xp.num(u.xp)} XP`)}</div>` +
-      (u.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(u.days, r.color, u.daysEnd)}` : '<p>keeps their active time to themselves</p>') +
-      `<div class="mn-ask-btns"><button type="button" class="mn-btn" data-ans="close">close</button>${boardButton(u, 'ans')}</div></div>`;
-    card.onclick = (e) => {
+      (u.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(u.days, r.color, u.daysEnd)}` : '<p class="pf-note">keeps their active time to themselves</p>') +
+      (t ? `<div class="pf-theme"><span><label>THEME</label><b>${esc(t.name)}</b></span>${theirs}</div>` : '') +
+      `<div class="mn-ask-btns">${boardButton(u, 'ans')}</div></div>`);
+    host.querySelector('.pf-host').onclick = async (e) => {
       const b = e.target.closest('[data-ans]');
-      if (e.target === card || (b && b.dataset.ans === 'close')) return card.remove();
-      if (b && b.dataset.ans === 'chat') {
-        close();
-        Social.openChat(u.id);
+      if (!b) return;
+      if (b.dataset.ans === 'chat') Social.openChat(u.id);
+      if (b.dataset.ans === 'add') addFromBoard(u, b);
+      if (b.dataset.ans === 'theme' && t) {
+        await theme('choose', { id: t.id }).catch(() => {});
+        list.chosen = t.id;
+        toast(`your theme is ${t.name} now`);
+        boardCard(u);
       }
-      if (b && b.dataset.ans === 'add') addFromBoard(u, b);
     };
-    q('.pk.menu').appendChild(card);
   }
 
   async function toggleActivity() {
@@ -885,9 +844,12 @@ window.Cloud = (() => {
 
   function badges() {
     const n = Social.unread() + Social.requests();
-    const b = brand.querySelector('.bdg'), me = brand.querySelector('.bme');
-    b.textContent = n > 99 ? '99+' : n;
-    b.hidden = !n;
+    for (const b of [brand.querySelector('.bdg'), document.querySelector('#activity [data-view=friends] .vs-badge')]) {
+      if (!b) continue;
+      b.textContent = n > 99 ? '99+' : n;
+      b.hidden = !n;
+    }
+    const me = brand.querySelector('.bme');
     const st = Social.state()?.me?.status;
     me.hidden = !st;
     if (st) me.className = `pdot bme p-${st}`;
@@ -909,12 +871,169 @@ window.Cloud = (() => {
   }
 
 
+  // ---------- themes ----------
+  // Swift makes and applies the colours (Themes.swift, the "theme" handler); the list comes once, with every theme's
+  // colours, for the theme view's pictures and for someone's card in their theme.
+  const theme = (type, payload) => window.webkit.messageHandlers.theme.postMessage(Object.assign({ type }, payload || {}));
+  let themes = null;
+  const themeList = async () => themes || (themes = await theme('list').catch(() => null));
+  // A theme's colours on one element and what's in it: its tokens, those made from them again (style.css makes them on
+  // the root, from the root's), and its text colour.
+  const themeStyle = (tokens) =>
+    Object.entries(tokens).map(([k, v]) => `${k}:${v}`).join(';') +
+    ';--panel:rgba(var(--panel-rgb),var(--glass-a));--line:rgba(var(--accent-rgb),0.32);--line-soft:rgba(var(--accent-rgb),0.13);color:var(--txt)';
+  let themeAt = -1; // the card the arrow keys are on
+
+  function themeCard(t, kept) {
+    const k = t.tokens, a = (i) => k[`--a${i}`];
+    const vars = {
+      '--t-bg': k['--bg'], '--t-panel': `rgb(${k['--panel-rgb']})`, '--t-acc': k['--accent'], '--t-soft': k['--accent-soft'], '--t-txt': k['--txt'],
+      '--t-dim': k['--dim'], '--t-cyan': k['--cyan'], '--t-warn': k['--warn'], '--t-code': k['--code-bg'], '--t-fg': k['--code-fg'], '--t-cur': k['--code-cursor'],
+    };
+    const style = Object.entries(vars).map(([n, v]) => `${n}:${v}`).join(';');
+    return (
+      `<button type="button" class="th-card${t.id === kept ? ' on' : ''}" data-id="${esc(t.id)}" style="${esc(style)}">` +
+      '<span class="th-shot"><span class="th-top"><i></i><b>ATALAY\'S</b><em></em></span>' +
+      '<span class="th-side"><i class="busy"></i><i class="idle"></i><i class="wait"></i></span>' +
+      `<span class="th-term"><span><b style="color:${a(2)}">❯</b> git status</span><span style="color:${a(1)}">  modified: app.js</span>` +
+      `<span style="color:${a(2)}">  new file: themes.json</span><span><b style="color:${a(4)}">~/repo</b> <b style="color:${a(5)}">main</b> <i class="cur"></i></span></span>` +
+      `<span class="th-pal">${Array.from({ length: 16 }, (_, i) => `<i style="background:${a(i)}"></i>`).join('')}</span></span>` +
+      `<span class="th-name">${esc(t.name)}<em>${t.id === kept ? 'ACTIVE' : ''}</em></span></button>`
+    );
+  }
+
+  // The themes view: each theme as a small picture of the app in its own colours. Pointing at one, or moving to it with
+  // the arrow keys, shows the whole app in it at once; a click (or ↩) keeps it; leaving the cards or the view goes back
+  // to the kept one.
+  async function openThemes() {
+    const el = views.themes;
+    const list = await themeList();
+    if (shown !== 'themes') return;
+    if (!list || !list.themes) return setHTML(el, `<section class="panel cv-themes"><header><span class="tag">themes</span></header><div class="mn-empty">themes didn't load</div></section>`);
+    el.innerHTML =
+      `<section class="panel cv-themes"><header><span class="tag">themes</span><span class="meta">${list.themes.length} themes · point to try · click to keep · the orbit map keeps its colours</span></header>` +
+      `<div class="body th-grid">${list.themes.map((t) => themeCard(t, list.chosen)).join('')}</div></section>`;
+    const cards = [...el.querySelectorAll('.th-card')];
+    let timer = 0;
+    themeAt = -1;
+    const show = (id) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => theme(id === list.chosen ? 'revert' : 'preview', { id }), 90);
+    };
+    const mark = (i) => {
+      themeAt = i;
+      cards.forEach((c, j) => c.classList.toggle('hot', j === i));
+    };
+    const keep = (card) => {
+      list.chosen = card.dataset.id;
+      clearTimeout(timer);
+      theme('choose', { id: list.chosen });
+      cards.forEach((c) => {
+        c.classList.toggle('on', c === card);
+        c.querySelector('.th-name em').textContent = c === card ? 'ACTIVE' : '';
+      });
+    };
+    cards.forEach((card, i) => {
+      card.onmouseenter = () => {
+        mark(i);
+        show(card.dataset.id);
+      };
+      card.onclick = () => keep(card);
+    });
+    el.querySelector('.th-grid').onmouseleave = () => {
+      mark(-1);
+      show(list.chosen);
+    };
+    el.__keys = (e) => {
+      const cols = getComputedStyle(el.querySelector('.th-grid')).gridTemplateColumns.split(' ').length;
+      const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols }[e.key];
+      if (step) {
+        e.preventDefault();
+        const i = Math.max(0, Math.min(cards.length - 1, themeAt < 0 ? cards.findIndex((c) => c.dataset.id === list.chosen) : themeAt + step));
+        mark(i);
+        cards[i].scrollIntoView({ block: 'nearest' });
+        show(cards[i].dataset.id);
+      } else if (e.key === 'Enter' && themeAt >= 0) {
+        e.preventDefault();
+        keep(cards[themeAt]);
+      }
+    };
+  }
+
+  // ---------- the activity bar's views (git.js): the leaderboard and the themes, where the dashboard's middle is ----------
+  const views = {};
+  for (const v of ['friends', 'board', 'themes']) {
+    const el = document.createElement('section');
+    el.id = `${v}-view`;
+    el.className = 'cv';
+    document.getElementById('app').appendChild(el);
+    views[v] = el;
+  }
+  views.board.innerHTML =
+    '<section class="panel cv-list"><header><span class="tag">leaderboard</span><span class="meta">everyone with XP</span></header><div class="body lb-host"></div></section>' +
+    '<section class="panel cv-card"><header><span class="tag">hacker</span><span class="meta"></span></header><div class="body pf-host"></div></section>';
+  views.board.querySelector('.lb-host').addEventListener('click', boardAction);
+  const fq = (sel) => views.friends.querySelector(sel);
+  views.friends.innerHTML =
+    '<section class="panel cv-friends"><header><span class="tag">friends</span><span class="meta"></span></header><div class="body">' +
+    '<label class="hk-field mn-add"><span class="hk-prompt">+</span><input class="mn-handle-in" maxlength="21" spellcheck="false" autocomplete="off" placeholder="add a friend · name#0427"><button class="mn-send" type="button" disabled>send request</button></label>' +
+    '<p class="hk-status mn-add-status"></p><div class="mn-list mn-friends"></div></div></section>' +
+    '<section class="panel cv-requests"><header><span class="tag">requests</span><span class="meta"></span></header><div class="body">' +
+    '<div class="hk-h">INCOMING</div><div class="mn-list mn-in"></div><div class="hk-h">SENT</div><div class="mn-list mn-out"></div></div></section>';
+  views.friends.addEventListener('click', listAction);
+  views.friends.addEventListener('contextmenu', friendMenu);
+  views.friends.addEventListener('mousedown', (e) => {
+    if (!e.target.closest('.mn-ctx')) fq('.mn-ctx')?.remove();
+  });
+  // Friends: add one by name#tag.
+  {
+    const add = fq('.mn-handle-in'), send = fq('.mn-send'), addStatus = fq('.mn-add-status');
+    const valid = () => /^[A-Za-z0-9_.-]+( [A-Za-z0-9_.-]+)*#\d{1,4}$/.test(add.value.trim());
+    const say = (cls, msg) => {
+      addStatus.className = `hk-status mn-add-status ${cls}`;
+      addStatus.textContent = msg;
+    };
+    add.addEventListener('input', () => {
+      send.disabled = !valid();
+      say('', '');
+    });
+    const request = async () => {
+      if (!valid()) return;
+      send.disabled = true;
+      const r = await Social.request(add.value.trim());
+      if (r.error) {
+        send.disabled = false;
+        return say('bad', REQUEST_ERRORS[r.error] || errorText(r.error));
+      }
+      add.value = '';
+      say('ok', r.friend ? `you and ${Social.handle(r.friend)} are friends now` : `request sent to ${Social.handle(r.request.to)}`);
+    };
+    send.onclick = request;
+    add.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') request();
+    });
+  }
+  let shown = null;
+  function showView(v) {
+    if (v === shown) return;
+    if (shown === 'themes') theme('revert').catch(() => {});
+    shown = v;
+    document.getElementById('app').classList.toggle('cloud-mode', !!v);
+    for (const [k, el] of Object.entries(views)) el.classList.toggle('on', k === v);
+    if (v === 'friends') {
+      renderSocial();
+      // Whatever changed while you weren't looking (a missed live event, another device) shows when it opens.
+      Social.load();
+    }
+    if (v === 'board') loadBoard();
+    if (v === 'themes') openThemes();
+  }
+
   function close() {
     if (!modal) return;
     modal = null;
     tellModal(false);
     root.onmousedown = null;
-    q('.fbk-layer')?.remove();
     const pk = q('.pk');
     if (pk) pk.classList.replace('crt-on', 'crt-off');
     setTimeout(() => {
@@ -928,20 +1047,28 @@ window.Cloud = (() => {
 
   $('update').addEventListener('click', openUpdate);
   $('settings').addEventListener('click', () => openMenu('settings'));
-  brand.addEventListener('click', () => openMenu('friends'));
+  brand.addEventListener('click', () => openMenu('profile'));
   addEventListener('keydown', (e) => {
+    if (!modal && shown === 'themes' && e.key !== 'Escape' && !e.target.closest('input, textarea')) return views.themes.__keys?.(e);
     if (e.key !== 'Escape') return;
+    // Esc on a view of the activity bar closes what's on top of it first (a card, a small menu), then goes back to the
+    // dashboard.
+    if (!modal && shown) {
+      const top = views[shown].querySelector('.mn-confirm, .mn-ctx');
+      return top ? top.remove() : window.GitView?.view('dash');
+    }
     if (modal === 'update') {
       if (!S.updating) close();
       return;
     }
+    if (modal === 'feedback') return close();
     if (modal !== 'menu') return;
-    // Esc closes what's on top first: the feedback window, the confirmation, a small menu, then the main menu.
-    const top = q('.fbk-layer') || q('.mn-confirm') || q('.mn-ctx') || q('.mn-pick');
+    // Esc closes what's on top first: the confirmation, a small menu, then the main menu.
+    const top = q('.mn-confirm') || q('.mn-ctx') || q('.mn-pick');
     if (top) return top.remove();
     close();
   });
   refresh();
 
-  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate };
+  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView };
 })();

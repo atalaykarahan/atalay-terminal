@@ -448,7 +448,8 @@ window.Messages = (() => {
   function confetti(canvas, rc) {
     const dpr = Math.min(2, devicePixelRatio || 1);
     const g = canvas.getContext('2d');
-    const colors = [`rgb(${rc})`, `rgb(${rc})`, '#f88008', '#ffb057', '#ffd23f', '#ffffff', '#ff4d4d'];
+    const css = getComputedStyle(document.documentElement), t = (k) => css.getPropertyValue(k).trim();
+    const colors = [`rgb(${rc})`, `rgb(${rc})`, t('--accent'), t('--accent-soft'), t('--amber'), '#ffffff', t('--red')];
     const bits = [];
     const spawn = (n) => {
       for (let i = 0; i < n; i++) {

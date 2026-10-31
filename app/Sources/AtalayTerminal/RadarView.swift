@@ -14,30 +14,28 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         config.userContentController = ucc
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800), configuration: config)
         super.init()
+        ThemeStore.shared.attach(webView)
         ucc.add(WeakMessageHandler(self), name: "radar")
         ucc.addScriptMessageHandler(CloudBridge(), contentWorld: .page, name: "cloud")
+        ucc.addScriptMessageHandler(ThemeBridge(), contentWorld: .page, name: "theme")
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = self
         let dir = Self.webDirectory()
         webView.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
     }
 
-    /// The terminals' look for the page (Source Control shows code in it): their font (the user's iTerm2 one) and
-    /// colours (Theme), as `window.__terminalLook`.
+    /// The terminals' font for the page (Source Control shows code in it), the user's iTerm2 one, as
+    /// `window.__terminalLook`; their colours are the theme's (ThemeStore).
     private static let terminalLook: String = {
         let look = ITermLook.current
         let family = look?.fontName.flatMap { NSFont(name: $0, size: 13)?.familyName } ?? "Menlo"
-        let hex = { (c: UInt32) in String(format: "#%06x", c) }
-        let value: [String: Any] = [
-            "font": family, "size": Double(look?.fontSize ?? 13), "bg": hex(Theme.terminalBgHex), "fg": hex(Theme.textHex),
-            "cursor": hex(Theme.accentHex), "ansi": Theme.ansi.map(hex),
-        ]
+        let value: [String: Any] = ["font": family, "size": Double(look?.fontSize ?? 13)]
         let json = (try? JSONSerialization.data(withJSONObject: value)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return "window.__terminalLook = \(json);"
     }()
 
     /// Bundled copy inside the .app, or the source folder when run with `swift run`.
-    static func webDirectory() -> URL {
+    nonisolated static func webDirectory() -> URL {
         if let res = Bundle.main.resourceURL?.appendingPathComponent("web"),
            FileManager.default.fileExists(atPath: res.appendingPathComponent("index.html").path) {
             return res

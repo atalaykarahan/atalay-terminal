@@ -1,16 +1,18 @@
 'use strict';
 
 // ---------- constants ----------
+// Each kind of tool call's colour: `color` is the orbit map's, which keeps the default theme's colours (orbit.js),
+// `css` the theme's, for the rest of the page.
 const CAT = {
-  web: { color: '#38bdf8', label: 'web', station: 'web.research' },
-  browser: { color: '#5b8cff', label: 'browser', station: 'browser.drive' },
-  read: { color: '#3dffa8', label: 'read', station: 'files.read' },
-  search: { color: '#b8ff3d', label: 'search', station: 'code.search' },
-  edit: { color: '#ffd23f', label: 'edit', station: 'files.write' },
-  bash: { color: '#ff5c8a', label: 'shell', station: 'shell.exec' },
-  agent: { color: '#9d6bff', label: 'agents', station: 'agents.spawn' },
-  mcp: { color: '#e879f9', label: 'mcp', station: 'mcp.call' },
-  plan: { color: '#a99bc4', label: 'plan', station: 'plan.skill' },
+  web: { color: '#38bdf8', css: 'var(--sky)', label: 'web', station: 'web.research' },
+  browser: { color: '#5b8cff', css: 'var(--blue)', label: 'browser', station: 'browser.drive' },
+  read: { color: '#3dffa8', css: 'var(--green)', label: 'read', station: 'files.read' },
+  search: { color: '#b8ff3d', css: 'var(--lime)', label: 'search', station: 'code.search' },
+  edit: { color: '#ffd23f', css: 'var(--amber)', label: 'edit', station: 'files.write' },
+  bash: { color: '#ff5c8a', css: 'var(--orange)', label: 'shell', station: 'shell.exec' },
+  agent: { color: '#9d6bff', css: 'var(--violet)', label: 'agents', station: 'agents.spawn' },
+  mcp: { color: '#e879f9', css: 'var(--magenta)', label: 'mcp', station: 'mcp.call' },
+  plan: { color: '#a99bc4', css: 'var(--lavender)', label: 'plan', station: 'plan.skill' },
 };
 const CATS = Object.keys(CAT);
 const STATUS = {
@@ -19,8 +21,9 @@ const STATUS = {
   idle: { color: '#00e5ff', label: 'YOUR TURN' },
   ended: { color: '#5c4d40', label: 'ENDED' },
 };
+// A session's colour: the orbit map's (HUES) and the theme's (--hue0…--hue9, sessCss).
 const HUES = ['#ffb057', '#00e5ff', '#9d6bff', '#3dffa8', '#ff5c8a', '#5b8cff', '#ffd23f', '#b8ff3d', '#e879f9', '#f5ebe0'];
-const LOG_CAT = { prompt: ['you', '#ffffff'], say: ['claude', '#d9c3a8'], sys: ['system', '#ffd23f'], state: ['status', '#ffb057'] };
+const LOG_CAT = { prompt: ['you', '#ffffff'], say: ['claude', 'var(--txt2)'], sys: ['system', 'var(--amber)'], state: ['status', 'var(--accent-soft)'] };
 const FONT = '"SF Mono", Menlo, Monaco, Consolas, monospace';
 
 // ---------- native app bridge ----------
@@ -85,6 +88,7 @@ function clock(ms) {
 const ago = (t) => (t ? fmtDur(Math.max(0, Date.now() - t)) : '');
 const hhmmss = (t) => new Date(t).toTimeString().slice(0, 8);
 const ctxColor = (p) => (p < 0.5 ? '#f88008' : p < 0.8 ? '#ffd23f' : '#ff4d4d');
+const ctxCss = (p) => (p < 0.5 ? 'var(--accent)' : p < 0.8 ? 'var(--amber)' : 'var(--red)');
 
 const colorIdx = new Map();
 function colorIndex(sid) {
@@ -92,6 +96,7 @@ function colorIndex(sid) {
   return colorIdx.get(sid);
 }
 const sessColor = (sid) => HUES[colorIndex(sid || '?') % HUES.length];
+const sessCss = (sid) => `var(--hue${colorIndex(sid || '?') % HUES.length})`;
 const NAMES = new Map();
 const sessName = (sid) => NAMES.get(sid) || String(sid || '?').slice(0, 6);
 
@@ -307,7 +312,7 @@ function sparkBars(arr, col) {
   return arr
     .map((v, i) => {
       const h = v ? Math.max(1.5, (v / max) * 19) : 0.7;
-      return `<rect x="${(i * w + 0.4).toFixed(1)}" y="${(20 - h).toFixed(1)}" width="${(w - 1.1).toFixed(1)}" height="${h.toFixed(1)}" fill="${v ? col : 'rgba(255,255,255,.09)'}"/>`;
+      return `<rect x="${(i * w + 0.4).toFixed(1)}" y="${(20 - h).toFixed(1)}" width="${(w - 1.1).toFixed(1)}" height="${h.toFixed(1)}" style="fill:${v ? col : 'rgba(255,255,255,.09)'}"/>`;
     })
     .join('');
 }
@@ -315,7 +320,7 @@ function areaChart(arr, color, w, h) {
   const max = Math.max(...arr, 1e-9);
   const step = w / Math.max(1, arr.length - 1);
   const pts = arr.map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(1)} ${(h - 2 - (v / max) * (h - 5)).toFixed(1)}`).join(' ');
-  return `<path d="${pts} L${w} ${h} L0 ${h} Z" fill="${hexA(color, 0.14)}"/><path d="${pts}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`;
+  return `<path d="${pts} L${w} ${h} L0 ${h} Z" style="fill:${color};fill-opacity:0.14"/><path d="${pts}" fill="none" style="stroke:${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`;
 }
 
 // ---------- log ----------
@@ -342,15 +347,15 @@ function logLine(ev, live) {
   let cat, col, text;
   if (ev.k === 'tool') {
     cat = CAT[ev.c]?.label || ev.c;
-    col = CAT[ev.c]?.color || '#a99bc4';
+    col = CAT[ev.c]?.css || 'var(--lavender)';
     text = toolText(ev);
   } else {
-    [cat, col] = LOG_CAT[ev.k] || ['·', '#a99bc4'];
+    [cat, col] = LOG_CAT[ev.k] || ['·', 'var(--lavender)'];
     text = ev.k === 'prompt' ? `› ${ev.l}` : ev.l;
   }
   const el = document.createElement('div');
   el.className = `ln ${ev.k}${ev.err || ev.cls === 'err' ? ' err' : ''}${live ? ' enter' : ''}`;
-  el.innerHTML = `<span class="tm">${hhmmss(ev.t || Date.now())}</span><span class="who" style="color:${sessColor(ev.s)}">${esc(sessName(ev.s))}${ev.a ? ' ⤷' : ''}</span><span class="cat" style="color:${col}">${esc(cat)}</span><span class="txt">${esc(text)}</span><span class="st"></span>`;
+  el.innerHTML = `<span class="tm">${hhmmss(ev.t || Date.now())}</span><span class="who" style="color:${sessCss(ev.s)}">${esc(sessName(ev.s))}${ev.a ? ' ⤷' : ''}</span><span class="cat" style="color:${col}">${esc(cat)}</span><span class="txt">${esc(text)}</span><span class="st"></span>`;
   el.dataset.sid = ev.s || '';
   if (ev.k === 'tool') {
     el.__id = ev.id;
@@ -459,7 +464,7 @@ function resetLabel(at, long) {
 function actionHTML(s) {
   if (s.status === 'waiting') return `<span class="red">⚠ ${esc(s.waitingFor || 'waiting for you')}</span>`;
   const p = s.pending[0] || s.agents.find((a) => a.pending.length)?.pending[0];
-  if (p) return `<span style="color:${CAT[p.c]?.color}">▸ ${esc(p.n)}</span> ${esc(p.l)} <i class="dim">${fmtDur(Date.now() - p.t)}</i>`;
+  if (p) return `<span style="color:${CAT[p.c]?.css}">▸ ${esc(p.n)}</span> ${esc(p.l)} <i class="dim">${fmtDur(Date.now() - p.t)}</i>`;
   if (s.status === 'busy') return `<span class="teal">◌ thinking…</span>${s.last ? ` <i class="dim">last ${esc(s.last.n)} ${esc(clipT(s.last.l, 36))}</i>` : ''}`;
   if (s.status === 'idle') return `<span class="amber">◆ finished · your turn</span>${s.turnMs ? ` <i class="dim">last turn ${fmtDur(s.turnMs)}</i>` : ''}`;
   return `<span class="dim">ended ${ago(s.lastTs)} ago</span>`;
@@ -557,7 +562,7 @@ function createCard() {
 function updateCard(el, s) {
   const q = (sel) => el.querySelector(sel);
   for (const st of Object.keys(STATUS)) el.classList.toggle('st-' + st, s.status === st);
-  const col = sessColor(s.id);
+  const col = sessCss(s.id);
   // Folded: one line, the name Claude gave it and its status.
   const folded = collapsed.has(s.id);
   el.classList.toggle('collapsed', folded);
@@ -578,7 +583,7 @@ function updateCard(el, s) {
   const pct = s.ctxMax ? Math.min(1, s.ctx / s.ctxMax) : 0;
   const bar = q('.bar > i');
   bar.style.width = (pct * 100).toFixed(1) + '%';
-  bar.style.background = ctxColor(pct);
+  bar.style.background = ctxCss(pct);
   setText(q('.cv'), `${fmtTok(s.ctx)}${s.ctxMax ? ' / ' + fmtTok(s.ctxMax) : ''}`);
   setText(q('.md'), [s.model, s.effort].filter(Boolean).join(' · '));
   setText(q('.tl'), s.tools);
@@ -622,7 +627,7 @@ function renderResearch() {
       if (r.m) bits.push(r.m);
       if (r.d != null) bits.push(fmtDur(r.d));
       bits.push(ago(r.t) + ' ago');
-      setHTML(el.querySelector('.m'), `<i class="dot" style="background:${sessColor(r.s)}"></i>${esc(bits.join(' · '))}`);
+      setHTML(el.querySelector('.m'), `<i class="dot" style="background:${sessCss(r.s)}"></i>${esc(bits.join(' · '))}`);
       // A call whose result never shows up (interrupted turn) must not blink forever.
       el.classList.toggle('pending', r.ok === null && Date.now() - r.t < 120_000);
       el.classList.toggle('bad', r.ok === false || /^[45]\d\d/.test(r.m || ''));
@@ -652,7 +657,7 @@ function renderFiles() {
       el.title = f.p;
       el.querySelector('.r').style.width = ((f.r / max) * 100).toFixed(1) + '%';
       el.querySelector('.w').style.width = ((f.w / max) * 100).toFixed(1) + '%';
-      const dots = [...new Set(f.editors.map((e) => e.s))].map((s) => `<i style="background:${sessColor(s)}"></i>`).join('');
+      const dots = [...new Set(f.editors.map((e) => e.s))].map((s) => `<i style="background:${sessCss(s)}"></i>`).join('');
       setHTML(el.querySelector('.n'), `r${f.r} w${f.w}${dots}`);
       el.classList.toggle('collide', f.collision);
     },
@@ -664,9 +669,9 @@ function renderMix() {
   setText($('m-mix'), `${STATE.totals.tools} calls today · 30 min trend`);
   setHTML(
     $('mix'),
-    `<div class="mixbar">${CATS.map((c) => `<i style="width:${total ? (((STATE.byCat[c] || 0) / total) * 100).toFixed(2) : 0}%;background:${CAT[c].color}"></i>`).join('')}</div>` +
-      `<div class="mixlegend">${CATS.map((c) => `<span><i style="background:${CAT[c].color}"></i>${CAT[c].label} <b>${STATE.byCat[c] || 0}</b></span>`).join('')}</div>` +
-      `<svg class="chart" viewBox="0 0 300 34" preserveAspectRatio="none">${areaChart(STATE.toolSpark, '#f88008', 300, 34)}</svg>`,
+    `<div class="mixbar">${CATS.map((c) => `<i style="width:${total ? (((STATE.byCat[c] || 0) / total) * 100).toFixed(2) : 0}%;background:${CAT[c].css}"></i>`).join('')}</div>` +
+      `<div class="mixlegend">${CATS.map((c) => `<span><i style="background:${CAT[c].css}"></i>${CAT[c].label} <b>${STATE.byCat[c] || 0}</b></span>`).join('')}</div>` +
+      `<svg class="chart" viewBox="0 0 300 34" preserveAspectRatio="none">${areaChart(STATE.toolSpark, 'var(--accent)', 300, 34)}</svg>`,
   );
 }
 
@@ -698,7 +703,7 @@ function renderWorkers() {
       const p = a.pending[0] || a.last;
       setHTML(
         el.querySelector('.l2'),
-        `${p ? `<span style="color:${CAT[p.c]?.color}">▸ ${esc(p.n)}</span> ${esc(clipT(p.l, 50))} · ` : ''}${a.tools} tools · ${fmtUsd(a.cost)}${a.errors ? ` · <span class="red">${a.errors} err</span>` : ''}`,
+        `${p ? `<span style="color:${CAT[p.c]?.css}">▸ ${esc(p.n)}</span> ${esc(clipT(p.l, 50))} · ` : ''}${a.tools} tools · ${fmtUsd(a.cost)}${a.errors ? ` · <span class="red">${a.errors} err</span>` : ''}`,
       );
     },
   );
@@ -716,7 +721,7 @@ function renderSpend() {
   const T = STATE.totals;
   setNum('spend-big', T.cost, fmtUsd);
   setText($('spend-sub'), `today · ${fmtTok(T.tok.out)} out · ${fmtTok(T.tok.cr)} cache read · ${fmtTok(T.tok.cw)} cache write`);
-  setHTML($('spend-chart'), areaChart(STATE.costSpark, '#ffd23f', 300, 34));
+  setHTML($('spend-chart'), areaChart(STATE.costSpark, 'var(--amber)', 300, 34));
   setHTML(
     $('spend-rows'),
     STATE.byModel
@@ -776,7 +781,7 @@ function renderTicker() {
       return el;
     },
     (el, t) => {
-      const col = CAT[t.c]?.color || '#a99bc4';
+      const col = CAT[t.c]?.css || 'var(--lavender)';
       if (el.__c !== col) {
         el.style.background = col;
         el.style.color = col;

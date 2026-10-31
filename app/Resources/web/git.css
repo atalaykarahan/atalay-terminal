@@ -6,14 +6,14 @@
 
 #activity, #git {
   /* the screen: the dashboard's tokens (style.css) */
-  --fg: #f5ebe0; --hi: #fff8f0; --desc: #8f7a66; --icon: #8f7a66; --icon-hi: #ffb057; --focus: #f88008;
-  --side: rgba(22, 13, 7, 0.8); --solid: #140b06; --window: transparent;
-  --border: rgba(248, 128, 8, 0.32); --border-soft: rgba(248, 128, 8, 0.13);
-  --hover: rgba(248, 128, 8, 0.08); --sel: rgba(248, 128, 8, 0.18); --tool-hover: rgba(248, 128, 8, 0.14);
-  --input: rgba(10, 7, 5, 0.65); --placeholder: #6f5d4d;
-  --btn: #f88008; --btn-hover: #ffb057; --btn-fg: #1a0d00; --btn-sep: rgba(26, 13, 0, 0.35); --badge: #f88008; --badge-fg: #1a0d00;
-  /* the code: the terminals' look (git-editor.js sets --code-* and --a0…--a15 from Theme.swift) */
-  --editor: var(--code-bg, #251200); --ln: var(--a8, #7d6553); --crumb: #8f7a66;
+  --fg: var(--txt); --desc: var(--dim); --icon: var(--dim); --icon-hi: var(--accent-soft); --focus: var(--accent);
+  --side: rgba(var(--panel-rgb), 0.8); --solid: rgb(var(--panel-rgb)); --window: transparent;
+  --border: var(--line); --border-soft: var(--line-soft);
+  --hover: rgba(var(--accent-rgb), 0.08); --sel: rgba(var(--accent-rgb), 0.18); --tool-hover: rgba(var(--accent-rgb), 0.14);
+  --input: rgba(var(--bg-rgb), 0.65); --placeholder: var(--faint);
+  --btn: var(--accent); --btn-hover: var(--accent-soft); --btn-fg: var(--ink); --btn-sep: rgba(var(--ink-rgb), 0.35); --badge: var(--accent); --badge-fg: var(--ink);
+  /* the code: the terminals' look (git-editor.js sets --code-* and --a0…--a15 from the theme, Themes.swift) */
+  --editor: var(--code-bg, #251200); --ln: var(--a8, #7d6553); --crumb: var(--dim);
   --ins: color-mix(in srgb, var(--a2, #c5e35a) 9%, transparent); --ins-t: color-mix(in srgb, var(--a2, #c5e35a) 18%, transparent);
   --del: color-mix(in srgb, var(--a1, #ff4d4d) 13%, transparent); --del-t: color-mix(in srgb, var(--a1, #ff4d4d) 24%, transparent);
   --fill: color-mix(in srgb, var(--a7, #ffb27a) 20%, transparent);
@@ -160,7 +160,7 @@
 #git .vs-r.sel .vs-ld { opacity: 1; }
 #git .vs-il > .vs-acts { flex-grow: 100; justify-content: flex-end; }
 #git .vs-res.strike .vs-ln, #git .vs-res.strike .vs-ld { text-decoration: line-through; }
-#git .vs-deco { display: flex; flex: none; align-items: center; justify-content: center; width: 16px; height: 100%; margin-left: 5px; color: #f88008; font-size: 10px; }
+#git .vs-deco { display: flex; flex: none; align-items: center; justify-content: center; width: 16px; height: 100%; margin-left: 5px; color: var(--accent); font-size: 10px; }
 
 /* ---- the graph ---- */
 #git .vs-history { display: flex; align-items: center; height: 100%; }
@@ -193,7 +193,7 @@
 #git .vs-ta .vs-ci { color: var(--code-fg, var(--fg)); }
 #git .vs-eda { display: flex; flex: none; align-items: center; align-self: center; margin-left: auto; padding: 0 8px 0 4px; }
 #git .vs-eda .vs-al { margin-right: 4px; }
-#git .vs-crumbs { display: flex; flex: none; align-items: center; height: 22px; padding-left: 14px; overflow: hidden; color: color-mix(in srgb, var(--code-fg, #f5ebe0) 60%, transparent); white-space: nowrap; cursor: default; }
+#git .vs-crumbs { display: flex; flex: none; align-items: center; height: 22px; padding-left: 14px; overflow: hidden; color: color-mix(in srgb, var(--code-fg, var(--txt)) 60%, transparent); white-space: nowrap; cursor: default; }
 #git .vs-bi { display: flex; align-items: center; height: 100%; }
 #git .vs-bi .vs-fi { padding-right: 6px; }
 #git .vs-bs { color: inherit; }
@@ -216,7 +216,7 @@
 #git .vs-hl.ins { --lc: var(--ins); }
 #git .vs-hl.del.whole { background: linear-gradient(var(--del-t), var(--del-t)), var(--del); }
 #git .vs-hl.ins.whole { background: linear-gradient(var(--ins-t), var(--ins-t)), var(--ins); }
-#git .vs-hl.cur:not(.del):not(.ins) { background: rgba(248, 128, 8, 0.08); }
+#git .vs-hl.cur:not(.del):not(.ins) { background: rgba(var(--accent-rgb), 0.08); }
 #git .vs-n { flex: none; width: calc(5ch + 3px); color: var(--ln); text-align: right; user-select: none; }
 #git .vs-hl.cur .vs-n { color: var(--code-fg, var(--fg)); }
 #git .vs-dv.inline .vs-n { width: calc(4ch + 3px); }
@@ -244,7 +244,7 @@
 #git .vs-sticky[hidden] { display: none; }
 #git .vs-sticky .vs-hl { height: 20px; padding-right: 0; overflow: hidden; }
 #git .vs-sticky .vs-t { overflow: hidden; white-space: pre; text-overflow: ellipsis; text-indent: 0; padding-left: 0; }
-#git .vs-sticky .vs-hl:hover { background: rgba(248, 128, 8, 0.08); }
+#git .vs-sticky .vs-hl:hover { background: rgba(var(--accent-rgb), 0.08); }
 
 /* the overview rulers: each editor's (its scroll bar, its cursor) and the diff's (where the changes are) */
 #git .vs-er { position: absolute; top: 0; bottom: 0; z-index: 4; width: 13px; border-left: 1px solid rgba(0, 0, 0, 0.35); }
@@ -255,11 +255,11 @@
 #git .vs-slider:hover { background: color-mix(in srgb, var(--a7, #ffb27a) 30%, transparent); }
 #git .vs-slider.on { background: color-mix(in srgb, var(--a7, #ffb27a) 38%, transparent); }
 #git .vs-slider[hidden] { display: none; }
-#git .vs-cur { position: absolute; left: 0; right: 0; height: 2px; background: var(--code-cursor, #f88008); pointer-events: none; }
+#git .vs-cur { position: absolute; left: 0; right: 0; height: 2px; background: var(--code-cursor, var(--accent)); pointer-events: none; }
 #git .vs-cur[hidden] { display: none; }
 #git .vs-dov { position: absolute; top: 0; bottom: 0; right: 0; z-index: 4; width: 30px; background: var(--editor); }
 #git .vs-marks { position: absolute; inset: 0; pointer-events: none; }
-#git .vs-mk { position: absolute; left: 0; width: 15px; background: color-mix(in srgb, var(--a1, #ff4d4d) 65%, transparent); }
+#git .vs-mk { position: absolute; left: 0; width: 15px; background: color-mix(in srgb, var(--a1, var(--red)) 65%, transparent); }
 #git .vs-mk.b { left: 15px; background: color-mix(in srgb, var(--a2, #c5e35a) 65%, transparent); }
 #git .vs-vp { position: absolute; left: 0; right: 0; background: color-mix(in srgb, var(--a7, #ffb27a) 18%, transparent); }
 #git .vs-vp.on, #git .vs-vp:hover { background: color-mix(in srgb, var(--a7, #ffb27a) 26%, transparent); }

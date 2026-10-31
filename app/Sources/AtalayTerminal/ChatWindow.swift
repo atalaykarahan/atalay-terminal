@@ -40,7 +40,8 @@ final class ChatHUD: ObservableObject {
 
     func push(_ e: NativeEvent) {
         if e.kind == "usage" || e.kind == "result" { return }
-        let hex: UInt32 = e.kind == "prompt" ? 0xFFB057 : e.kind == "say" ? 0xD9C3A8 : Theme.catHex[e.cat ?? ""] ?? 0xA99BC4
+        let hex: UInt32 = e.kind == "prompt" ? ThemeStore.shared.hex("--accent-soft") : e.kind == "say" ? ThemeStore.shared.hex("--txt2")
+            : Theme.catHex[e.cat ?? ""] ?? Theme.planHex
         let tag = e.kind == "tool" ? Theme.catLabel[e.cat ?? ""] ?? "tool" : e.kind == "prompt" ? "you" : e.kind == "say" ? "claude" : e.kind
         seq += 1
         withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) {
@@ -83,6 +84,7 @@ private func nowMsDate(_ d: Date) -> Double { d.timeIntervalSince1970 * 1000 }
 
 struct ChatHeaderView: View {
     @ObservedObject var hud: ChatHUD
+    @ObservedObject var theme = ThemeStore.shared
     let onTogglePin: () -> Void
     let onDashboard: () -> Void
     let onEnd: () -> Void
@@ -92,7 +94,7 @@ struct ChatHeaderView: View {
         // app with several chats open; the moving parts of a chat window are Core Animation layers.
         TimelineView(.periodic(from: .now, by: hud.visible ? 1 : 3600)) { tl in
             let status = hud.status
-            let hex = Theme.statusHex[status] ?? 0x5C4D40
+            let hex = Theme.statusHex[status] ?? Theme.endedHex
             ZStack(alignment: .topLeading) {
                 HeaderBackdrop(hex: hex)
                 VStack(alignment: .leading, spacing: 0) {
@@ -103,6 +105,7 @@ struct ChatHeaderView: View {
                 }
             }
         }
+        .id(theme.current.id)
         .frame(height: 62)
         .ignoresSafeArea()
     }
@@ -160,7 +163,7 @@ private struct StatusPill: View {
             .tracking(1.2)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .foregroundColor(waiting ? Color(hex: 0x1A0D00) : color)
+            .foregroundColor(waiting ? Theme.cInk : color)
             .background(waiting ? color : color.opacity(0.14))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(color, lineWidth: 1))
             .shadow(color: color.opacity(0.6), radius: 8)
@@ -205,7 +208,7 @@ private struct HUDRow: View {
             HUDButton(symbol: "square.grid.2x2", active: false, help: "Back to the dashboard (this chat keeps running)", hex: hex, action: onDashboard)
             HUDButton(symbol: "power", active: false,
                       help: hud.mirror ? "Close this mirror (the chat keeps running in the other app)" : hud.status == "terminal" ? "Close this terminal" : "End this chat",
-                      hex: 0xFF4D4D, action: onEnd)
+                      hex: ThemeStore.shared.hex("--red"), action: onEnd)
         }
         .font(.mono(10.5))
         .lineLimit(1)
@@ -260,7 +263,7 @@ private struct ActionLabel: View {
     let now: Date
 
     var body: some View {
-        let color = Color(hex: Theme.catHex[b.actionCat] ?? 0xA99BC4)
+        let color = Color(hex: Theme.catHex[b.actionCat] ?? Theme.planHex)
         HStack(spacing: 5) {
             Text("▸ \(b.actionName)").foregroundColor(color).fontWeight(.bold)
             Text(b.actionLabel)
@@ -303,7 +306,7 @@ private struct HUDButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(active ? Color(hex: 0x1A0D00) : (hover ? Theme.cHi : Theme.cDim))
+                .foregroundColor(active ? Theme.cInk : (hover ? Theme.cHi : Theme.cDim))
                 .frame(width: 24, height: 20)
                 .background(active ? color : Color.clear)
                 .overlay(Rectangle().stroke(color.opacity(hover || active ? 1 : 0.4), lineWidth: 1))
@@ -339,12 +342,13 @@ private struct HeaderBackdrop: View {
 
 struct ChatTickerView: View {
     @ObservedObject var hud: ChatHUD
+    @ObservedObject var theme = ThemeStore.shared
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: hud.visible ? 1 : 3600)) { tl in
             let blinkOff = Int(tl.date.timeIntervalSinceReferenceDate) % 2 == 0
             let status = hud.status
-            let color = Color(hex: Theme.statusHex[status] ?? 0x5C4D40)
+            let color = Color(hex: Theme.statusHex[status] ?? Theme.endedHex)
             HStack(spacing: 10) {
                 Text(statusText(status))
                     .font(.mono(10.5, .semibold))
@@ -365,7 +369,7 @@ struct ChatTickerView: View {
         }
         .frame(height: 26)
         .background(Color.black.opacity(0.2))
-        .overlay(alignment: .top) { Rectangle().fill(Color(hex: Theme.statusHex[hud.status] ?? 0x5C4D40, opacity: 0.3)).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(Color(hex: Theme.statusHex[hud.status] ?? Theme.endedHex, opacity: 0.3)).frame(height: 1) }
     }
 
     private func statusText(_ status: String) -> String {
@@ -471,11 +475,12 @@ final class NeonBorderView: NSView {
         var colors: [UInt32]
         var spin: Double
         var glowHex: UInt32
+        let h = { (token: String) in ThemeStore.shared.hex(token) }
         switch status {
-        case "busy": colors = [0xF88008, 0xFFD23F, 0xFF2E63, 0xF88008]; spin = 3.2; glowHex = 0xF88008
-        case "idle", "terminal": colors = [0x00E5FF, 0x0F1A1F, 0x9D6BFF, 0x00E5FF]; spin = 9; glowHex = 0x00E5FF
-        case "waiting": colors = [0xFF2E63, 0xF88008, 0xFFD23F, 0xFF2E63]; spin = 1.1; glowHex = 0xFF2E63
-        default: colors = [0x4D3F33, 0x1F1812, 0x4D3F33]; spin = 0; glowHex = 0x4D3F33
+        case "busy": colors = [h("--accent"), h("--amber"), h("--warn"), h("--accent")]; spin = 3.2; glowHex = h("--accent")
+        case "idle", "terminal": colors = [h("--cyan"), h("--idle-deep"), h("--violet"), h("--cyan")]; spin = 9; glowHex = h("--cyan")
+        case "waiting": colors = [h("--warn"), h("--accent"), h("--amber"), h("--warn")]; spin = 1.1; glowHex = h("--warn")
+        default: colors = [h("--dim2"), h("--ended-deep"), h("--dim2")]; spin = 0; glowHex = h("--dim2")
         }
         gradient.colors = colors.map { NSColor(hex: $0).cgColor }
         gradient.removeAnimation(forKey: "spin")
@@ -497,6 +502,13 @@ final class NeonBorderView: NSView {
         p.autoreverses = true
         p.repeatCount = .infinity
         glow.add(p, forKey: "pulse")
+    }
+
+    /// The theme changed: the same status in its colours.
+    func repaint() {
+        let status = current
+        current = ""
+        setStatus(status)
     }
 }
 
@@ -522,24 +534,30 @@ final class BeamView: NSView {
         super.init(frame: frame)
         layer = CALayer()
         wantsLayer = true
-        line.colors = [NSColor(hex: 0xF88008, alpha: 0).cgColor, NSColor(hex: 0xFFE2BF).cgColor, NSColor.white.cgColor,
-                       NSColor(hex: 0xFFE2BF).cgColor, NSColor(hex: 0xF88008, alpha: 0).cgColor]
         line.startPoint = CGPoint(x: 0, y: 0.5)
         line.endPoint = CGPoint(x: 1, y: 0.5)
-        line.shadowColor = NSColor(hex: 0xF88008).cgColor
         line.shadowRadius = 10
         line.shadowOpacity = 1
         line.shadowOffset = .zero
         line.opacity = 0
         dot.backgroundColor = NSColor.white.cgColor
         dot.cornerRadius = 4
-        dot.shadowColor = NSColor(hex: 0xFFB057).cgColor
         dot.shadowRadius = 14
         dot.shadowOpacity = 1
         dot.shadowOffset = .zero
         dot.opacity = 0
         layer!.addSublayer(line)
         layer!.addSublayer(dot)
+        paint()
+    }
+
+    /// The theme's accent (again when the theme changes).
+    func paint() {
+        let accent = Theme.accentHex, pale = ThemeStore.shared.hex("--accent-pale")
+        line.colors = [NSColor(hex: accent, alpha: 0).cgColor, NSColor(hex: pale).cgColor, NSColor.white.cgColor,
+                       NSColor(hex: pale).cgColor, NSColor(hex: accent, alpha: 0).cgColor]
+        line.shadowColor = NSColor(hex: accent).cgColor
+        dot.shadowColor = ThemeStore.shared.color("--accent-soft").cgColor
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -596,6 +614,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private let beam = BeamView()
     /// How much is selected, and what ⌘C copied, in small type at the terminal's bottom-right, as Claude Code shows it.
     private let selectionBadge = NSTextField(labelWithString: "")
+    /// The glass's tint: the terminal's background, a little warmer (the accent) at the top left.
+    private let warmTint = CAGradientLayer()
+    private var themeWatch: NSObjectProtocol?
     private var copiedUntil = Date.distantPast
     /// Out of the way while the dashboard shows a menu (see stepAside).
     private var steppedAside = false
@@ -653,6 +674,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         terminal.onCopy = { [weak self] text in self?.showCopied(text) }
         terminal.onFocus = { [weak self] in self?.focusChanged() }
         buildLayout()
+        paintTheme()
+        themeWatch = NotificationCenter.default.addObserver(forName: ThemeStore.changed, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.themeChanged() }
+        }
         focusWatch = w.observe(\.firstResponder) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.focusChanged() }
         }
@@ -672,6 +697,31 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         attached = true
         TerminalFactory.start(terminal, cwd: cwd, claudeArgs: claudeArgs)
         manager?.chatProcessEnded(id)
+    }
+
+    deinit {
+        if let themeWatch { NotificationCenter.default.removeObserver(themeWatch) }
+    }
+
+    /// The theme's colours on what the window draws itself.
+    private func paintTheme() {
+        let bg = Theme.terminalBg
+        warmTint.colors = zip([bg.blended(withFraction: 0.12, of: Theme.accent) ?? bg, bg, bg], [0.3, 0.22, 0.3] as [CGFloat])
+            .map { $0.withAlphaComponent($1).cgColor }
+        selectionBadge.textColor = Theme.accent
+        dropZone.layer?.backgroundColor = NSColor(hex: Theme.accentHex, alpha: 0.2).cgColor
+        dropZone.layer?.borderColor = NSColor(hex: Theme.accentHex, alpha: 0.9).cgColor
+    }
+
+    /// Another theme (the theme screen): the window, its terminals, tabs and split lines take its colours at once.
+    private func themeChanged() {
+        paintTheme()
+        border.repaint()
+        beam.paint()
+        for tv in allTerminals { TerminalFactory.paint(tv) }
+        if tabs.count > 1 { tabBar.show(titles: tabs.indices.map(tabTitle), active: activeTab) }
+        func redraw(_ v: NSView) { v.needsDisplay = true; v.subviews.forEach(redraw) }
+        redraw(paneArea)
     }
 
     private func buildLayout() {
@@ -694,11 +744,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         glass.alphaValue = 0.97
 
         let tint = NSView()
-        let warm = CAGradientLayer()
-        // Tinted with the terminal's dark orange, a little warmer at the top left.
-        let bg = Theme.terminalBg
-        warm.colors = zip([bg.blended(withFraction: 0.12, of: Theme.accent) ?? bg, bg, bg], [0.3, 0.22, 0.3] as [CGFloat])
-            .map { $0.withAlphaComponent($1).cgColor }
+        let warm = warmTint
         warm.startPoint = CGPoint(x: 0, y: 1)
         warm.endPoint = CGPoint(x: 1, y: 0)
         let sheen = CAGradientLayer()
@@ -732,7 +778,6 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             pin(v, to: root)
         }
         selectionBadge.font = Theme.mono(10.5, .semibold)
-        selectionBadge.textColor = Theme.accent
         selectionBadge.drawsBackground = true
         selectionBadge.backgroundColor = NSColor.black.withAlphaComponent(0.55)
         selectionBadge.isHidden = true
@@ -745,8 +790,6 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             container.addSubview(v)
         }
         dropZone.wantsLayer = true
-        dropZone.layer?.backgroundColor = NSColor(hex: Theme.accentHex, alpha: 0.2).cgColor
-        dropZone.layer?.borderColor = NSColor(hex: Theme.accentHex, alpha: 0.9).cgColor
         dropZone.layer?.borderWidth = 2
         dropZone.layer?.cornerRadius = 6
         dropZone.isHidden = true

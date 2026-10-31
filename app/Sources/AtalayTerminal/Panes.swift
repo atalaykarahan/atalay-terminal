@@ -373,12 +373,12 @@ private final class TabChip: NSView {
         layer?.backgroundColor = active ? NSColor(hex: Theme.accentHex, alpha: 0.2).cgColor : NSColor.black.withAlphaComponent(0.28).cgColor
         label.stringValue = number <= 9 ? "\(number)  \(title)" : title
         label.font = Theme.mono(11, active ? .semibold : .regular)
-        label.textColor = active ? NSColor(hex: 0xFFB057) : NSColor(hex: 0x8F7A66)
+        label.textColor = ThemeStore.shared.color(active ? "--accent-soft" : "--dim")
         label.lineBreakMode = .byTruncatingTail
         label.alignment = .center
         close.isBordered = false
         close.font = Theme.mono(13, .medium)
-        close.contentTintColor = NSColor(hex: active ? 0xFFB057 : 0x8F7A66)
+        close.contentTintColor = ThemeStore.shared.color(active ? "--accent-soft" : "--dim")
         close.target = self
         close.action = #selector(closeTab)
         close.toolTip = "Close Tab"

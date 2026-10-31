@@ -230,6 +230,22 @@ enum TerminalFactory {
         return ["-ilc", "cd -- \(shellQuote(cwd)) && \(claude); exec \(shellQuote(shell)) -il"]
     }
 
+    /// The theme's colours (ThemeStore): when a terminal is made, and again when the theme changes.
+    static func paint(_ tv: ChatTerminalView) {
+        tv.nativeBackgroundColor = Theme.terminalBg
+        tv.nativeForegroundColor = Theme.text
+        tv.caretColor = Theme.terminalCursor
+        tv.caretTextColor = Theme.terminalCaretText
+        // Selection: a solid highlight with text that reads on it. (Selected text is drawn in its own colour, black by
+        // default, so the old see-through highlight hid the text it marked.)
+        tv.selectedTextBackgroundColor = Theme.terminalSelection
+        tv.selectedTextForegroundColor = Theme.terminalSelectionText
+        tv.linkColor = Theme.terminalLink
+        tv.installColors(Theme.ansi.map {
+            SwiftTerm.Color(red8: UInt16(($0 >> 16) & 0xFF), green8: UInt16(($0 >> 8) & 0xFF), blue8: UInt16($0 & 0xFF))
+        })
+    }
+
     private static func styled(chatId: String, fontSize: CGFloat, delegate: LocalProcessTerminalViewDelegate) -> ChatTerminalView {
         let tv = ChatTerminalView(frame: NSRect(x: 0, y: 0, width: 960, height: 600))
         tv.chatId = chatId
@@ -237,19 +253,10 @@ enum TerminalFactory {
         // colours are the app's own (Theme.ansi).
         let look = ITermLook.current
         tv.font = look?.fontName.flatMap { NSFont(name: $0, size: fontSize) } ?? Theme.mono(fontSize)
-        tv.nativeBackgroundColor = Theme.terminalBg
-        tv.nativeForegroundColor = Theme.text
         // Glass window, but text first: readable terminals stay around 80% opaque over a blurred background (10–20%
         // see-through); at 28% the busy dashboard behind made the text tiring to read. With the window's warm tint
         // and frost this lands near that (ChatWindowController.buildLayout).
         tv.backgroundOpacity = 0.6
-        tv.caretColor = Theme.terminalCursor
-        tv.caretTextColor = NSColor(hex: 0x1A0D00)
-        // Selection: a solid highlight with dark text on it. (Selected text is drawn in its own colour, black by
-        // default, so the old see-through highlight hid the text it marked.)
-        tv.selectedTextBackgroundColor = Theme.terminalCursor
-        tv.selectedTextForegroundColor = NSColor(hex: 0x1A0D00)
-        tv.linkColor = Theme.terminalLink
         // Text never fades into its background (iTerm2's "minimum contrast", WCAG AA): light text on a line Claude's
         // diff paints green or red is darkened just enough to read.
         tv.minimumContrastRatio = 4.5
@@ -258,9 +265,7 @@ enum TerminalFactory {
         // passes that on without its modern encoding (1006) and drops OSC 52 copies, so a drag reached Claude garbled
         // and nothing got selected. Native selection highlights and copies with ⌘C, as in iTerm2.
         tv.allowMouseReporting = false
-        tv.installColors(Theme.ansi.map {
-            SwiftTerm.Color(red8: UInt16(($0 >> 16) & 0xFF), green8: UInt16(($0 >> 8) & 0xFF), blue8: UInt16($0 & 0xFF))
-        })
+        paint(tv)
         // Colours 16–255 as iTerm2 has them, xterm's fixed cube and grey ramp. SwiftTerm otherwise derives them from the
         // 16, and through screen Claude and the prompt draw in these 256.
         tv.ansi256PaletteStrategy = .xterm

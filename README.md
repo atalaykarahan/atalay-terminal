@@ -55,6 +55,9 @@ macOS 13 or later, Apple Silicon and Intel. Works with Claude Code; not affiliat
 - Source Control looks like VS Code because it's made from it: `app/tools/vscode-assets.py` takes VS Code's icon font,
   its syntax highlighter and grammars, and the user's colour and file icon themes from the VS Code on the Mac into
   `app/Resources/web` (their licences are kept with them).
+- Themes: `app/Resources/web/themes/themes.json` holds each theme's terminal palette and accent, and
+  `app/Sources/AtalayTerminal/Themes.swift` makes every colour of the app from them: the page's CSS variables
+  (`style.css`), the terminals' and the native views'. The orbit map keeps the default theme's colours.
 - The server behind friends, messages and levels (Fastify and Postgres) is hosted and isn't part of this repository.
 
 ## Build from source

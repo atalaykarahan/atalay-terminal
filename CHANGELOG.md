@@ -17,10 +17,15 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Friends and the leaderboard show the last 24 hours instead of "today", the same wherever someone lives (their today ended at their own midnight), and the fire burns on 5 hours in the last 24; their 7 days are named by their own dates
 - Levels: no 10-hour limit a day any more; past 8 hours XP comes at half the rate
 - Source Control, as in VS Code (its modern look, your theme and file icons): the branch icon on the dashboard's left edge (with how many files changed) lists every repo your Claude sessions and terminals work in, each with its commit message box, Commit (and Commit & Push, Commit & Sync), staged changes and changes, and the history graph with its branch, upstream and base; a file opens as VS Code shows it: its own syntax colours, wrapped lines, sticky scroll, the overview ruler of changes, colour swatches, GitLens's blame of the line clicked and the status bar. Files a Claude session edited carry a ✦ (⌃⇧G opens it)
+- Themes: 12 colour themes on a screen of their own (the palette on the dashboard's left edge): the default orange, GitHub Dark, One Dark, Dracula, Monokai, Ayu Dark, Night Owl, Tokyo Night, Catppuccin Mocha, Gruvbox Dark, Nord and Solarized Dark. Pointing at one shows the whole app in it at once, a click keeps it: the dashboard, the menus, the terminals, Source Control and its code, the chat windows and message boxes. The orbit map keeps its own colours
+- Leaderboard: on the dashboard's left edge (the trophy) instead of the main menu, the list and someone's card side by side; the card shows in their theme, and one click makes it yours
+- Friends and messages: on the dashboard's left edge (the people, with how many messages and requests wait) instead of the main menu, friends beside requests
+- Feedback: a glowing button at the foot of the dashboard's left edge instead of beside the main menu
 
 ## Next
 
 - Chats: group chats, several friends in one conversation (users asked for it)
+- Notifications: a screen where every notification shows, all in one place
 
 ### From user feedback (2026-10-31; the messages: feedback/2026-10-31.md, kept off git)
 

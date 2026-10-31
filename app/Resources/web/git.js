@@ -34,6 +34,7 @@ window.GitView = (() => {
     tag: 0xea66, 'source-control': 0xea68, files: 0xeaf0, 'git-fetch': 0xecb2, 'collapse-all': 0xeac5, target: 0xebf8,
     bell: 0xeaa2, error: 0xea87, warning: 0xea6c, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, 'git-commit': 0xeafc,
     whitespace: 0xeb7d, map: 0xec05, remote: 0xeb3a, 'split-horizontal': 0xeb56, 'diff-single': 0xec22,
+    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
   const ci = (n, cls = '') => `<i class="vs-ci${cls ? ` ${cls}` : ''}">${ch(n)}</i>`;
@@ -86,11 +87,17 @@ window.GitView = (() => {
   const dirname = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 
   // ---------- the frame: activity bar, side bar (CHANGES and GRAPH), editor ----------
+  // The activity bar switches what the dashboard's middle shows: the dashboard, Source Control (here), friends and
+  // messages, the leaderboard or the themes (cloud.js); feedback, at its foot, opens its window over whatever shows.
   const bar = document.createElement('nav');
   bar.id = 'activity';
   bar.innerHTML =
     `<a class="vs-ab on" data-view="dash" title="Dashboard">${ci('files')}</a>` +
-    `<a class="vs-ab" data-view="git" title="Source Control (⌃⇧G)">${ci('source-control')}<b class="vs-badge" hidden></b></a>`;
+    `<a class="vs-ab" data-view="git" title="Source Control (⌃⇧G)">${ci('source-control')}<b class="vs-badge" hidden></b></a>` +
+    `<a class="vs-ab" data-view="friends" title="Friends and messages">${ci('organization')}<b class="vs-badge" hidden></b></a>` +
+    `<a class="vs-ab" data-view="board" title="Leaderboard">${ci('trophy')}</a>` +
+    `<a class="vs-ab" data-view="themes" title="Themes">${ci('symbol-color')}</a>` +
+    `<a class="vs-ab vs-ab-foot" data-view="feedback" title="Send feedback to the developer">${ci('feedback')}</a>`;
   app.appendChild(bar);
   const view = document.createElement('section');
   view.id = 'git';
@@ -305,8 +312,8 @@ window.GitView = (() => {
   const H = 22, W = 11, CURVE = 5, R = 4, STROKE = 2;
   // In the dashboard's colours: the branch in the brand orange, its upstream violet, its base cyan; other lanes amber,
   // pink, green, sky and magenta.
-  const LANES = ['#ffd23f', '#ff5c8a', '#3dffa8', '#38bdf8', '#e879f9'];
-  const REF = '#f88008', REMOTE = '#9d6bff', BASE = '#00e5ff';
+  const LANES = ['var(--amber)', 'var(--orange)', 'var(--green)', 'var(--sky)', 'var(--magenta)'];
+  const REF = 'var(--accent)', REMOTE = 'var(--violet)', BASE = 'var(--cyan)';
   const INCOMING = 'scm-graph-incoming-changes', OUTGOING = 'scm-graph-outgoing-changes';
 
   // The refs git's full decorations name: branches, remote branches and tags (HEAD itself isn't one).
@@ -1070,7 +1077,8 @@ window.GitView = (() => {
   function setOpen(on) {
     open = on;
     app.classList.toggle('git-mode', on);
-    bar.querySelectorAll('.vs-ab').forEach((b) => b.classList.toggle('on', b.dataset.view === (on ? 'git' : 'dash')));
+    if (on) window.Cloud?.showView(null);
+    mark(on ? 'git' : 'dash');
     if (on) load();
     dispatchEvent(new Event('resize'));
     requestAnimationFrame(() => window.GitEditor.measure());
@@ -1083,9 +1091,20 @@ window.GitView = (() => {
     setOpen(true);
   }
 
+  const mark = (v) => bar.querySelectorAll('.vs-ab').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
+  // One of the activity bar's views: Source Control's here; friends, the leaderboard's and the themes' in cloud.js.
+  function switchTo(v) {
+    if (v === 'feedback') return window.Cloud?.openFeedback();
+    setOpen(v === 'git');
+    if (v === 'friends' || v === 'board' || v === 'themes') {
+      window.Cloud?.showView(v);
+      mark(v);
+    } else window.Cloud?.showView(null);
+  }
+
   bar.addEventListener('click', (e) => {
     const b = e.target.closest('[data-view]');
-    if (b) setOpen(b.dataset.view === 'git');
+    if (b) switchTo(b.dataset.view);
   });
   addEventListener('keydown', (e) => {
     // ⌃⇧G opens it, as in VS Code; Esc goes back to the dashboard.
@@ -1101,5 +1120,5 @@ window.GitView = (() => {
   setInterval(() => !open && shown() && load(), 15_000);
   load();
 
-  return { show, open: () => setOpen(true), close: () => setOpen(false) };
+  return { show, view: switchTo, open: () => setOpen(true), close: () => setOpen(false) };
 })();

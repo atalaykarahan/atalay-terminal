@@ -79,6 +79,7 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         config.userContentController = ucc
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: 140), configuration: config)
         super.init()
+        ThemeStore.shared.attach(webView)
         ucc.add(WeakMessageHandler(self), name: "messages")
         ucc.addScriptMessageHandler(CloudBridge(), contentWorld: .page, name: "cloud")
         webView.setValue(false, forKey: "drawsBackground")

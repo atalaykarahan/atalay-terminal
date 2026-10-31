@@ -1,50 +1,57 @@
 import AppKit
 import SwiftUI
 
-/// One palette for the whole app: brand orange #f88008 on warm near-black.
-/// Session status: orange = working, cyan = your turn, red = needs you.
+/// The app's colours, from the theme the user chose (ThemeStore, Themes.swift); the default is the brand orange #f88008
+/// on warm near-black. Session status: the accent = working, cyan = your turn, warn = needs you.
 enum Theme {
-    static let accentHex: UInt32 = 0xF88008
+    private static var store: ThemeStore { .shared }
+    static var accentHex: UInt32 { store.hex("--accent") }
 
-    static let bg = NSColor(hex: 0x0A0705)
-    // The terminals, built on the brand orange: light text on dark orange, and every colour in its warm range
-    // (oranges, peach, amber, reds, pinks, a warm green), modelled on a well-tuned iTerm2 theme: as many distinct
-    // colours, with its lightness and contrast where the warm range allows.
-    static let terminalBgHex: UInt32 = 0x251200
-    static let textHex: UInt32 = 0xF5EBE0
-    static let terminalBg = NSColor(hex: terminalBgHex)
-    static let terminalCursor = NSColor(hex: accentHex)
-    static let terminalLink = NSColor(hex: 0xFFB057)
-    static let panel = NSColor(hex: 0x160D07)
-    static let text = NSColor(hex: textHex)
-    static let accent = NSColor(hex: accentHex)
+    static var bg: NSColor { store.color("--bg") }
+    // The terminals: the theme's own palette (the default one built on the brand orange: light text on dark orange, and
+    // every colour in its warm range, modelled on a well-tuned iTerm2 theme).
+    static var terminalBgHex: UInt32 { store.hex("--code-bg") }
+    static var textHex: UInt32 { store.hex("--code-fg") }
+    static var terminalBg: NSColor { store.color("--code-bg") }
+    static var terminalCursor: NSColor { store.color("--code-cursor") }
+    static var terminalCaretText: NSColor { store.color("--caret-text") }
+    static var terminalSelection: NSColor { store.color("--selection") }
+    static var terminalSelectionText: NSColor { store.color("--selection-text") }
+    static var terminalLink: NSColor { store.color("--accent-soft") }
+    static var panel: NSColor { store.color("--panel-rgb") }
+    static var text: NSColor { store.color("--code-fg") }
+    static var accent: NSColor { store.color("--accent") }
 
     static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
         NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
-    // SwiftUI palette, mirrors the dashboard page tokens.
-    static let cBg = Color(hex: 0x0A0705)
-    static let cPanel = Color(hex: 0x160D07)
-    static let cLine = Color(hex: accentHex, opacity: 0.32)
-    static let cLineSoft = Color(hex: accentHex, opacity: 0.13)
-    static let cText = Color(hex: 0xF5EBE0)
-    static let cHi = Color(hex: 0xFFF8F0)
-    static let cDim = Color(hex: 0x8F7A66)
-    static let cDim2 = Color(hex: 0x4D3F33)
-    static let cAccent = Color(hex: accentHex)
-    static let cAccentSoft = Color(hex: 0xFFB057)
-    static let cViolet = Color(hex: 0x9D6BFF)
-    static let cCyan = Color(hex: 0x00E5FF)
-    static let cAlert = Color(hex: 0xFF2E63)
-    static let cAmber = Color(hex: 0xFFD23F)
-    static let cGreen = Color(hex: 0x3DFFA8)
-    static let cRed = Color(hex: 0xFF4D4D)
+    // SwiftUI palette: the dashboard page's tokens.
+    static var cBg: Color { store.swiftUI("--bg") }
+    static var cPanel: Color { store.swiftUI("--panel-rgb") }
+    static var cLine: Color { store.swiftUI("--accent", opacity: 0.32) }
+    static var cLineSoft: Color { store.swiftUI("--accent", opacity: 0.13) }
+    static var cText: Color { store.swiftUI("--txt") }
+    static var cHi: Color { store.swiftUI("--hi") }
+    static var cDim: Color { store.swiftUI("--dim") }
+    static var cDim2: Color { store.swiftUI("--dim2") }
+    static var cAccent: Color { store.swiftUI("--accent") }
+    static var cAccentSoft: Color { store.swiftUI("--accent-soft") }
+    static var cViolet: Color { store.swiftUI("--violet") }
+    static var cCyan: Color { store.swiftUI("--cyan") }
+    static var cAlert: Color { store.swiftUI("--warn") }
+    static var cAmber: Color { store.swiftUI("--amber") }
+    static var cGreen: Color { store.swiftUI("--green") }
+    static var cRed: Color { store.swiftUI("--red") }
+    static var cInk: Color { store.swiftUI("--ink") }
 
-    static let statusHex: [String: UInt32] = ["busy": accentHex, "idle": 0x00E5FF, "waiting": 0xFF2E63, "terminal": 0x00E5FF]
+    static var statusHex: [String: UInt32] {
+        ["busy": accentHex, "idle": store.hex("--cyan"), "waiting": store.hex("--warn"), "terminal": store.hex("--cyan")]
+    }
+    static var endedHex: UInt32 { store.hex("--ended") }
 
     static func statusColor(_ status: String?) -> Color {
-        Color(hex: statusHex[status ?? ""] ?? 0x5C4D40)
+        Color(hex: statusHex[status ?? ""] ?? endedHex)
     }
 
     static func statusLabel(_ status: String?) -> String {
@@ -58,21 +65,19 @@ enum Theme {
         }
     }
 
-    static let catHex: [String: UInt32] = [
-        "web": 0x38BDF8, "browser": 0x5B8CFF, "read": 0x3DFFA8, "search": 0xB8FF3D, "edit": 0xFFD23F,
-        "bash": 0xFF5C8A, "agent": 0x9D6BFF, "mcp": 0xE879F9, "plan": 0xA99BC4,
-    ]
+    static var catHex: [String: UInt32] {
+        ["web": store.hex("--sky"), "browser": store.hex("--blue"), "read": store.hex("--green"), "search": store.hex("--lime"),
+         "edit": store.hex("--amber"), "bash": store.hex("--orange"), "agent": store.hex("--violet"), "mcp": store.hex("--magenta"),
+         "plan": store.hex("--lavender")]
+    }
+    static var planHex: UInt32 { store.hex("--lavender") }
     static let catLabel: [String: String] = [
         "web": "web", "browser": "browser", "read": "read", "search": "search", "edit": "edit",
         "bash": "shell", "agent": "agents", "mcp": "mcp", "plan": "plan",
     ]
 
-    // Their 16 ANSI colours (normal 0-7, bright 8-15): dark brown (black), red, warm green, amber, deep orange
-    // (blue), rose (magenta), coral (cyan), peach (white); then taupe and the bright ones, the brand orange as blue.
-    static let ansi: [UInt32] = [
-        0x562F18, 0xFF4D4D, 0xC5E35A, 0xFFD23F, 0xC16100, 0xE0849C, 0xFF7345, 0xFFB27A,
-        0x7D6553, 0xFF5C8A, 0xDDF08F, 0xFFE28A, 0xF88008, 0xFFA8C4, 0xFF9B73, 0xFFF3E6,
-    ]
+    // The 16 ANSI colours (normal 0-7, bright 8-15).
+    static var ansi: [UInt32] { (0..<16).map { store.hex("--a\($0)") } }
 }
 
 extension NSColor {

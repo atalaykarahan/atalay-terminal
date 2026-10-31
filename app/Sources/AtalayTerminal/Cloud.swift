@@ -181,7 +181,8 @@ final class Cloud {
     /// Keeps this Mac online, says whether its user is working (XP), picks up updates and sends a name picked offline.
     private func heartbeat(_ token: String) async {
         struct Answer: Decodable { let hackerName: String; let tag: Int; let online: Int; let update: Release?; let xp: XP? }
-        let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60]
+        // The theme too: the leaderboard shows someone's card in their theme, and anyone can take it.
+        let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60, "theme": ThemeStore.shared.chosenId]
         do {
             let a: Answer = try await call("POST", "v1/heartbeat", body: client.merging(work) { $1 }, token: token)
             var name = a.hackerName, tag = a.tag

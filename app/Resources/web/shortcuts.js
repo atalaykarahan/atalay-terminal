@@ -78,7 +78,7 @@
         const icon = el('g', { transform: `translate(${ix - 14} ${iy - 20}) scale(1.17)` }, g);
         el('path', { class: 'ico-fill', d: FOLDER }, icon);
         el('path', { class: 'ico', d: FOLDER }, icon);
-        el('text', { x: 12, y: 16.2, style: 'font-size:6px;fill:#ffb057' }, icon).textContent = '>_';
+        el('text', { x: 12, y: 16.2, style: 'font-size:6px;fill:var(--accent-soft)' }, icon).textContent = '>_';
         el('text', { x: ix, y: iy + 18 }, g).textContent = s.name.length > 13 ? s.name.slice(0, 12) + '…' : s.name;
       } else {
         el('circle', { class: 'plus-ring', cx: ix, cy: iy - 6, r: 11 }, g);

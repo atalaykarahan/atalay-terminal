@@ -49,6 +49,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         buildLayout()
         wireEngine()
         observeVisibility()
+        NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: ThemeStore.changed, object: nil)
         let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 // A Claude session at work is work (Activity, for XP); so is a busy job in a terminal (pushTerminals).
@@ -342,6 +343,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func pushCloud() {
         guard let data = try? JSONSerialization.data(withJSONObject: Cloud.shared.json), let js = String(data: data, encoding: .utf8) else { return }
         radar.push("cloud", js)
+    }
+
+    /// Another theme (the theme screen): the window's own background and the sidebar's divider; the page, the sidebar
+    /// and the chat windows follow by themselves.
+    @objc private func themeChanged() {
+        window?.backgroundColor = Theme.bg
+        window?.contentView?.layer?.backgroundColor = Theme.bg.cgColor
+        split?.needsDisplay = true
     }
 
     // MARK: dashboard visibility

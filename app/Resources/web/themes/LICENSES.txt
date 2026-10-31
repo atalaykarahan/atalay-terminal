@@ -1,0 +1,29 @@
+The themes' colours (themes.json) come from these projects, each under the MIT licence below unless noted:
+
+- GitHub Dark: GitHub's VS Code theme (primer/github-vscode-theme), Copyright (c) 2020 GitHub Inc.
+- One Dark: Atom's One Dark theme (atom/one-dark-syntax), Copyright (c) 2016 GitHub Inc.
+- Dracula: Dracula Theme (dracula/dracula-theme), Copyright (c) 2016 Dracula Theme
+- Monokai: Monokai by Wimer Hazenberg (monokai.nl), terminal colours as collected by iTerm2-Color-Schemes
+- Ayu Dark: ayu (ayu-theme/ayu-colors), Copyright (c) 2016 Ike Ku
+- Night Owl: Night Owl (sdras/night-owl-vscode-theme), Copyright (c) 2018 Sarah Drasner
+- Tokyo Night: Tokyo Night (enkia/tokyo-night-vscode-theme), Copyright (c) 2018-present Enkia
+- Catppuccin Mocha: Catppuccin (catppuccin/catppuccin), Copyright (c) 2021 Catppuccin
+- Gruvbox Dark: gruvbox (morhetz/gruvbox), Copyright (c) 2012 Pavel Pertsev (MIT/X11)
+- Nord: Nord (nordtheme/nord), Copyright (c) 2016-present Sven Greb
+- Solarized Dark: Solarized (altercation/solarized), Copyright (c) 2011 Ethan Schoonover
+
+Terminal palettes as collected by iTerm2-Color-Schemes (mbadolato/iTerm2-Color-Schemes),
+Copyright (c) 2011 to Present Mark Badolato.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

@@ -65,13 +65,14 @@ struct SidebarActions {
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
     let actions: SidebarActions
+    @ObservedObject var theme = ThemeStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text("chats")
                     .font(.mono(10.5, .bold))
-                    .foregroundColor(Color(hex: 0x1A0D00))
+                    .foregroundColor(Theme.cInk)
                     .padding(.horizontal, 8)
                     .frame(height: 19)
                     .background(Theme.cAccent)
@@ -135,6 +136,7 @@ struct SidebarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.cPanel)
+        .id(theme.current.id)
     }
 }
 
