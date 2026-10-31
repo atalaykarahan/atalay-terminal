@@ -3,9 +3,9 @@
 // Notification sounds, synthesized (no audio files): a message chime, a rising arpeggio for a friend request, a
 // bright chord when a request is accepted, a soft two-note call when a friend comes online, a soft blip when a message
 // goes out, and for your own choices a happy "accepted" and a falling "declined". Your progress has its own: a coin
-// for the daily bonus, and for the level-up takeover a burst of static, then a ringing "ding" for a new level or a
-// brass fanfare for a new rank. Do not disturb silences what comes in, not what you do (the level-up waits for it to
-// end and then plays).
+// for the daily bonus, for the level-up takeover a burst of static, then a ringing "ding" for a new level or a brass
+// fanfare for a new rank, and a fire catching for five hours of work in a day. Do not disturb silences what comes in,
+// not what you do (the level-up and the flames wait for it to end and then play).
 window.Sfx = (() => {
   let ctx = null;
   let out = null;
@@ -117,7 +117,7 @@ window.Sfx = (() => {
   }
 
   // How long the longer sounds ring, so the audio doesn't rest before they end.
-  const LENGTH = { levelup: 3000, rankup: 4200, glitch: 1200 };
+  const LENGTH = { levelup: 3000, rankup: 4200, glitch: 1200, fire: 3200 };
 
   const SOUNDS = {
     // Incoming message: two quick rising notes, like a HUD ping.
@@ -187,6 +187,47 @@ window.Sfx = (() => {
       [2093, 2637, 3135.96, 4186].forEach((f, i) => note(f, 0.68 + i * 0.09, { dur: 0.9, vol: 0.028, bright: 0 }));
       note(1046.5, 0.6, { dur: 2.4, vol: 0.04, bright: 0.5 });
     },
+    // On fire: a burner catching (a low thump under a rising whoosh), the crackle of the fire, and a short brass hit.
+    fire() {
+      const t = ctx.currentTime;
+      const n = Math.floor(ctx.sampleRate * 1.8);
+      const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+      const whoosh = ctx.createBufferSource();
+      const f = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      whoosh.buffer = buf;
+      f.type = 'bandpass';
+      f.Q.value = 0.8;
+      f.frequency.setValueAtTime(180, t);
+      f.frequency.exponentialRampToValueAtTime(2200, t + 0.45);
+      f.frequency.exponentialRampToValueAtTime(600, t + 1.7);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.3, t + 0.14);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.75);
+      whoosh.connect(f).connect(g).connect(out);
+      whoosh.start(t);
+      whoosh.stop(t + 1.8);
+      swell(110, 48, 0, 0.5, 0.14);
+      // Crackles: very short clicks of bright noise, scattered.
+      for (let i = 0; i < 30; i++) {
+        const at = t + 0.2 + Math.random() * 2.2;
+        const len = 0.004 + Math.random() * 0.014;
+        const c = ctx.createBufferSource();
+        const hp = ctx.createBiquadFilter();
+        const cg = ctx.createGain();
+        c.buffer = buf;
+        hp.type = 'highpass';
+        hp.frequency.value = 1800 + Math.random() * 3000;
+        cg.gain.setValueAtTime(0.04 + Math.random() * 0.12, at);
+        cg.gain.exponentialRampToValueAtTime(0.0001, at + len);
+        c.connect(hp).connect(cg).connect(out);
+        c.start(at, Math.random() * 1.5, len + 0.01);
+      }
+      [[196, 0.22], [293.66, 0.3], [392, 0.38]].forEach(([fr, at]) => horn(fr, at, 0.12, 0.045));
+      [392, 493.88, 587.33].forEach((fr) => horn(fr, 0.5, 1.1, 0.03));
+    },
     // Message sent: a short, low-key blip.
     send() {
       const t = ctx.currentTime;
@@ -216,7 +257,7 @@ window.Sfx = (() => {
 
   return {
     play(name) {
-      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch'].includes(name);
+      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire'].includes(name);
       if (!SOUNDS[name] || (window.Social && window.Social.dnd() && !yours)) return;
       try {
         audio(LENGTH[name] || 2500);

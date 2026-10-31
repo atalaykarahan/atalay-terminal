@@ -238,6 +238,15 @@
 .lb-gap { color: var(--dim2); text-align: center; letter-spacing: 0.3em; }
 .lb-foot { margin: 12px 0 0; color: var(--dim); text-align: center; }
 .lb-row.anon { cursor: default; }
+/* On fire: five hours of work today. On the leaderboard and among friends, flames rise from the card's bottom behind
+   its text (fire.js) and its edge glows, as long as the day lasts. */
+.lb-row.fire, .mn-row.fire { position: relative; z-index: 0; box-shadow: 0 0 0 1px rgba(255, 128, 8, 0.85), 0 0 14px rgba(255, 90, 0, 0.55), inset 0 0 16px rgba(255, 100, 0, 0.2); animation: lb-heat 1.3s ease-in-out infinite alternate; }
+.fire-card { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; border-radius: inherit; pointer-events: none; }
+/* Their text stays readable over the flames: a dark outline, and a dark backing for the week's bars. */
+.lb-row.fire, .mn-row.fire { text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 0 4px #000, 0 0 8px rgba(0, 0, 0, 0.85); }
+.lb-row.fire .lb-spark { border-radius: 3px; background: rgba(0, 0, 0, 0.5); box-shadow: 0 0 6px 3px rgba(0, 0, 0, 0.5); }
+.lb-row.fire .lvb, .lb-row.fire em, .lb-row.fire button, .mn-row.fire .lvb, .mn-row.fire button, .mn-row.fire .cnt { text-shadow: none; }
+@keyframes lb-heat { from { box-shadow: 0 0 0 1px rgba(255, 128, 8, 0.7), 0 0 10px rgba(255, 90, 0, 0.4), inset 0 0 12px rgba(255, 100, 0, 0.15); } to { box-shadow: 0 0 0 1px rgba(255, 170, 40, 0.95), 0 0 20px rgba(255, 90, 0, 0.7), inset 0 0 20px rgba(255, 120, 0, 0.28); } }
 .lb-row.anon:hover { background: transparent; }
 .lb-anon { color: var(--dim) !important; font-style: italic; }
 .lb-hid { padding: 1px 5px; border: 1px solid var(--dim2); border-radius: 3px; color: var(--dim); font-size: 0.75em; font-style: normal; font-weight: 700; }

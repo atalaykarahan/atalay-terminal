@@ -281,19 +281,25 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             let scripts = waiting
             waiting = []
             scripts.forEach(run)
-            if role == .notices { tellFocus() }
+            if role == .notices {
+                tellFocus()
+                // Your XP as it stands, not only when it changes: a day already past five hours lights up at launch.
+                if let x = Cloud.shared.state.xp { xp(x) }
+            }
         case "layout":
             let size = CGSize(width: number("w"), height: number("h"))
             guard size.width >= 1, size.height >= 1 else {
                 if role == .notices { endTakeover() }
                 glass.alphaValue = 0
+                panel.ignoresMouseEvents = false
                 panel.parent?.removeChildWindow(panel)
                 panel.orderOut(nil)
                 return closed()
             }
-            let takeover = role == .notices && body["place"] as? String == "screen"
-            frost(!takeover, duration: takeover ? 0 : 0.3)
-            role == .notices ? placeNotice(size, screen: takeover) : placeChat(size, focus: body["focus"] as? Bool == true)
+            let place = role == .notices ? body["place"] as? String : nil
+            let wide = place == "screen" || place == "fire"
+            frost(!wide, duration: wide ? 0 : 0.3)
+            role == .notices ? placeNotice(size, place: place) : placeChat(size, focus: body["focus"] as? Bool == true)
         case "leaving":
             // The box plays its way out: the frost goes with it.
             frost(false, duration: 0.18)
@@ -329,10 +335,12 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 
     /// Bottom-right corner of the screen the user is on, clear of the Dock and the menu bar. The level-up takeover has
-    /// that whole screen instead, above the menu bar and the Dock, and takes the clicks while it plays.
-    private func placeNotice(_ size: CGSize, screen: Bool) {
+    /// that whole screen instead, above the menu bar and the Dock, and takes the clicks while it plays; the flames of a
+    /// day past five hours have it short of the menu bar and the Dock, letting every click through to the windows.
+    private func placeNotice(_ size: CGSize, place: String?) {
         let s = NSScreen.main ?? NSScreen.screens[0]
-        if screen {
+        panel.ignoresMouseEvents = place == "fire"
+        if place == "screen" {
             panel.level = .screenSaver
             panel.setFrame(s.frame, display: true)
             Self.takeoverOn = true
@@ -346,6 +354,9 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             }
             takeoverGuard = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 16, execute: work)
+        } else if place == "fire" {
+            endTakeover()
+            panel.setFrame(s.visibleFrame, display: true)
         } else {
             endTakeover()
             let v = s.visibleFrame

@@ -645,6 +645,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             terminal = TerminalFactory.make(chatId: id, cwd: cwd, claudeArgs: claudeArgs, fontSize: fontSize, delegate: self)
         }
         terminal.sessionShell = { [weak self] in self?.detached?.shellPid ?? 0 }
+        terminal.workingDirectory = { [weak self] in self?.cwd }
         terminal.onSelection = { [weak self] text in self?.showSelection(text) }
         terminal.onCopy = { [weak self] text in self?.showCopied(text) }
         terminal.onFocus = { [weak self] in self?.focusChanged() }
@@ -691,9 +692,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
         let tint = NSView()
         let warm = CAGradientLayer()
-        warm.colors = [NSColor(srgbRed: 52 / 255, green: 28 / 255, blue: 10 / 255, alpha: 0.3).cgColor,
-                       NSColor(srgbRed: 14 / 255, green: 9 / 255, blue: 6 / 255, alpha: 0.22).cgColor,
-                       NSColor(srgbRed: 10 / 255, green: 7 / 255, blue: 5 / 255, alpha: 0.3).cgColor]
+        // Tinted with the terminal's dark orange, a little warmer at the top left.
+        let bg = Theme.terminalBg
+        warm.colors = zip([bg.blended(withFraction: 0.12, of: Theme.accent) ?? bg, bg, bg], [0.3, 0.22, 0.3] as [CGFloat])
+            .map { $0.withAlphaComponent($1).cgColor }
         warm.startPoint = CGPoint(x: 0, y: 1)
         warm.endPoint = CGPoint(x: 1, y: 0)
         let sheen = CAGradientLayer()
@@ -1051,6 +1053,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private func makeExtra(kind: PaneKind, cwd: String) -> ExtraPane {
         let pane = ExtraPane(owner: self, cwd: cwd, kind: kind, fontSize: terminal.font.pointSize)
         pane.terminal.sessionShell = { [weak pane] in pane?.link?.shellPid ?? 0 }
+        pane.terminal.workingDirectory = { [weak pane] in pane?.cwd }
         pane.terminal.onSelection = { [weak self] in self?.showSelection($0) }
         pane.terminal.onCopy = { [weak self] in self?.showCopied($0) }
         pane.terminal.onFocus = { [weak self] in self?.focusChanged() }

@@ -3,17 +3,6 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
-## Unreleased (on the staging branch, out with the next version)
-
-- New terminal: 14 shortcut places around the folder picker; a filled one opens a terminal in its folder at once
-- Terminals: easier to read; the background is more solid (about 80%, as readable terminals are) and keeps its frost
-- One opacity everywhere: menus, friends' chats, notices, popups and the dashboard's panels are as solid as the terminals, frosted the same way
-- Chats: the whole conversation stays scrollable; the top no longer disappears while Claude writes (Claude opens in its full-screen view unless you picked the classic one with /tui)
-- Tabs and split panes in a window, with iTerm2's keys: ⌘T a new tab in the same folder, ⌘D / ⇧⌘D split side by side / one above the other, ⌘] ⌘[ and ⌥⌘ arrows move between panes, ⇧⌘] ⇧⌘[ and ⌘1–⌘9 between tabs, ⌃⌘ arrows move the divider (or drag it), ⇧⌘↩ shows only the pane in front, ⌘W closes a pane and ⇧⌘T brings it back, ⇧⌘W closes the window; tabs and panes keep running when the app quits and come back in their window, with their history
-- Session cards on the dashboard get macOS-style buttons instead of their colour squares: red ends the session wherever it runs (after a question), yellow folds the card to one line, its name and status
-- The dashboard has no ⌘1 any more (the chat windows stay above it, so it did nothing you could see)
-- Feedback: a speech bubble at the main menu's top left opens a feedback window; what you write goes straight to the developer with your name#tag and the time, no e-mail needed (⌘↩ sends)
-
 ## Next
 
 - Chats: ⌘W closes a friend's chat window
@@ -34,6 +23,19 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Dashboard: widgets you arrange yourself: hide the ones you don't want (workers, your call…), add a chat widget, less clutter
 - Dashboard: a small widget with general updates (what's new)
 - Context: the gauge shows 1M even when the session compacts earlier (e.g. /autocompact at 500k); use the session's real limit
+
+## 0.10.0
+
+- Tabs and split panes in a window, with iTerm2's keys: ⌘T, ⌘D / ⇧⌘D, ⌘] ⌘[, ⌘1–⌘9, ⇧⌘T to bring a closed pane back; they keep running when the app quits
+- Terminals: a new orange colour theme, a more solid background that's easier to read, your iTerm2 font and cursor
+- Terminals: ⌘-click opens a file in its app and a link in the browser, even a long path broken over lines
+- On fire: past 5 hours of work in a day, flames burn along your screen's edges and your card burns on the leaderboard and in friends' lists until the day ends
+- Feedback: a speech bubble beside the main menu sends your feedback straight to the developer, no e-mail needed
+- New terminal: 14 shortcut places around the folder picker
+- Chats: the whole conversation stays scrollable while Claude writes
+- Session cards: macOS-style buttons, red ends the session (after a question), yellow folds the card to one line
+- One opacity everywhere: menus, friends' chats, notices and popups are as solid as the terminals
+- The dashboard has no ⌘1 any more (it did nothing you could see)
 
 ## 0.9.0
 

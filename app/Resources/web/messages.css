@@ -160,3 +160,15 @@
 @keyframes mb-pop { 0% { opacity: 0; transform: scale(0.94); filter: brightness(2); } 100% { opacity: 1; transform: none; filter: none; } }
 @keyframes mb-drop { to { opacity: 0; transform: scale(0.96); } }
 @keyframes mb-line { from { opacity: 0; transform: translateY(4px); } }
+
+/* ===== on fire (messages.js): five hours of work in a day. Flames along the screen's edges, taking no clicks, and
+   a notice in the corner with a flame of its own ===== */
+.fire-edges { position: fixed; inset: 0; z-index: 2640; width: 100%; height: 100%; pointer-events: none; }
+.mb.peek.fire { width: auto; max-width: 372px; cursor: pointer; --glow: 255, 96, 0; }
+.mb.fire .mb-head { padding-right: 12px; }
+.mb.fire:hover { filter: brightness(1.15); }
+.mb.fire .mb-tag { gap: 6px; white-space: nowrap; background: linear-gradient(90deg, #ff3d00, #f88008 55%, #ffb057); }
+.mb.fire .mb-border { background: conic-gradient(from var(--ang), #ff3d00, #ffd23f, #f88008, #ff3d00); animation-duration: 2.4s; }
+.mb.fire .mb-who > span { color: var(--hi); font-weight: 700; }
+.mb-flame { display: inline-block; width: 9px; height: 13px; border-radius: 50% 50% 45% 45% / 62% 62% 38% 38%; background: radial-gradient(ellipse at 50% 78%, #fff6c8 0%, #ffd23f 28%, #ff7a00 62%, #ff3d00 88%); box-shadow: 0 0 8px rgba(255, 120, 0, 0.9); transform-origin: 50% 100%; animation: mb-flame 0.45s ease-in-out infinite alternate; }
+@keyframes mb-flame { from { transform: scale(0.9, 0.86) skewX(-4deg); } to { transform: scale(1.05, 1.12) skewX(4deg); } }

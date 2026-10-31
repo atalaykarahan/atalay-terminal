@@ -5,7 +5,7 @@
 //    with a quick reply or accept/decline; clicking it opens the chat. Closed, it's gone. A friend coming online
 //    shows there for a moment too, like on Steam, and so does a new version of the app (a click shows what's new).
 //    Your own progress shows there as well: the daily bonus as a strip, a new level or rank as a takeover of the whole
-//    screen for a few seconds.
+//    screen for a few seconds, and five hours of work in a day as flames along the screen's edges.
 //  · chat: the conversation in its own window, opened mid-screen the first time and dragged anywhere by its header.
 // In the app each part is its own panel (Swift injects __MESSAGES_ROLE__ "notices" or "chat", places and moves the
 // panels), and every friend's chat has a panel of its own (__MESSAGES_FRIEND__), so several stay on screen side by
@@ -64,6 +64,8 @@ window.Messages = (() => {
     // Layout size, not the on-screen one: the slide-in animation scales the box while it starts. The level-up takeover
     // has the whole screen (a notice can wait under it).
     if (takeover) return post({ type: 'layout', w: 1, h: 1, place: 'screen' });
+    // The flames have the screen's edges, every click passing through (the notice sits in its corner meanwhile).
+    if (fire) return post({ type: 'layout', w: 1, h: 1, place: 'fire' });
     post(box ? { type: 'layout', w: box.offsetWidth + 16, h: box.offsetHeight + 16, place: 'corner' } : { type: 'layout', w: 0, h: 0 });
   }
 
@@ -78,7 +80,7 @@ window.Messages = (() => {
       p.heard = true;
       Sfx.play('xp');
     }
-    peekTimer = setTimeout(hidePeek, p.kind === 'online' || p.kind === 'xp' ? ONLINE_MS : PEEK_MS);
+    peekTimer = setTimeout(hidePeek, p.kind === 'online' || p.kind === 'xp' ? ONLINE_MS : p.kind === 'fire' ? FIRE_MS + 3000 : PEEK_MS);
   }
 
   function hidePeek() {
@@ -119,6 +121,12 @@ window.Messages = (() => {
         `<div class="mb peek xp in" data-act="profile" title="See your profile"><div class="mb-border"></div>` +
         `<div class="mb-head"><span class="mb-tag">+${p.gained} XP</span><span class="mb-who"><span>Daily bonus</span>` +
         `<small>welcome back${p.level ? ` · level ${p.level}` : ''}</small></span></div></div>`
+      );
+    } else if (p.kind === 'fire') {
+      return (
+        `<div class="mb peek fire in" data-act="profile" title="See your profile"><div class="mb-border"></div>` +
+        `<div class="mb-head"><span class="mb-tag"><i class="mb-flame"></i>ON FIRE</span><span class="mb-who">` +
+        `<span>You passed 5 hours today</span><small>you're on fire · keep it burning</small></span></div></div>`
       );
     } else if (p.kind === 'online') {
       // One thin strip, no buttons: a click opens the chat. Friends coming online together share it.
@@ -217,8 +225,18 @@ window.Messages = (() => {
   // they see the new level on your profile. It plays only while the app is in front and not on do not disturb: a level
   // gained while you look elsewhere waits until you're back.
   let seenLevel = 0; // the level last seen, so a level-up shows once (and never for the level you start with)
+  // Five hours of work in one day: you're on fire. The first time the day's active time reaches them, flames burn along
+  // the screen's edges for a few seconds, over the windows but taking no clicks, with a notice and a sound; once a day
+  // (the leaderboard keeps a flame on your card until the day ends).
+  const FIRE_SECONDS = 5 * 3600;
+  const FIRE_MS = 7000;
+  const localDay = () => new Date().toLocaleDateString('sv');
+  let fireDay = ''; // the day the flames last burned
+  let firePending = false;
+  let fire = null; // the flames on screen
   try {
     seenLevel = Number(localStorage.getItem('xpLevel')) || 0;
+    fireDay = localStorage.getItem('fireDay') || '';
   } catch {}
   // In front: the app tells (focus), staging asks the page.
   let focused = !APP_ROLE && document.hasFocus() && !document.hidden;
@@ -241,6 +259,14 @@ window.Messages = (() => {
         } catch {}
       }
     }
+    if (x && x.today >= FIRE_SECONDS && fireDay !== localDay()) {
+      fireDay = localDay();
+      try {
+        localStorage.setItem('fireDay', fireDay);
+      } catch {}
+      firePending = true;
+      ignite();
+    }
     if (ev.reason === 'daily' && ev.gained > 0 && !Social.dnd()) {
       const p = { kind: 'xp', gained: ev.gained, level: x ? x.level : 0 };
       if (takeover || (peek && peek.kind !== 'online')) queue.push(p);
@@ -253,8 +279,35 @@ window.Messages = (() => {
     if (focused) setTimeout(play, 350);
   }
 
+  // The flames wait for a level-up's takeover and for do not disturb to end, and for the app to have opened (3 s).
+  const bornAt = performance.now();
+  function ignite() {
+    if (!firePending || fire || takeover || Social.dnd()) return;
+    if (performance.now() - bornAt < 3000) return setTimeout(ignite, 3000 - (performance.now() - bornAt));
+    firePending = false;
+    const canvas = document.createElement('canvas');
+    canvas.className = 'fire-edges';
+    document.body.appendChild(canvas);
+    // Flames up from the bottom and along the sides (the panel grows to the screen as they start, so their reach
+    // follows its size).
+    fire = Fire.burn(canvas, { reach: () => [innerHeight * 0.11, innerWidth * 0.028, 0], scale: 34, life: FIRE_MS, res: 1 });
+    // A message or a request on screen keeps its place; the notice comes right after it.
+    const p = { kind: 'fire' };
+    if (peek && !['online', 'xp', 'update'].includes(peek.kind)) queue.unshift(p);
+    else showPeek(p);
+    sizeNotes();
+    Sfx.play('fire');
+    setTimeout(() => {
+      fire();
+      canvas.remove();
+      fire = null;
+      sizeNotes();
+      setTimeout(play, 600);
+    }, FIRE_MS);
+  }
+
   function play() {
-    if (!pending || takeover || !focused || Social.dnd()) return;
+    if (!pending || takeover || fire || !focused || Social.dnd()) return;
     const c = pending;
     pending = null;
     takeover = showTakeover(c);
@@ -397,6 +450,7 @@ window.Messages = (() => {
     // Another level-up waiting plays first; notices (the daily bonus) come after the last one.
     if (queue.length && !peek && !pending) showPeek(queue.shift());
     setTimeout(play, 600);
+    setTimeout(ignite, 700);
   }
 
   // Confetti raining from the top of the screen, in the rank's colour and the app's: a few waves, then it falls out
@@ -487,8 +541,8 @@ window.Messages = (() => {
       case 'xp':
         return progress(ev);
       case 'status':
-        // Do not disturb ended: a level-up it held plays now.
-        if (ev.status !== 'dnd') play();
+        // Do not disturb ended: a level-up or the flames it held play now.
+        if (ev.status !== 'dnd') play(), ignite();
         return;
       case 'presence': {
         if (ev.presence === 'offline') return void offlineAt.set(ev.id, Date.now());

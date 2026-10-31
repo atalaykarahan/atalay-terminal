@@ -541,13 +541,16 @@ window.Cloud = (() => {
               // Their level (a click shows their profile) and how long they've worked today, if they share it.
               const lv = f.xp ? Xp.badge(f.xp.level, 'profile') : '';
               const today = f.xp && f.xp.today ? `<span class="mn-today" title="Active today">today ${Xp.dur(f.xp.today)}</span>` : '';
-              return `<div class="mn-row" data-id="${esc(f.id)}">${Social.dot(f.presence)}<div class="mn-main" data-act="chat"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
+              const fire = f.xp && f.xp.today >= 5 * 3600;
+              return `<div class="mn-row${fire ? ' fire' : ''}" data-id="${esc(f.id)}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
+                `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" data-act="chat"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
                 `${today}${f.unread ? `<i class="cnt hot">${f.unread}</i>` : ''}<button class="mn-btn" type="button" data-act="profile" title="Profile: level and hours">◎</button>` +
                 '<button class="mn-btn" type="button" data-act="chat" title="Message (right-click for more)">✉</button></div>';
             })
             .join('')
         : `<div class="mn-empty">no friends yet · send them your tag: <b>${esc(S.hackerName || '')}${tagText(S.tag)}</b></div>`,
     );
+    lightFires(q('.mn-friends'));
     setHTML(
       q('.mn-in'),
       s.incoming.length
@@ -781,12 +784,14 @@ window.Cloud = (() => {
       );
     }
     const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
+    // Five hours of work today (their today): the card burns until their day ends.
+    const fire = u.days && (u.days[u.days.length - 1] || 0) >= 5 * 3600;
     const spark = u.days
       ? `<span class="lb-spark">${u.days.map((s) => `<i style="height:${s ? Math.max(12, Math.min(100, (s / 28_800) * 100)).toFixed(0) : 0}%"></i>`).join('')}</span>`
       : '<span class="lb-spark off" title="keeps their active time to themselves"></span>';
     return (
-      `<div class="lb-row${u.me ? ' me' : ''}${u.pos <= 3 ? ' top' : ''}" data-id="${esc(u.id)}" style="--rc:${r.color}">` +
-      `<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${tagged(u)}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
+      `<div class="lb-row${u.me ? ' me' : ''}${u.pos <= 3 ? ' top' : ''}${fire ? ' fire' : ''}" data-id="${esc(u.id)}" style="--rc:${r.color}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
+      `${fire ? '<canvas class="fire-card"></canvas>' : ''}<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${tagged(u)}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
       `${u.me && u.anon ? '<em class="lb-hid" title="Others see you as Anonymous">hidden</em>' : ''}</span>` +
       `<small>${esc(r.name)}${active === null ? '' : ` · ${Xp.dur(active)} this week`}</small></div>${spark}` +
       `<span class="lb-score">${boardBy === 'week' ? `+${Xp.num(u.week)}` : Xp.num(u.xp)} XP</span><span class="lb-act">${boardButton(u, 'act')}</span></div>`
@@ -808,6 +813,18 @@ window.Cloud = (() => {
     const mine = board.me && board.me.pos > board.rows.length ? `<div class="lb-gap">· · ·</div>${boardRow(board.me)}` : '';
     const absent = board.me ? '' : `<p class="lb-foot">you'll show up here once you have some XP</p>`;
     setHTML(el, head + (rows ? `<div class="lb-list">${rows}${mine}</div>` : '<div class="mn-empty">no one on the leaderboard yet</div>') + absent);
+    lightFires(el);
+  }
+
+  // Burning cards (five hours of work today, on the leaderboard and among friends): flames burn along their bottom,
+  // under the text (now and then a tongue licks up behind it), for as long as they're shown.
+  const lit = new WeakSet();
+  function lightFires(el) {
+    el.querySelectorAll('.fire-card').forEach((c) => {
+      if (lit.has(c)) return;
+      lit.add(c);
+      Fire.burn(c, { reach: [13, 0, 0], scale: 7 });
+    });
   }
 
   async function boardAction(e) {

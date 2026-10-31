@@ -36,9 +36,9 @@ macOS 13 or later, Apple Silicon and Intel. Works with Claude Code; not affiliat
 
 - The dashboard reads Claude Code's own files on your Mac (`~/.claude`: the session list and transcripts), read only.
   None of it leaves your Mac: no prompts, no code, no transcripts, no file names, no token counts.
-- The app talks to its server only for the social parts and updates: your hacker name and tag, the app and macOS
-  version, whether you're working each minute (for XP) and your time zone, your friends, requests, messages and
-  status, and the leaderboard.
+- The app talks to its server only for the social parts, feedback and updates: your hacker name and tag, the app and
+  macOS version, whether you're working each minute (for XP) and your time zone, your friends, requests, messages and
+  status, the leaderboard, and the feedback you send (kept with your name#tag and the time, no e-mail).
 - Your Mac is known to the server by a salted hash of its hardware UUID (never the UUID itself) and a random token
   kept on the Mac.
 - Messages are stored on the server so they reach your friends; they aren't end-to-end encrypted.

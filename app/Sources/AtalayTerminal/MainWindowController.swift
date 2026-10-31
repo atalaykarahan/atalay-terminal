@@ -27,7 +27,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         self.engine = engine
         UserDefaults.standard.register(defaults: ["sidebarHidden": true])
         let saved = UserDefaults.standard.double(forKey: "terminalFontSize")
-        fontSize = saved >= 9 ? CGFloat(saved) : 13
+        // Until the user picks a size here, their iTerm2 one.
+        fontSize = saved >= 9 ? CGFloat(saved) : ITermLook.current?.fontSize ?? 13
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1480, height: 900),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Atalay's Terminal"
@@ -705,7 +706,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func changeFont(by delta: CGFloat?) {
-        fontSize = delta.map { min(24, max(9, fontSize + $0)) } ?? 13
+        fontSize = delta.map { min(24, max(9, fontSize + $0)) } ?? ITermLook.current?.fontSize ?? 13
         UserDefaults.standard.set(Double(fontSize), forKey: "terminalFontSize")
         for c in chats.values { c.setFont(fontSize) }
     }
