@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased (on the staging branch, out with the next version)
+
+- New terminal: 14 shortcut places around the folder picker; a filled one opens a terminal in its folder at once
+
 ## Next
 
 - Chats: ⌘W closes a friend's chat window
@@ -13,6 +17,8 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Shortcut wheel: also opens with the mouse's middle button, for people without a trackpad (today only a four-finger click)
 - Top bar: the 5-hour and weekly limits don't show for new installs; to decide: hide them while there's no data, so the bar isn't cluttered?
 - Terminals: behave one to one like iTerm2 on macOS (e.g. 24-bit colour, which Apple's screen can't pass on)
+- Terminals: iTerm2's shortcuts open a new terminal in the same folder here too (⌘T, ⇧⌘T, ⌘D, ⇧⌘D and the like); today they do nothing
+- Git changes: a panel like VS Code's Git changes or GitKraken / GitLens, to see what code a session changed (changed files and their diffs)
 
 ## 0.9.0
 

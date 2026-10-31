@@ -14,8 +14,10 @@ window.API = (() => {
     inApp,
     listDir: (p) => (inApp ? native('listDir', { path: p }) : fetch(`/api/fs/list?path=${encodeURIComponent(p)}`).then(json)),
     places: () => (inApp ? native('places') : fetch('/api/fs/places').then(json)),
-    getSlots: () => (inApp ? native('getSlots') : fetch('/api/shortcuts').then(json)),
-    saveSlots: (slots) => (inApp ? native('saveSlots', { slots }) : send('/api/shortcuts', 'PUT', { slots })),
+    // set: undefined for the pie's slices, 'picker' for the places around the new-terminal folder picker.
+    getSlots: (set) => (inApp ? native('getSlots', { set }) : fetch(`/api/shortcuts${set ? `?set=${set}` : ''}`).then(json)),
+    saveSlots: (slots, set) =>
+      inApp ? native('saveSlots', { slots, set }) : send(`/api/shortcuts${set ? `?set=${set}` : ''}`, 'PUT', { slots }),
     newTerminal: (dir, name) => (inApp ? native('newTerminal', { dir, name }) : window.Chat?.openNew(dir, name)),
     done: () => (inApp ? native('done') : Promise.resolve()),
   };

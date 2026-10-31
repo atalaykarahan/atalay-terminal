@@ -1,15 +1,21 @@
 'use strict';
 
 // In-app folder picker (Finder-like) used to fill a shortcut slot. Lists folders only.
+// Opened for a new terminal (around: 'picker'), it has 14 shortcut places around it, like the pie's slices: a filled
+// one opens a terminal in its folder at once, an empty one is filled by picking a folder in the picker.
 (() => {
   const FOLDER = 'M3 7.5a1.5 1.5 0 0 1 1.5-1.5h4.6l2 2.2h8.4a1.5 1.5 0 0 1 1.5 1.5v8.3a1.5 1.5 0 0 1-1.5 1.5h-15a1.5 1.5 0 0 1-1.5-1.5z';
   const GLYPH = { home: '⌂', desktop: '▭', doc: '▤', down: '⇣', code: '⌥', recent: '✻' };
+  // 4 above, 3 to the right, 4 below, 3 to the left; numbered along each side, left to right and top to bottom.
+  const SIDES = [['top', 4], ['right', 3], ['bottom', 4], ['left', 3]];
+  const baseName = (p) => p.replace(/\/+$/, '').split('/').pop() || p;
+  const note = (msg) => typeof toast === 'function' && toast(msg);
 
   const root = document.createElement('div');
   root.id = 'picker';
   document.body.appendChild(root);
 
-  let st = null; // { cwd, list, sel, back, fwd, onPick, places, showHidden, filter }
+  let st = null; // { cwd, list, sel, back, fwd, onPick, places, showHidden, filter, around, slots, assign }
 
   const rel = (t) => {
     const s = Math.max(0, (Date.now() - t) / 1000);
@@ -21,9 +27,12 @@
   };
   const tild = (p) => (st && st.home && p.startsWith(st.home) ? '~' + p.slice(st.home.length) : p);
 
-  async function open({ title = 'CHOOSE A FOLDER', forLabel = '', start = '~/Documents/Repos', onPick, onCancel } = {}) {
-    st = { cwd: null, list: null, sel: -1, back: [], fwd: [], onPick, onCancel, places: null, showHidden: false, filter: '', home: '' };
-    root.innerHTML = `
+  async function open({ title = 'CHOOSE A FOLDER', forLabel = '', start = '~/Documents/Repos', around = null, onPick, onCancel } = {}) {
+    st = { cwd: null, list: null, sel: -1, back: [], fwd: [], onPick, onCancel, places: null, showHidden: false, filter: '', home: '',
+      forLabel, around, slots: [], assign: -1 };
+    root.classList.remove('closing', 'assigning');
+    root.classList.toggle('around', !!around);
+    root.innerHTML = (around ? SIDES.map(([side]) => `<div class="pk-around ${side}"></div>`).join('') : '') + `
       <div class="pk crt-on">
         <div class="pk-border"></div>
         <div class="pk-title"><span class="lights"><i class="l-close" title="Cancel"></i><i class="l-min"></i><i class="l-max"></i></span><span class="hex">⬡</span><b>${esc(title)}</b><span class="for">${esc(forLabel)}</span></div>
@@ -41,7 +50,7 @@
       </div>`;
     root.classList.add('on');
     const q = (s) => root.querySelector(s);
-    q('.l-close').onclick = cancel;
+    q('.l-close').onclick = () => cancel(true);
     q('.pk-cancel').onclick = cancel;
     q('.pk-ok').onclick = choose;
     q('.pk-back').onclick = () => go(st.back.pop(), 'back');
@@ -57,8 +66,24 @@
       st.sel = -1;
       renderList();
     };
-    root.onmousedown = (e) => e.target === root && cancel();
+    root.onmousedown = (e) => {
+      const menu = root.querySelector('.pk-ctx');
+      if (menu) {
+        menu.remove();
+        if (e.target === root) return;
+      }
+      if (e.target === root) cancel();
+    };
     setTimeout(() => q('.pk')?.classList.remove('crt-on'), 700);
+    if (around) {
+      API.getSlots(around)
+        .then((r) => {
+          if (!st || st.around !== around) return;
+          st.slots = Array.isArray(r.slots) ? r.slots : [];
+          renderAround();
+        })
+        .catch(() => {});
+    }
 
     API.places().then((p) => {
       if (!st) return;
@@ -170,18 +195,153 @@
 
   function updateFoot() {
     if (!st?.cwd) return;
-    root.querySelector('.pk-sel').innerHTML = `<b>terminal opens in </b>${esc(tild(target()))}`;
+    const label = st.assign >= 0 ? `shortcut ${st.assign + 1} → ` : 'terminal opens in ';
+    root.querySelector('.pk-sel').innerHTML = `<b>${label}</b>${esc(tild(target()))}`;
   }
 
   function choose() {
     if (!st?.cwd) return;
-    const dir = target(), cb = st.onPick;
+    if (st.assign >= 0) return saveAssign();
+    pickDir(target());
+  }
+
+  function pickDir(dir) {
+    const cb = st.onPick;
     close(() => cb && cb(dir));
   }
 
-  function cancel() {
+  // force: the window's close light, which leaves even while a shortcut is being filled.
+  function cancel(force) {
+    if (!force && st?.assign >= 0) return endAssign();
     const cb = st?.onCancel;
     close(() => cb && cb());
+  }
+
+  // ---------- the shortcuts around the picker ----------
+
+  function tile(s, i, side, delay) {
+    const cls = `sc-tile ${side}${s ? '' : ' empty'}${delay == null ? '' : ' in'}`;
+    const anim = delay == null ? '' : ` style="animation-delay:${delay}ms"`;
+    const shown = s ? s.display || tild(s.dir) : '';
+    const tip = s ? esc(shown) : `Shortcut ${i + 1}: choose a folder`;
+    // Under the name, the folder it's in (the name is the path's end).
+    const body = s
+      ? `<svg class="fold" viewBox="0 0 24 24"><path class="fd-fill" d="${FOLDER}"/><path class="fd" d="${FOLDER}"/><text x="12" y="16.4">&gt;_</text></svg>
+         <span class="nm">${esc(s.name)}</span><span class="sub">${esc(shown.replace(/\/[^/]*$/, '') || '/')}</span>`
+      : `<svg class="plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M7.5 12h9M12 7.5v9"/></svg>
+         <span class="nm">${st.assign === i ? 'pick a folder' : 'add folder'}</span>`;
+    return `<div class="${cls}${st.assign === i ? ' assigning' : ''}" data-i="${i}" data-side="${side}" title="${tip}"${anim}><span class="n">${i + 1}</span>${body}</div>`;
+  }
+
+  function bind(n) {
+    const i = Number(n.dataset.i);
+    n.onclick = (e) => {
+      e.stopPropagation();
+      tileClick(i);
+    };
+    n.oncontextmenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (st.slots[i]) tileMenu(i, e.clientX, e.clientY);
+    };
+  }
+
+  // The first time with the window's opening (each flies in from the picker); later, one place at a time (paint).
+  function renderAround() {
+    let i = 0;
+    for (const [side, n] of SIDES) {
+      const box = root.querySelector(`.pk-around.${side}`);
+      if (!box) return;
+      let html = '';
+      for (let k = 0; k < n; k++, i++) html += tile(st.slots[i], i, side, 160 + i * 32);
+      box.innerHTML = html;
+    }
+    root.querySelectorAll('.sc-tile').forEach(bind);
+  }
+
+  function paint(i, flash) {
+    const old = root.querySelector(`.sc-tile[data-i="${i}"]`);
+    if (!old) return;
+    old.insertAdjacentHTML('afterend', tile(st.slots[i], i, old.dataset.side));
+    old.remove();
+    const n = root.querySelector(`.sc-tile[data-i="${i}"]`);
+    bind(n);
+    if (flash) n.classList.add('flash');
+  }
+
+  function tileClick(i) {
+    const s = st.slots[i];
+    if (s) return pickDir(s.dir);
+    if (st.assign === i) return endAssign();
+    startAssign(i);
+  }
+
+  // Filling place i: the picker's own choice (the button, Enter, a double-click's folder) goes into the place.
+  function startAssign(i, dir) {
+    const was = st.assign;
+    st.assign = i;
+    if (was >= 0 && was !== i) paint(was);
+    paint(i);
+    root.classList.add('assigning');
+    root.querySelector('.pk-title .for').textContent = `pick a folder for shortcut ${i + 1}`;
+    root.querySelector('.pk-ok').textContent = `Save as shortcut ${i + 1}`;
+    root.querySelector('.pk-cancel').textContent = 'Back';
+    if (dir) go(dir, null);
+    else updateFoot();
+  }
+
+  function endAssign() {
+    const i = st.assign;
+    st.assign = -1;
+    if (i >= 0) paint(i);
+    root.classList.remove('assigning');
+    root.querySelector('.pk-title .for').textContent = st.forLabel;
+    root.querySelector('.pk-ok').textContent = 'Use this folder';
+    root.querySelector('.pk-cancel').textContent = 'Cancel';
+    updateFoot();
+  }
+
+  async function saveSlot(i, slot) {
+    const next = st.slots.slice();
+    while (next.length <= i) next.push(null);
+    next[i] = slot;
+    const around = st.around;
+    const r = await API.saveSlots(next, around).catch(() => ({ error: 'network' }));
+    if (!st || st.around !== around) return false;
+    if (r.error) {
+      note(`could not save shortcut: ${r.error}`);
+      return false;
+    }
+    st.slots = r.slots;
+    return true;
+  }
+
+  async function saveAssign() {
+    const i = st.assign, dir = target();
+    if (!(await saveSlot(i, { name: baseName(dir), dir }))) return;
+    endAssign();
+    paint(i, true);
+    note(`shortcut ${i + 1} → ${st.slots[i].name}`);
+  }
+
+  function tileMenu(i, x, y) {
+    root.querySelector('.pk-ctx')?.remove();
+    const s = st.slots[i];
+    const m = document.createElement('div');
+    m.className = 'pk-ctx';
+    m.style.left = Math.min(x, innerWidth - 230) + 'px';
+    m.style.top = Math.min(y, innerHeight - 130) + 'px';
+    m.innerHTML = `<div class="t">${esc(s.display || tild(s.dir))}</div><button data-a="open">New terminal here</button><button data-a="change">Change folder…</button><button data-a="remove">Remove shortcut ${i + 1}</button>`;
+    m.onmousedown = (e) => e.stopPropagation();
+    m.onclick = async (e) => {
+      const a = e.target.dataset.a;
+      if (!a) return;
+      m.remove();
+      if (a === 'open') pickDir(s.dir);
+      else if (a === 'change') startAssign(i, s.dir);
+      else if (a === 'remove' && (await saveSlot(i, null))) paint(i);
+    };
+    root.appendChild(m);
   }
 
   function close(done) {
@@ -190,8 +350,10 @@
     pk.classList.remove('crt-on');
     void pk.offsetWidth;
     pk.classList.add('crt-off');
+    root.querySelector('.pk-ctx')?.remove();
+    root.classList.add('closing');
     setTimeout(() => {
-      root.classList.remove('on');
+      root.classList.remove('on', 'around', 'assigning', 'closing');
       root.innerHTML = '';
       st = null;
       done && done();
@@ -203,7 +365,9 @@
     const n = visible().length;
     if (e.key === 'Escape') {
       e.stopPropagation();
-      cancel();
+      const menu = root.querySelector('.pk-ctx');
+      if (menu) menu.remove();
+      else cancel();
     } else if (e.key === 'ArrowDown' && n) {
       e.preventDefault();
       select(Math.min(n - 1, st.sel + 1));

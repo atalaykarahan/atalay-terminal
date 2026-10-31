@@ -916,8 +916,12 @@ async function parseTail(fp, start, size) {
 
 // ---------- folder picker + shortcut slots ----------
 const DATA_DIR = path.join(HERE, 'data');
-const SHORTCUTS_FILE = path.join(DATA_DIR, 'shortcuts.json');
-const SLOT_COUNT = 5;
+// The pie's 5 slices, and the 14 places around the new-terminal folder picker (?set=picker).
+const SLOT_SETS = {
+  pie: { file: path.join(DATA_DIR, 'shortcuts.json'), count: 5 },
+  picker: { file: path.join(DATA_DIR, 'picker-shortcuts.json'), count: 14 },
+};
+const slotSet = (name) => SLOT_SETS[name] || SLOT_SETS.pie;
 const expandHome = (p) => (p === '~' ? HOME : p.startsWith('~/') ? path.join(HOME, p.slice(2)) : p);
 const encodeCwd = (cwd) => String(cwd || '').replace(/[^A-Za-z0-9]/g, '-');
 
@@ -994,19 +998,21 @@ async function recentFolders(limit = 12) {
   return out;
 }
 
-async function readSlots() {
+async function readSlots(set) {
+  const { file, count } = slotSet(set);
   try {
-    const j = JSON.parse(await fsp.readFile(SHORTCUTS_FILE, 'utf8'));
-    const slots = Array.isArray(j.slots) ? j.slots.slice(0, SLOT_COUNT) : [];
-    while (slots.length < SLOT_COUNT) slots.push(null);
+    const j = JSON.parse(await fsp.readFile(file, 'utf8'));
+    const slots = Array.isArray(j.slots) ? j.slots.slice(0, count) : [];
+    while (slots.length < count) slots.push(null);
     return slots;
   } catch {
-    return Array(SLOT_COUNT).fill(null);
+    return Array(count).fill(null);
   }
 }
 
-async function writeSlots(input) {
-  if (!Array.isArray(input) || input.length !== SLOT_COUNT) throw new Error('need 5 slots');
+async function writeSlots(input, set) {
+  const { file, count } = slotSet(set);
+  if (!Array.isArray(input) || input.length !== count) throw new Error(`need ${count} slots`);
   const slots = [];
   for (const it of input) {
     if (!it) {
@@ -1018,7 +1024,7 @@ async function writeSlots(input) {
     slots.push({ name: clip(it.name || path.basename(dir) || dir, 40), dir, display: tildify(dir) });
   }
   await fsp.mkdir(DATA_DIR, { recursive: true });
-  await fsp.writeFile(SHORTCUTS_FILE, JSON.stringify({ slots }, null, 2));
+  await fsp.writeFile(file, JSON.stringify({ slots }, null, 2));
   return slots;
 }
 
@@ -1475,13 +1481,13 @@ const server = http.createServer(async (req, res) => {
       if (req.headers['x-radar'] !== '1') return sendJson(403, { error: 'forbidden' });
       try {
         const body = JSON.parse(await readBody(req));
-        sendJson(200, { slots: await writeSlots(body.slots) });
+        sendJson(200, { slots: await writeSlots(body.slots, url.searchParams.get('set')) });
       } catch (e) {
         sendJson(400, { error: e.message });
       }
       return;
     }
-    sendJson(200, { slots: await readSlots() });
+    sendJson(200, { slots: await readSlots(url.searchParams.get('set')) });
     return;
   }
 

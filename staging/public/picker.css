@@ -99,3 +99,100 @@
 .pk-foot .pk-sel b { color: var(--dim); font-weight: 400; }
 .pk-foot .pk-ok { border-color: var(--accent); background: var(--accent); color: var(--ink); font-weight: 700; }
 .pk-foot .pk-ok:hover { background: var(--accent-soft); color: var(--ink); }
+
+/* ===== shortcuts around the new-terminal picker: 4 above, 3 right, 4 below, 3 left (picker.js) ===== */
+#picker.around { --tw: 150px; --th: 96px; --gx: 26px; --gy: 22px; }
+#picker.around.on {
+  display: grid;
+  grid-template-areas: ". top ." "left win right" ". bottom .";
+  grid-template-columns: auto auto auto;
+  grid-template-rows: auto auto auto;
+  place-content: center;
+  gap: var(--gy) var(--gx);
+}
+#picker.around .pk { grid-area: win; width: min(860px, calc(100vw - 2 * (var(--tw) + var(--gx)) - 48px)); height: min(540px, calc(100vh - 2 * (var(--th) + var(--gy)) - 48px)); }
+.pk-around { display: flex; gap: 18px; }
+.pk-around.top { grid-area: top; align-items: flex-end; justify-content: center; min-height: var(--th); }
+.pk-around.right { grid-area: right; flex-direction: column; justify-content: center; min-width: var(--tw); }
+.pk-around.bottom { grid-area: bottom; align-items: flex-start; justify-content: center; min-height: var(--th); }
+.pk-around.left { grid-area: left; flex-direction: column; justify-content: center; min-width: var(--tw); }
+
+.sc-tile {
+  --pop-x: 0px;
+  --pop-y: 0px;
+  --from-x: 0px;
+  --from-y: 0px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  box-sizing: border-box;
+  width: var(--tw);
+  height: var(--th);
+  padding: 8px 12px;
+  border: 1.2px solid rgba(248, 128, 8, 0.55);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(48, 26, 10, 0.92), rgba(16, 10, 6, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 30px rgba(0, 0, 0, 0.55), 0 0 16px rgba(248, 128, 8, 0.16);
+  color: #f5ebe0;
+  font: 600 11px var(--font);
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.3), border-color 0.18s, background 0.18s, box-shadow 0.18s, opacity 0.2s;
+}
+.sc-tile.top { --pop-y: -6px; --from-y: 46px; }
+.sc-tile.bottom { --pop-y: 6px; --from-y: -46px; }
+.sc-tile.left { --pop-x: -6px; --from-x: 46px; }
+.sc-tile.right { --pop-x: 6px; --from-x: -46px; }
+.sc-tile.in { animation: sc-tile-in 0.46s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards; }
+.sc-tile:hover {
+  transform: translate(var(--pop-x), var(--pop-y));
+  border-color: #ffb057;
+  background: linear-gradient(160deg, rgba(248, 128, 8, 0.3), rgba(40, 20, 8, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 14px 34px rgba(0, 0, 0, 0.6), 0 0 26px rgba(248, 128, 8, 0.45);
+}
+.sc-tile .n { position: absolute; top: 6px; left: 9px; color: #8f7a66; font-size: 8.5px; font-weight: 700; }
+.sc-tile .nm, .sc-tile .sub { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sc-tile .sub { color: #8f7a66; font-size: 9px; font-weight: 400; }
+.sc-tile .fold { width: 30px; height: 30px; }
+.sc-tile .fold .fd-fill { fill: rgba(248, 128, 8, 0.18); }
+.sc-tile .fold .fd { fill: none; stroke: #f88008; stroke-width: 1.5; stroke-linejoin: round; transition: stroke 0.18s; }
+.sc-tile .fold text { fill: #ffb057; font: 700 5.2px var(--font); text-anchor: middle; }
+.sc-tile:hover .fold .fd { stroke: #fff8f0; }
+
+/* an empty place: dashed, a plus that spins under the pointer */
+.sc-tile.empty { border-style: dashed; border-color: rgba(248, 128, 8, 0.45); background: rgba(22, 13, 7, 0.84); }
+.sc-tile.empty .plus { width: 26px; height: 26px; overflow: visible; }
+.sc-tile.empty .plus circle { fill: rgba(248, 128, 8, 0.08); stroke: rgba(248, 128, 8, 0.6); stroke-width: 1.2; stroke-dasharray: 3 3; transform-origin: 12px 12px; }
+.sc-tile.empty .plus path { fill: none; stroke: #f88008; stroke-width: 1.8; stroke-linecap: round; }
+.sc-tile.empty .nm { color: #8f7a66; }
+.sc-tile.empty:hover { border-style: solid; background: rgba(248, 128, 8, 0.16); }
+.sc-tile.empty:hover .nm { color: #fff8f0; }
+.sc-tile.empty:hover .plus circle, .sc-tile.assigning .plus circle { stroke: #ffb057; animation: pk-spin 2.4s linear infinite; }
+
+/* the place being filled glows; the rest step back */
+#picker.assigning .sc-tile:not(.assigning) { opacity: 0.55; }
+.sc-tile.assigning { border-style: solid; border-color: #ffb057; background: rgba(248, 128, 8, 0.18); animation: sc-tile-glow 1.2s ease-in-out infinite; }
+.sc-tile.assigning .nm { color: #fff8f0; }
+.sc-tile.flash { animation: sc-tile-flash 1.3s ease-out both; }
+#picker.closing .sc-tile { animation: sc-tile-out 0.3s ease-in both; }
+
+/* right-click on a filled place */
+.pk-ctx { position: fixed; z-index: 10; min-width: 210px; padding: 6px; border: 1px solid rgba(248, 128, 8, 0.5); border-radius: 8px; background: rgba(16, 10, 5, 0.9); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(248, 128, 8, 0.25); animation: sc-ctx-in 0.18s ease-out; }
+.pk-ctx .t { max-width: 260px; margin-bottom: 4px; padding: 2px 6px 6px; overflow: hidden; border-bottom: 1px solid rgba(248, 128, 8, 0.2); color: #8f7a66; font: 9.5px var(--font); white-space: nowrap; text-overflow: ellipsis; }
+.pk-ctx button { display: block; width: 100%; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent; color: #f5ebe0; font: 11px var(--font); text-align: left; cursor: pointer; }
+.pk-ctx button:hover { background: rgba(248, 128, 8, 0.2); }
+.pk-ctx button[data-a="remove"] { color: #ff8a8a; }
+
+@keyframes sc-tile-in { from { opacity: 0; transform: translate(var(--from-x), var(--from-y)) scale(0.82); } }
+@keyframes sc-tile-out { to { opacity: 0; transform: translate(calc(var(--from-x) * 0.6), calc(var(--from-y) * 0.6)) scale(0.85); } }
+@keyframes sc-tile-glow {
+  0%, 100% { box-shadow: 0 0 14px rgba(248, 128, 8, 0.35), 0 12px 30px rgba(0, 0, 0, 0.55); }
+  50% { box-shadow: 0 0 32px rgba(255, 176, 87, 0.8), 0 12px 30px rgba(0, 0, 0, 0.55); }
+}
+@keyframes sc-tile-flash { 0% { border-color: #fff8f0; background: rgba(248, 128, 8, 0.85); } }
+@keyframes sc-ctx-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } }
+@keyframes pk-spin { to { transform: rotate(360deg); } }

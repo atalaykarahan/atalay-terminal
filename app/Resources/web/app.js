@@ -820,6 +820,7 @@ $('newchat').addEventListener('click', () => {
   window.Picker?.open({
     title: 'NEW TERMINAL',
     forLabel: 'choose the folder',
+    around: 'picker',
     onPick: (dir) => API.newTerminal(dir, dir.replace(/\/+$/, '').split('/').pop()),
   });
 });

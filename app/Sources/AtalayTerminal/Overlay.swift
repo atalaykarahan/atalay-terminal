@@ -1,23 +1,26 @@
 import AppKit
 import WebKit
 
-/// Saved shortcut folders (the 5 slices of the pie), kept in ~/Library/Application Support/atalay-terminal.
+/// Saved shortcut folders, kept in ~/Library/Application Support/atalay-terminal: the 5 slices of the pie, and the 14
+/// places around the new-terminal folder picker.
 final class ShortcutStore {
-    static let count = 5
     struct Slot: Codable {
         let name: String
         let dir: String
     }
 
-    private(set) var slots: [Slot?] = Array(repeating: nil, count: ShortcutStore.count)
+    let count: Int
+    private(set) var slots: [Slot?]
     private let url: URL
 
-    init() {
+    init(file: String, count: Int) {
+        self.count = count
+        slots = Array(repeating: nil, count: count)
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: HOME + "/Library/Application Support")
-        url = base.appendingPathComponent("atalay-terminal/shortcuts.json")
+        url = base.appendingPathComponent("atalay-terminal/" + file)
         if let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode([Slot?].self, from: data) {
-            slots = Array((saved + Array(repeating: nil, count: Self.count)).prefix(Self.count))
+            slots = Array((saved + Array(repeating: nil, count: count)).prefix(count))
         }
     }
 
@@ -29,7 +32,7 @@ final class ShortcutStore {
     }
 
     func save(_ raw: Any?) throws {
-        guard let list = raw as? [Any], list.count == Self.count else { throw err("need \(Self.count) slots") }
+        guard let list = raw as? [Any], list.count == count else { throw err("need \(count) slots") }
         var next: [Slot?] = []
         for item in list {
             guard let d = item as? [String: Any], let dirRaw = d["dir"] as? String else {
@@ -136,7 +139,8 @@ final class OverlayPanel: NSPanel {
 @MainActor
 final class OverlayController: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDelegate {
     weak var manager: MainWindowController?
-    let store = ShortcutStore()
+    let store = ShortcutStore(file: "shortcuts.json", count: 5)
+    let around = ShortcutStore(file: "picker-shortcuts.json", count: 14)
     private let panel: OverlayPanel
     private let webView: WKWebView
     private let blur = NSVisualEffectView()
@@ -229,6 +233,9 @@ final class OverlayController: NSObject, WKScriptMessageHandlerWithReply, WKNavi
         webView.reload()
     }
 
+    /// "picker": the places around the new-terminal folder picker; anything else, the pie.
+    private func slots(_ body: [String: Any]) -> ShortcutStore { body["set"] as? String == "picker" ? around : store }
+
     // MARK: WKScriptMessageHandlerWithReply
 
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
@@ -249,11 +256,12 @@ final class OverlayController: NSObject, WKScriptMessageHandlerWithReply, WKNavi
             guard let manager else { return replyHandler(FolderLister.places(recents: []), nil) }
             manager.engine.recentFolders(12) { recents in replyHandler(FolderLister.places(recents: recents), nil) }
         case "getSlots":
-            replyHandler(["slots": store.json], nil)
+            replyHandler(["slots": slots(body).json], nil)
         case "saveSlots":
             do {
-                try store.save(body["slots"])
-                replyHandler(["slots": store.json], nil)
+                let set = slots(body)
+                try set.save(body["slots"])
+                replyHandler(["slots": set.json], nil)
             } catch {
                 replyHandler(["error": error.localizedDescription], nil)
             }
