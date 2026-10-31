@@ -179,7 +179,30 @@ body::after {
 .card.st-ended { --c: var(--dim2); opacity: 0.55; }
 .card.winopen { box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.55), 0 0 16px rgba(var(--accent-rgb), 0.25); }
 .ch { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.ch .sw { width: 8px; height: 8px; flex: none; }
+/* macOS-style buttons on each card: red ends the session (after a question), yellow folds the card to its title */
+.card .lights { display: flex; flex: none; gap: 6px; margin-right: 2px; }
+.card .lights i { display: block; width: 11px; height: 11px; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.35); }
+.card .lights .l-close { background: #ff5f57; }
+.card .lights .l-min { background: #febc2e; }
+.card .lights:hover i::after { display: block; color: rgba(0, 0, 0, 0.62); font: 700 9px/11px var(--font); text-align: center; }
+.card .lights:hover .l-close::after { content: "×"; }
+.card .lights:hover .l-min::after { content: "–"; }
+.card.collapsed .lights:hover .l-min::after { content: "+"; }
+.card.collapsed > :not(.ch) { display: none; }
+.card.ending { opacity: 0.35; pointer-events: none; transition: opacity 0.2s; }
+
+/* a question in the dashboard's style (askBox in app.js) */
+.askbox { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: ask-in 0.15s ease-out; }
+.askbox .ab { width: min(420px, 90vw); padding: 18px 20px 14px; border: 1px solid rgba(var(--accent-rgb), 0.55); border-radius: 10px; background: rgba(16, 10, 5, 0.96); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 24px rgba(var(--accent-rgb), 0.25); color: var(--txt); font: 12px/1.5 var(--font); }
+.askbox b { display: block; margin-bottom: 6px; overflow: hidden; color: var(--hi); font-size: 1.1em; text-overflow: ellipsis; white-space: nowrap; }
+.askbox p { margin: 0 0 14px; color: var(--txt); opacity: 0.85; }
+.askbox .btns { display: flex; justify-content: flex-end; gap: 8px; }
+.askbox button { height: 26px; padding: 0 12px; border: 1px solid rgba(var(--accent-rgb), 0.4); border-radius: 5px; background: transparent; color: var(--txt); font: inherit; cursor: pointer; }
+.askbox button:hover { border-color: var(--accent-soft); }
+.askbox button.ok { border-color: #ff5f57; background: #ff5f57; color: #1a0505; font-weight: 700; }
+.askbox button.ok:hover { background: #ff7a73; }
+.askbox button:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 1px; }
+@keyframes ask-in { from { opacity: 0; } }
 .ch .nm { overflow: hidden; color: var(--hi); font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
 .ch .kind { margin-left: 2px; padding: 0 4px; border: 1px solid rgba(157, 107, 255, 0.45); color: var(--violet); font-size: 0.8em; }
 .ch .kind:empty { display: none; }

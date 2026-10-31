@@ -1362,7 +1362,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         w.orderFront(nil)
     }
 
-    func endChat() {
+    /// `confirm` false: asked already (a dashboard card's red button).
+    func endChat(confirm: Bool = true) {
         // A mirror only closes: the chat runs on in the app that owns it.
         if hud.mirror {
             let finish = { [weak self] in
@@ -1379,7 +1380,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         let shellOnly = hud.status == "terminal"
         // Like iTerm2: a terminal whose shell runs nothing closes without asking.
         let idle = shellOnly && shellPid > 0 && Proc.children(of: shellPid).isEmpty
-        if (!hud.exited && !idle) || original != nil {
+        if confirm, (!hud.exited && !idle) || original != nil {
             let a = NSAlert()
             a.messageText = shellOnly ? "Close this terminal?" : "End this chat?"
             if shellOnly {

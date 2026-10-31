@@ -9,6 +9,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Terminals: easier to read; the background is more solid (about 80%, as readable terminals are) and keeps its frost
 - Chats: the whole conversation stays scrollable; the top no longer disappears while Claude writes (Claude opens in its full-screen view unless you picked the classic one with /tui)
 - Tabs and split panes in a window, with iTerm2's keys: ⌘T a new tab in the same folder, ⌘D / ⇧⌘D split side by side / one above the other, ⌘] ⌘[ and ⌥⌘ arrows move between panes, ⇧⌘] ⇧⌘[ and ⌘1–⌘9 between tabs, ⌃⌘ arrows move the divider (or drag it), ⇧⌘↩ shows only the pane in front, ⌘W closes a pane and ⇧⌘T brings it back, ⇧⌘W closes the window; tabs and panes keep running when the app quits and come back in their window, with their history
+- Session cards on the dashboard get macOS-style buttons instead of their colour squares: red ends the session wherever it runs (after a question), yellow folds the card to one line, its name and status
 - The dashboard has no ⌘1 any more (the chat windows stay above it, so it did nothing you could see)
 
 ## Next
@@ -29,7 +30,6 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Terminals: a theme picker like Termius's (colours, background, how see-through)
 - Terminals: Claude's output stutters while it streams
 - Messages: an expand button on the bottom-right notice that opens the chat (today only through the profile, awkward on a touchpad)
-- Sidebar: a way to remove sessions from the list on the left (he couldn't find one)
 - Dashboard: widgets you arrange yourself: hide the ones you don't want (workers, your call…), add a chat widget, less clutter
 - Dashboard: a small widget with general updates (what's new)
 - Context: the gauge shows 1M even when the session compacts earlier (e.g. /autocompact at 500k); use the session's real limit

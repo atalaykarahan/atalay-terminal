@@ -494,22 +494,105 @@ function actionHTML(s) {
   return `<span class="dim">ended ${ago(s.lastTs)} ago</span>`;
 }
 
+// Cards folded to one line with their yellow button, by session id, kept across reloads.
+const collapsed = new Set(
+  (() => {
+    try {
+      return JSON.parse(localStorage.getItem('radar.collapsed') || '[]');
+    } catch {
+      return [];
+    }
+  })(),
+);
+function toggleCollapsed(id) {
+  if (collapsed.has(id)) collapsed.delete(id);
+  else collapsed.add(id);
+  try {
+    localStorage.setItem('radar.collapsed', JSON.stringify([...collapsed]));
+  } catch {}
+  renderSessions();
+}
+
+// A question in the dashboard's style (the app moves the chat windows above the dashboard aside meanwhile): resolves
+// true for the action, false for Cancel, Escape or a click outside.
+function askBox({ title, text, ok }) {
+  return new Promise((resolve) => {
+    const root = document.createElement('div');
+    root.className = 'askbox';
+    root.innerHTML = `<div class="ab"><b>${esc(title)}</b><p>${esc(text)}</p><div class="btns"><button type="button" class="cancel">Cancel</button><button type="button" class="ok">${esc(ok)}</button></div></div>`;
+    const key = (e) => {
+      if (e.key !== 'Escape' && e.key !== 'Enter') return;
+      e.preventDefault();
+      e.stopPropagation();
+      done(e.key === 'Enter');
+    };
+    const done = (v) => {
+      root.remove();
+      removeEventListener('keydown', key, true);
+      if (IN_APP) native({ type: 'modal', open: false });
+      resolve(v);
+    };
+    root.querySelector('.cancel').onclick = () => done(false);
+    root.querySelector('.ok').onclick = () => done(true);
+    root.addEventListener('mousedown', (e) => e.target === root && done(false));
+    addEventListener('keydown', key, true);
+    if (IN_APP) native({ type: 'modal', open: true });
+    document.body.appendChild(root);
+    root.querySelector('.ok').focus();
+  });
+}
+
+// A card's red button: Claude stops wherever it runs (after a question), and the card goes. An ended session's card
+// just goes.
+async function endSession(id) {
+  const s = STATE.sessions.find((x) => x.id === id);
+  if (!s) return;
+  if (s.status !== 'ended') {
+    const winOpen = IN_APP ? !!(window.__winOpen && window.__winOpen[s.id]) : false;
+    const where = s.host === 'term' && !winOpen
+      ? `Claude stops in the terminal it runs in${s.tty ? ` (${String(s.tty).replace('/dev/', '')})` : ''}.`
+      : 'Claude stops and its window closes.';
+    const busy = s.status === 'busy' ? " It's working right now." : s.status === 'waiting' ? ' It is waiting for you.' : '';
+    const yes = await askBox({
+      title: `End “${clipT(s.title || s.name, 60)}”?`,
+      text: `${where}${busy} The conversation stays saved and you can resume it later.`,
+      ok: 'End Session',
+    });
+    if (!yes) return;
+  }
+  document.querySelector(`#sessions .card[data-key="${CSS.escape(id)}"]`)?.classList.add('ending');
+  if (IN_APP) return native({ type: 'endSession', sid: id });
+  fetch(`/api/session/end?sid=${encodeURIComponent(id)}`, { method: 'POST', headers: { 'x-radar': '1' } }).catch(() => {});
+}
+
 function createCard() {
   const el = document.createElement('div');
   el.className = 'card';
-  el.innerHTML = `<div class="ch"><span class="sw"></span><b class="nm"></b><span class="kind"></span><span class="pill"></span></div>
+  el.innerHTML = `<div class="ch"><span class="lights"><i class="l-close"></i><i class="l-min"></i></span><b class="nm"></b><span class="kind"></span><span class="pill"></span></div>
 <div class="title"></div><div class="path"></div><div class="act"></div>
 <div class="ctx"><span>ctx</span><div class="bar"><i></i></div><span class="cv"></span></div>
 <div class="kv"><span class="md"></span><span>tools <b class="tl"></b></span><span>web <b class="wb"></b></span><span>err <b class="er"></b></span><span class="cost"></span></div>
 <svg class="spark" viewBox="0 0 120 20" preserveAspectRatio="none"></svg><div class="ag"></div><div class="flags"></div>`;
   el.addEventListener('click', () => focusSession(el.dataset.key));
+  el.querySelector('.l-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    endSession(el.dataset.key);
+  });
+  el.querySelector('.l-min').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleCollapsed(el.dataset.key);
+  });
   return el;
 }
 function updateCard(el, s) {
   const q = (sel) => el.querySelector(sel);
   for (const st of Object.keys(STATUS)) el.classList.toggle('st-' + st, s.status === st);
   const col = sessColor(s.id);
-  q('.sw').style.background = col;
+  // Folded: one line, the name Claude gave it and its status.
+  const folded = collapsed.has(s.id);
+  el.classList.toggle('collapsed', folded);
+  q('.l-close').title = s.status === 'ended' ? 'Remove from the list' : 'End session';
+  q('.l-min').title = folded ? 'Expand' : 'Collapse';
   setText(q('.nm'), s.name);
   const winOpen = IN_APP ? !!(window.__winOpen && window.__winOpen[s.id]) : !!(window.Chat && window.Chat.isOpen(s.id));
   el.classList.toggle('winopen', winOpen);

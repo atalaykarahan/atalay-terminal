@@ -160,6 +160,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
         case "openTerminal": if let id = msg["id"] as? String { chats[id]?.show() }
+        case "endSession": if let sid = msg["sid"] as? String { endSession(sid) }
         // A menu (friends, settings, an update) opened or closed on the dashboard.
         case "modal":
             let open = msg["open"] as? Bool == true
@@ -168,6 +169,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
         default: break
         }
+    }
+
+    /// A dashboard card's red button (the page asked already): Claude stops wherever it runs, and the card goes. A chat in
+    /// one of our windows ends like its End button; elsewhere (iTerm2, a split pane) Claude gets SIGTERM.
+    private func endSession(_ sid: String) {
+        guard let b = briefs[sid], b.live, let pid = b.pid else { return dismiss(sessionId: sid, pid: nil) }
+        if let name = Detached.sessionName(hosting: pid) {
+            if let c = chats.values.first(where: { $0.detached?.name == name }) { return c.endChat(confirm: false) }
+        } else if let c = chat(for: b), c.detached == nil {
+            return c.endChat(confirm: false)
+        }
+        kill(pid, SIGTERM)
+        dismiss(sessionId: sid, pid: pid)
     }
 
     private func chat(for brief: SessionBrief) -> ChatWindowController? {

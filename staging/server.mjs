@@ -1091,11 +1091,20 @@ function readLimits() {
   return value;
 }
 
+// Sessions ended or removed from the dashboard's list (its cards' red button), with the Claude process they had; one
+// comes back only if another process resumes it.
+const dismissed = new Map();
+
 function snapshot() {
   const now = Date.now();
   const list = [];
   let runningAgents = 0;
   for (const S of sessions.values()) {
+    const gone = dismissed.get(S.id);
+    if (gone !== undefined) {
+      if (!(S.live && S.pid && S.pid !== gone)) continue;
+      dismissed.delete(S.id);
+    }
     // A compacted conversation shows once, as the session it continues in.
     if (S.supersededBy && !S.live) continue;
     let status = statusOf(S, now);
@@ -1516,6 +1525,21 @@ const server = http.createServer(async (req, res) => {
     const items = /^[A-Za-z0-9-]{8,64}$/.test(sid) ? await transcriptItems(sid).catch(() => []) : [];
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify({ items }));
     return;
+  }
+
+  // A card's red button: Claude stops (SIGTERM to its process, wherever it runs) and the card goes; an ended session's
+  // card just goes.
+  if (url.pathname === '/api/session/end' && req.method === 'POST') {
+    if (req.headers['x-radar'] !== '1') return sendJson(403, { error: 'forbidden' });
+    const S = sessions.get(url.searchParams.get('sid') || '');
+    if (!S) return sendJson(404, { error: 'no such session' });
+    if (S.live && S.pid) {
+      try {
+        process.kill(S.pid, 'SIGTERM');
+      } catch {}
+    }
+    dismissed.set(S.id, S.live && S.pid ? S.pid : 0);
+    return sendJson(200, { ok: true });
   }
 
   if (url.pathname === '/api/focus' && req.method === 'POST') {
