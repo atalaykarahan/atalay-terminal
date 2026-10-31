@@ -540,8 +540,10 @@ window.Cloud = (() => {
               const line = f.last ? `${f.last.mine ? 'you: ' : ''}${esc(f.last.body)}` : esc(Social.PRESENCE[f.presence].label);
               // Their level (a click shows their profile) and how long they've worked today, if they share it.
               const lv = f.xp ? Xp.badge(f.xp.level, 'profile') : '';
-              const today = f.xp && f.xp.today ? `<span class="mn-today" title="Active today">today ${Xp.dur(f.xp.today)}</span>` : '';
-              const fire = f.xp && f.xp.today >= 5 * 3600;
+              // Their last 24 hours, not their today: that ends at their own midnight, wherever they live.
+              const last24 = f.xp && f.xp.last24;
+              const today = last24 ? `<span class="mn-today" title="Active in the last 24 hours">24h ${Xp.dur(last24)}</span>` : '';
+              const fire = last24 >= 5 * 3600;
               return `<div class="mn-row${fire ? ' fire' : ''}" data-id="${esc(f.id)}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
                 `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" data-act="chat"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
                 `${today}${f.unread ? `<i class="cnt hot">${f.unread}</i>` : ''}<button class="mn-btn" type="button" data-act="profile" title="Profile: level and hours">◎</button>` +
@@ -673,11 +675,9 @@ window.Cloud = (() => {
     const rested =
       x.rested > 0
         ? `<b>rested</b> · the next ${Xp.dur(x.rested)} today earn double XP`
-        : x.today >= 10 * 3600
-          ? '<b>10 hours today</b> · no more XP until tomorrow · take a break'
-          : x.today >= 8 * 3600
-            ? '<b>past 8 hours today</b> · half XP up to 10 hours · take a break'
-            : 'rested again tomorrow · the first 2 hours each day earn double XP';
+        : x.today >= 8 * 3600
+          ? '<b>past 8 hours today</b> · half XP from here · take a break'
+          : 'rested again tomorrow · the first 2 hours each day earn double XP';
     const ranks = Xp.RANKS.map((k) => {
       const state = x.level > k.to ? 'done' : x.level >= k.from ? 'now' : 'next';
       return `<div class="pf-rk ${state}" style="--rc:${k.color}"><i></i><b>${k.name}</b><span>level ${k.from}–${k.to}</span><em>${state === 'done' ? '✓' : state === 'now' ? 'you' : ''}</em></div>`;
@@ -695,7 +695,7 @@ window.Cloud = (() => {
         `${stat('STREAK', `${x.streak} ${x.streak === 1 ? 'week' : 'weeks'}`, x.bonus ? `+${x.bonus}% XP` : `${x.goal} days a week`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
         (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color)}` : '') +
         `<div class="hk-h">RANKS</div><div class="pf-ranks">${ranks}</div>` +
-        '<p class="pf-rules">1 XP for every active minute, up to 10 hours a day · the first 2 hours count double · +50 for showing up · ' +
+        '<p class="pf-rules">1 XP for every active minute · the first 2 hours a day count double, past 8 hours half · +50 for showing up · ' +
         `${x.goal} days a week keep a streak, +10% XP for every week of it</p>`,
     );
   }
@@ -713,8 +713,8 @@ window.Cloud = (() => {
       `<span>Level ${x.level} · ${esc(r.name)}</span></div></div>` +
       (x.total === null
         ? '<p>keeps their active time to themselves</p>'
-        : `<div class="pf-stats">${stat('TODAY', x.today === null ? '—' : Xp.dur(x.today))}${stat('THIS WEEK', `${x.week}/3 days`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
-          (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color)}` : '')) +
+        : `<div class="pf-stats">${stat('LAST 24H', x.last24 == null ? '—' : Xp.dur(x.last24))}${stat('THIS WEEK', `${x.week}/3 days`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
+          (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color, x.daysEnd)}` : '')) +
       '<div class="mn-ask-btns"><button type="button" class="mn-btn" data-ans="close">close</button><button type="button" class="mn-btn go" data-ans="chat">✉ message</button></div></div>';
     card.onclick = (e) => {
       const b = e.target.closest('[data-ans]');
@@ -784,8 +784,8 @@ window.Cloud = (() => {
       );
     }
     const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
-    // Five hours of work today (their today): the card burns until their day ends.
-    const fire = u.days && (u.days[u.days.length - 1] || 0) >= 5 * 3600;
+    // Five hours of work in the last 24 hours (not their today, which ends at their own midnight): the card burns.
+    const fire = u.last24 >= 5 * 3600;
     const spark = u.days
       ? `<span class="lb-spark">${u.days.map((s) => `<i style="height:${s ? Math.max(12, Math.min(100, (s / 28_800) * 100)).toFixed(0) : 0}%"></i>`).join('')}</span>`
       : '<span class="lb-spark off" title="keeps their active time to themselves"></span>';
@@ -793,7 +793,7 @@ window.Cloud = (() => {
       `<div class="lb-row${u.me ? ' me' : ''}${u.pos <= 3 ? ' top' : ''}${fire ? ' fire' : ''}" data-id="${esc(u.id)}" style="--rc:${r.color}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
       `${fire ? '<canvas class="fire-card"></canvas>' : ''}<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${tagged(u)}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
       `${u.me && u.anon ? '<em class="lb-hid" title="Others see you as Anonymous">hidden</em>' : ''}</span>` +
-      `<small>${esc(r.name)}${active === null ? '' : ` · ${Xp.dur(active)} this week`}</small></div>${spark}` +
+      `<small>${esc(r.name)}${u.last24 ? ` · ${Xp.dur(u.last24)} in 24h` : ''}${active === null ? '' : ` · ${Xp.dur(active)} this week`}</small></div>${spark}` +
       `<span class="lb-score">${boardBy === 'week' ? `+${Xp.num(u.week)}` : Xp.num(u.xp)} XP</span><span class="lb-act">${boardButton(u, 'act')}</span></div>`
     );
   }
@@ -873,8 +873,8 @@ window.Cloud = (() => {
     card.innerHTML =
       `<div class="mn-ask pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(u.level, 'pf-band')}` +
       `<div class="pf-rank"><small>#${u.pos} on the leaderboard</small>${tagged(u)}<span>Level ${u.level} · ${esc(r.name)}</span></div></div>` +
-      `<div class="pf-stats">${stat('THIS WEEK', `+${Xp.num(u.week)} XP`)}${stat('ACTIVE', active === null ? '—' : Xp.dur(active))}${stat('TOTAL', `${Xp.num(u.xp)} XP`)}</div>` +
-      (u.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(u.days, r.color)}` : '<p>keeps their active time to themselves</p>') +
+      `<div class="pf-stats">${stat('LAST 24H', u.last24 == null ? '—' : Xp.dur(u.last24))}${stat('THIS WEEK', `+${Xp.num(u.week)} XP`)}${stat('ACTIVE', active === null ? '—' : Xp.dur(active))}${stat('TOTAL', `${Xp.num(u.xp)} XP`)}</div>` +
+      (u.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(u.days, r.color, u.daysEnd)}` : '<p>keeps their active time to themselves</p>') +
       `<div class="mn-ask-btns"><button type="button" class="mn-btn" data-ans="close">close</button>${boardButton(u, 'ans')}</div></div>`;
     card.onclick = (e) => {
       const b = e.target.closest('[data-ans]');

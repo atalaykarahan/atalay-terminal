@@ -289,9 +289,11 @@ enum TerminalFactory {
         styled(chatId: chatId, fontSize: fontSize, delegate: delegate)
     }
 
-    /// `fit` makes the session take this terminal's size; a hidden window attaches without resizing it.
+    /// `fit` makes the session take this terminal's size; a hidden window attaches without resizing it. screen runs
+    /// behind the app's own relay, which gives Claude's frames back the marks screen drops (SyncRelay).
     static func attach(_ tv: ChatTerminalView, screenName: String, cwd: String, fit: Bool) {
-        tv.startProcess(executable: Detached.screen, args: Detached.attachArgs(screenName, fit: fit),
+        let relay = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        tv.startProcess(executable: relay, args: ["--sync-relay", Detached.screen] + Detached.attachArgs(screenName, fit: fit),
                         environment: childEnvironment(), execName: nil, currentDirectory: cwd)
     }
 

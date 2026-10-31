@@ -3,26 +3,29 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased (on the staging branch, out with the next version)
+
+- Terminals: Claude's output no longer stutters while it streams, each frame shows whole
+- Messages: the reply box at the bottom right stays while you're typing in it; your friend's newer message shows above your reply, other notices wait
+- Messages: replying from the bottom-right box keeps you where you are, it no longer brings the app forward
+- Messages: the notice at the bottom right has a button that opens the chat (⤢)
+- Chats: ⌘W closes a friend's chat window (it no longer closes a terminal pane behind it)
+- Shortcut wheel: the mouse's middle button opens it too, for people without a trackpad
+- Context: the gauge shows the session's real limit, the auto-compact window when one is set (/autocompact)
+- Top bar: the 5-hour and weekly limits stay hidden until there's data for them
+- Friends and the leaderboard show the last 24 hours instead of "today", the same wherever someone lives (their today ended at their own midnight), and the fire burns on 5 hours in the last 24; their 7 days are named by their own dates
+- Levels: no 10-hour limit a day any more; past 8 hours XP comes at half the rate
+
 ## Next
 
-- Chats: ⌘W closes a friend's chat window
 - Chats: group chats, several friends in one conversation (users asked for it)
-- Reminder: add Alper's suggestions from the chat here before planning the next features
-- Messages: the reply box at the bottom right doesn't close while you're typing in it (today it can close when another message arrives)
-- Messages: replying from the bottom-right box doesn't switch you to the app (today Enter brings the app forward, even from another desktop)
-- Shortcut wheel: also opens with the mouse's middle button, for people without a trackpad (today only a four-finger click)
-- Top bar: the 5-hour and weekly limits don't show for new installs; to decide: hide them while there's no data, so the bar isn't cluttered?
-- Terminals: behave one to one like iTerm2 on macOS (e.g. 24-bit colour, which Apple's screen can't pass on)
 - Git changes: a panel like VS Code's Git changes or GitKraken / GitLens, to see what code a session changed (changed files and their diffs)
 
 ### From user feedback (2026-10-31; the messages: feedback/2026-10-31.md, kept off git)
 
 - Terminals: a theme picker like Termius's (colours, background, how see-through)
-- Terminals: Claude's output stutters while it streams
-- Messages: an expand button on the bottom-right notice that opens the chat (today only through the profile, awkward on a touchpad)
 - Dashboard: widgets you arrange yourself: hide the ones you don't want (workers, your call…), add a chat widget, less clutter
 - Dashboard: a small widget with general updates (what's new)
-- Context: the gauge shows 1M even when the session compacts earlier (e.g. /autocompact at 500k); use the session's real limit
 
 ## 0.10.0
 

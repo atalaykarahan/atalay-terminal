@@ -210,6 +210,8 @@
 .xw-d span { color: var(--dim); font-size: 0.8em; }
 .xw-d.today span { color: rgb(var(--rc)); font-weight: 700; }
 .pf-card .xw { height: 96px; margin-bottom: 14px; }
+.xw-d span { white-space: nowrap; }
+.xw-note { margin: -6px 0 12px; color: var(--dim); font-size: 0.86em; }
 
 /* ===== the leaderboard (main menu) ===== */
 .lb-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }

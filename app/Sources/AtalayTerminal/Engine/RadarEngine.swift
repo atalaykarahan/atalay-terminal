@@ -350,7 +350,7 @@ final class RadarEngine {
             let r = int(u["cache_read_input_tokens"]), w = int(u["cache_creation_input_tokens"])
             if A == nil {
                 S.ctx = i + r + w
-                S.ctxMax = priceFor(model)?.ctx ?? 0
+                S.ctxMax = contextLimit(model, cwd: S.cwd)
             }
             if today {
                 let c = costOf(model, u)

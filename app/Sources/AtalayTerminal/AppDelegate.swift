@@ -88,6 +88,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.controller.overlay.showShortcuts(at: NSEvent.mouseLocation)
             return nil
         }) { monitors.append(m) }
+        // The same with a mouse: its middle button (the wheel pressed), for people without a trackpad.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown, handler: { [weak self] event in
+            guard event.buttonNumber == 2, let self else { return event }
+            self.controller.overlay.showShortcuts(at: NSEvent.mouseLocation)
+            return nil
+        }) { monitors.append(m) }
 
         // The mouse wheel over a terminal goes to the program in front when that is Claude (see ChatTerminalView).
         if let m = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { event in

@@ -28,24 +28,33 @@ window.Xp = (() => {
   // How far into the current level, 0–100 (full at the last level).
   const pct = (x) => (x.to ? Math.max(0, Math.min(100, ((x.xp - x.from) / (x.to - x.from)) * 100)) : 100);
 
-  // The last 7 days' active time as bars, today last (a hidden day, null, stays empty), in the rank's colour.
+  // The last 7 days' active time as bars, today last (a hidden day, null, stays empty), in the rank's colour, each
+  // named by its weekday and date. Someone else's days are theirs, in their time zone: `end` is their today
+  // (YYYY-MM-DD); "today" shows only when it's yours too, and a note says which day it is for them when it isn't.
   const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const week = (days, color) => {
+  const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const week = (days, color, end) => {
     if (!days || !days.length) return '';
     const max = Math.max(4 * 3600, ...days.filter((s) => s != null));
-    const today = new Date().getDay();
+    const yours = new Date().toLocaleDateString('sv');
+    const mine = !end || end === yours;
+    const last = new Date(`${end || yours}T12:00:00Z`);
+    const dayOf = (back) => new Date(last.getTime() - back * 86_400_000);
     return (
       `<div class="xw" style="--rc:${color}">` +
       days
         .map((s, i) => {
-          const last = i === days.length - 1;
-          const name = last ? 'today' : DAYS[(today - (days.length - 1 - i) + 70) % 7];
+          const d = dayOf(days.length - 1 - i);
+          const isLast = i === days.length - 1;
+          const name = isLast && mine ? 'today' : `${DAYS[d.getUTCDay()]} ${d.getUTCDate()}`;
           const h = s ? Math.max(3, (s / max) * 100) : 0;
-          return `<div class="xw-d${last ? ' today' : ''}" title="${name}: ${s == null ? 'hidden' : dur(s)}"><em>${s ? dur(s) : ''}</em>` +
+          return `<div class="xw-d${isLast ? ' today' : ''}" title="${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}: ${s == null ? 'hidden' : dur(s)}"><em>${s ? dur(s) : ''}</em>` +
             `<b><i style="height:${h.toFixed(1)}%"></i></b><span>${name}</span></div>`;
         })
         .join('') +
-      '</div>'
+      '</div>' +
+      (mine ? '' : `<p class="xw-note">their time zone · it's ${WEEKDAYS[last.getUTCDay()]}, ${last.getUTCDate()} ${MONTHS[last.getUTCMonth()]} for them</p>`)
     );
   };
 

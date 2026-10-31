@@ -460,12 +460,14 @@ function renderTop() {
   renderLimits();
 }
 
-// Usage limits from Claude Code's status line: used % of the 5-hour and the weekly window, and when each resets.
+// Usage limits from Claude Code's status line: used % of the 5-hour and the weekly window, and when each resets. Until
+// the status line has reported them (a new install), they stay out of the top bar.
 function renderLimits() {
   const L = STATE?.limits;
   for (const [id, w, long] of [['lim-5h', L?.fiveHour, false], ['lim-week', L?.week, true]]) {
     const el = $(id);
     if (!el) continue;
+    el.style.display = w ? '' : 'none';
     const pct = w ? Math.max(0, Math.min(100, w.pct)) : null;
     el.classList.toggle('ok', pct !== null && pct < 50);
     el.classList.toggle('warn', pct !== null && pct >= 50 && pct < 80);

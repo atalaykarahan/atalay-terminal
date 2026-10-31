@@ -69,7 +69,16 @@ window.Messages = (() => {
     post(box ? { type: 'layout', w: box.offsetWidth + 16, h: box.offsetHeight + 16, place: 'corner' } : { type: 'layout', w: 0, h: 0 });
   }
 
+  // A reply being written in the notice: it stays, and what else comes in waits behind it.
+  const replying = () => {
+    const ta = notes && notes.querySelector('textarea');
+    return !!ta && (ta.value.trim() !== '' || (document.hasFocus() && document.activeElement === ta));
+  };
+  // Goes once its time is up, unless you're writing a reply in it: then it waits for you.
+  const autoHide = () => (replying() ? (peekTimer = setTimeout(autoHide, 3000)) : hidePeek());
+
   function showPeek(p) {
+    if (peek && p !== peek && replying()) return void queue.push(p);
     clearTimeout(peekTimer);
     const again = !!peek;
     peek = p;
@@ -80,7 +89,7 @@ window.Messages = (() => {
       p.heard = true;
       Sfx.play('xp');
     }
-    peekTimer = setTimeout(hidePeek, p.kind === 'online' || p.kind === 'xp' ? ONLINE_MS : p.kind === 'fire' ? FIRE_MS + 3000 : PEEK_MS);
+    peekTimer = setTimeout(autoHide, p.kind === 'online' || p.kind === 'xp' ? ONLINE_MS : p.kind === 'fire' ? FIRE_MS + 3000 : PEEK_MS);
   }
 
   function hidePeek() {
@@ -99,12 +108,15 @@ window.Messages = (() => {
   }
 
   function peekHTML(p) {
-    const head = (tag, person, at) =>
+    // A message's notice also opens its chat (⤢), not only through the profile: easier on a touchpad.
+    const head = (tag, person, at, expand) =>
       `<div class="mb-head"><span class="mb-tag">${tag}</span><span class="mb-who">${who(person)}</span>` +
-      `<span class="mb-time">${at ? time(at) : ''}</span><button class="mb-x" data-act="close" title="Close">×</button></div>`;
+      `<span class="mb-time">${at ? time(at) : ''}</span>` +
+      `${expand ? '<button class="mb-x mb-expand" data-act="open" title="Open the chat">⤢</button>' : ''}` +
+      `<button class="mb-x" data-act="close" title="Close">×</button></div>`;
     let body;
     if (p.kind === 'message') {
-      body = head('INCOMING', p.from, p.at) + `<div class="mb-text" data-act="open" title="Open the chat">${esc(p.body)}</div>` + inputHTML('reply…', '⏎');
+      body = head('INCOMING', p.from, p.at, true) + `<div class="mb-text" data-act="open" title="Open the chat">${esc(p.body)}</div>` + inputHTML('reply…', '⏎');
     } else if (p.kind === 'request') {
       body =
         head('FRIEND REQUEST', p.request.from, p.request.at) +
@@ -194,17 +206,18 @@ window.Messages = (() => {
     });
   }
 
-  // A quick reply goes out from here; the conversation then opens in the chat window.
+  // A quick reply goes out from here and the notice goes, leaving you where you were (no chat window, the app stays
+  // behind whatever you're in).
   async function replyFromPeek(ta) {
     const to = peekFriend();
     const text = ta && ta.value.trim();
     if (!to || !text) return;
     ta.value = '';
+    ta.blur();
     hidePeek();
     Sfx.play('send');
     const r = await Social.send(to, text);
     if (r.error) say(r.error === 'offline' ? "not sent · you're offline" : "not sent · you're not friends anymore");
-    Social.openChat(to);
   }
 
   // A new version of the app (from Swift in the app, from the dashboard's state in staging): after whatever is on
@@ -524,7 +537,16 @@ window.Messages = (() => {
       case 'message':
         if (ev.message.mine || showing.has(ev.with)) return;
         Sfx.play('message');
-        if (!Social.dnd()) showPeek({ kind: 'message', from: ev.from || Social.friend(ev.with), body: ev.message.body, at: ev.message.at });
+        if (Social.dnd()) return;
+        // The friend you're answering wrote again: their newest message shows above your reply, which stays.
+        if (peek && peek.kind === 'message' && peek.from && peek.from.id === ev.with && replying()) {
+          peek.body = ev.message.body;
+          peek.at = ev.message.at;
+          notes.querySelector('.mb-text').textContent = ev.message.body;
+          notes.querySelector('.mb-time').textContent = time(ev.message.at);
+          return sizeNotes();
+        }
+        showPeek({ kind: 'message', from: ev.from || Social.friend(ev.with), body: ev.message.body, at: ev.message.at });
         return;
       case 'request':
         Sfx.play('request');
@@ -893,6 +915,7 @@ window.Messages = (() => {
     window.__messages = {
       event: (ev) => Social.event(ev),
       open: (id) => open(id),
+      close: () => close(),
       showing: (ids) => (showing = new Set(ids || [])),
       paste: (text) => pasteText(text),
       copy: (cut) => copyText(cut),

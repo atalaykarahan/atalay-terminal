@@ -539,6 +539,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// ⌘W: the pane in front closes, or with only the window's own, the window.
     func closePane() {
+        // A friend's chat in front closes itself (the terminal behind keeps its panes).
+        if MessagePanel.closeKeyChat() { return }
         if let c = activeChat, c.closeFocusedPane() { return }
         NSApp.keyWindow?.performClose(nil)
     }

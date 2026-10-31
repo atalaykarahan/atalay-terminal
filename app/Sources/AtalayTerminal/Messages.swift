@@ -171,6 +171,13 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         run("window.__messages && __messages.xp && __messages.xp(\(json))")
     }
 
+    /// ⌘W in a friend's chat: it closes the way its × does. False when no chat is in front.
+    static func closeKeyChat() -> Bool {
+        guard let chat = chats.values.first(where: { $0.panel.isKeyWindow }) else { return false }
+        chat.run("window.__messages && __messages.close && __messages.close()")
+        return true
+    }
+
     /// Opens the conversation with a friend: their panel to the front, or a new one next to the others.
     static func openChat(friend id: String) {
         guard !id.isEmpty else { return }

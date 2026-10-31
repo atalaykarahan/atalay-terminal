@@ -28,6 +28,48 @@ func priceFor(_ model: String?) -> Price? {
     return PRICES.first(where: { model.hasPrefix($0.0) })?.1
 }
 
+/// The context a session really works with: its model's window, or less when Claude's auto-compact window is set
+/// (/autocompact), since Claude compacts at the smaller of the two.
+func contextLimit(_ model: String?, cwd: String) -> Double {
+    let window = priceFor(model)?.ctx ?? 0
+    guard window > 0, let set = autoCompactWindow(cwd: cwd) else { return window }
+    return min(window, set)
+}
+
+/// The auto-compact window in tokens, as Claude resolves it: CLAUDE_CODE_AUTO_COMPACT_WINDOW, else the
+/// `autoCompactWindow` setting from the project's local settings, the project's, then the user's ("auto" or none: nil).
+/// The files are read at most every 5 s.
+func autoCompactWindow(cwd: String) -> Double? {
+    if let env = ProcessInfo.processInfo.environment["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], let n = tokenCount(env) { return n }
+    for file in [cwd + "/.claude/settings.local.json", cwd + "/.claude/settings.json", HOME + "/.claude/settings.json"] where !cwd.isEmpty || file.hasPrefix(HOME) {
+        if let n = compactSetting(file) { return n }
+    }
+    return nil
+}
+
+/// What a settings file says, read again once the cached answer is 5 s old: nil when it doesn't set the window.
+private func compactSetting(_ file: String) -> Double? {
+    let now = Date().timeIntervalSince1970
+    if let hit = compactCache[file], now - hit.at < 5 { return hit.value }
+    var value: Double?
+    if let data = FileManager.default.contents(atPath: file),
+       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let v = json["autoCompactWindow"] {
+        value = (v as? NSNumber).map { $0.doubleValue < 10_000 ? $0.doubleValue * 1000 : $0.doubleValue } ?? (v as? String).flatMap(tokenCount)
+    }
+    compactCache[file] = (value, now)
+    return value
+}
+nonisolated(unsafe) private var compactCache: [String: (value: Double?, at: Double)] = [:]
+
+/// "500k", "1M", "200000", or "200" as shorthand for 200k; "auto" or anything else: nil.
+private func tokenCount(_ text: String) -> Double? {
+    let t = text.trimmingCharacters(in: .whitespaces).lowercased()
+    let unit: Double = t.hasSuffix("m") ? 1e6 : t.hasSuffix("k") ? 1e3 : 1
+    guard let n = Double(unit == 1 ? t : String(t.dropLast())), n > 0 else { return nil }
+    let tokens = n * unit
+    return tokens < 10_000 ? tokens * 1000 : tokens
+}
+
 func costOf(_ model: String?, _ u: [String: Any]) -> Double {
     guard let p = priceFor(model) else { return 0 }
     let inp = Double(int(u["input_tokens"])), out = Double(int(u["output_tokens"]))

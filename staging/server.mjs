@@ -41,6 +41,44 @@ const PRICES = [
 ];
 const priceFor = (model) => (model && PRICES.find(([p]) => model.startsWith(p))?.[1]) || null;
 
+// The context a session really works with: its model's window, or less when Claude's auto-compact window is set
+// (/autocompact), since Claude compacts at the smaller of the two. Claude takes CLAUDE_CODE_AUTO_COMPACT_WINDOW, else
+// the autoCompactWindow setting of the project's local settings, the project's, then the user's ("auto": none). The
+// files are read at most every 5 s.
+const contextLimit = (model, cwd) => {
+  const window = priceFor(model)?.ctx || 0;
+  const set = window ? autoCompactWindow(cwd) : null;
+  return set ? Math.min(window, set) : window;
+};
+const tokenCount = (v) => {
+  const t = String(v).trim().toLowerCase();
+  const unit = t.endsWith('m') ? 1e6 : t.endsWith('k') ? 1e3 : 1;
+  const n = Number(unit === 1 ? t : t.slice(0, -1)) * unit;
+  return n > 0 ? (n < 10_000 ? n * 1000 : n) : null;
+};
+const compactCache = new Map();
+function compactSetting(file) {
+  const hit = compactCache.get(file);
+  if (hit && Date.now() - hit.at < 5000) return hit.value;
+  let value = null;
+  try {
+    const v = JSON.parse(fs.readFileSync(file, 'utf8')).autoCompactWindow;
+    if (v !== undefined && v !== null) value = tokenCount(v);
+  } catch {}
+  compactCache.set(file, { value, at: Date.now() });
+  return value;
+}
+function autoCompactWindow(cwd) {
+  const env = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  if (env && tokenCount(env)) return tokenCount(env);
+  const files = [...(cwd ? [path.join(cwd, '.claude/settings.local.json'), path.join(cwd, '.claude/settings.json')] : []), path.join(os.homedir(), '.claude/settings.json')];
+  for (const f of files) {
+    const n = compactSetting(f);
+    if (n) return n;
+  }
+  return null;
+}
+
 function costOf(model, u) {
   const p = priceFor(model);
   if (!p) return 0;
@@ -390,7 +428,7 @@ function onAssistant(rec, S, A, ts, today) {
     seenMsg.add(m.id);
     if (!A) {
       S.ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-      S.ctxMax = priceFor(model)?.ctx || 0;
+      S.ctxMax = contextLimit(model, S.cwd);
     }
     if (today) {
       const tk = { in: u.input_tokens || 0, out: u.output_tokens || 0, cr: u.cache_read_input_tokens || 0, cw: u.cache_creation_input_tokens || 0 };
