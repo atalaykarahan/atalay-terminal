@@ -6,8 +6,9 @@
 #   OUT=build/release ./build-app.sh   build somewhere else (scripts/release.sh does, so build/ keeps running)
 #   UNIVERSAL=1 ./build-app.sh         Apple Silicon + Intel in one app (for releases and the shared .dmg)
 #   STAGING=1 ./build-app.sh --open    the staging build, to try the next version next to the installed app:
-#                                      "Atalay's Terminal Staging" in build/staging, its own bundle id and terminals,
-#                                      an icon with a STAGING sash, the local API
+#                                      "Atalay's Terminal Staging", built straight into ~/Applications (its only copy,
+#                                      so Spotlight and the Dock always open the latest), its own bundle id and
+#                                      terminals, an icon with a STAGING sash, the next version's number, the local API
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -53,7 +54,8 @@ if [ "${STAGING:-}" = 1 ]; then
     ./tools/make-icon.sh staging
   fi
 fi
-APP="${OUT:-build${STAGING:+/staging}}/$NAME.app"
+APP="${OUT:-build}/$NAME.app"
+[ "${STAGING:-}" = 1 ] && APP="${OUT:-$HOME/Applications}/$NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 if [ "${UNIVERSAL:-}" = 1 ]; then
@@ -68,10 +70,12 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [ "${STAGING:-}" = 1 ]; then
   P="$APP/Contents/Info.plist"
   V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$P")
+  # The number it goes out as (the next minor), so it never reads like the installed release.
+  IFS=. read -r MAJOR MINOR _ <<< "$V"
   plutil -replace CFBundleIdentifier -string com.atalaykarahan.atalay-terminal.staging "$P"
   plutil -replace CFBundleName -string "$NAME" "$P"
   plutil -replace CFBundleDisplayName -string "$NAME" "$P"
-  plutil -replace CFBundleShortVersionString -string "$V-staging" "$P"
+  plutil -replace CFBundleShortVersionString -string "$MAJOR.$((MINOR + 1)).0-staging" "$P"
   plutil -replace AtalayAPIURL -string http://127.0.0.1:4800 "$P"
 fi
 cp -R Resources/web "$APP/Contents/Resources/web"
@@ -79,7 +83,7 @@ cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 codesign --force --deep --sign - "$APP" >/dev/null
 echo "built $APP"
 
-if [[ " $* " == *" --install "* ]]; then
+if [[ " $* " == *" --install "* ]] && [ "$APP" != "$HOME/Applications/$NAME.app" ]; then
   mkdir -p "$HOME/Applications"
   rm -rf "$HOME/Applications/$NAME.app"
   cp -R "$APP" "$HOME/Applications/"

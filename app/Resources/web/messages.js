@@ -87,6 +87,7 @@ window.Messages = (() => {
     const box = notes && notes.firstElementChild;
     if (!box) return sizeNotes();
     box.classList.add('out');
+    post({ type: 'leaving' });
     setTimeout(() => {
       if (peek) return;
       notes.innerHTML = '';
@@ -570,6 +571,7 @@ window.Messages = (() => {
     const box = win.firstElementChild;
     if (!box) return sizeChat();
     box.classList.add('out');
+    post({ type: 'leaving' });
     setTimeout(() => {
       if (isOpen) return;
       win.innerHTML = '';

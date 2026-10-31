@@ -31,6 +31,8 @@ window.Cloud = (() => {
   };
   const tagText = (t) => (t ? `#${String(t).padStart(4, '0')}` : '');
   // A download arrow over a tray; while an update downloads, the arrow keeps dropping into the tray.
+  // A speech bubble: beside the main menu, it opens the feedback window.
+  const BUBBLE = '<svg viewBox="0 0 24 24"><path d="M5 4.5h14a2 2 0 0 1 2 2V15a2 2 0 0 1-2 2h-7.5L6.5 21v-4H5a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2z"/><circle cx="8.2" cy="10.8" r="1.1"/><circle cx="12" cy="10.8" r="1.1"/><circle cx="15.8" cy="10.8" r="1.1"/></svg>';
   const ARROW = '<svg viewBox="0 0 16 16"><path class="ar" d="M8 2.5v7.5M4.6 6.8 8 10.2l3.4-3.4"/><path d="M3 13.5h10"/></svg>';
 
   let S = null; // latest state
@@ -40,6 +42,7 @@ window.Cloud = (() => {
   let shownNameError = null;
   let waitFor = null; // { test, then, until }: runs once a state shows the name just sent
   let announced = null; // the build the "update available" notice was shown for
+  let feedbackDraft = ''; // the feedback window's text, kept until it's sent
 
   const root = document.createElement('div');
   root.id = 'cloudui';
@@ -279,7 +282,7 @@ window.Cloud = (() => {
     tellModal(true);
     root.className = 'on';
     root.innerHTML = `
-      <div class="pk hk menu crt-on">
+      <div class="mn-wrap"><div class="pk hk menu crt-on">
         <div class="pk-border"></div>
         <div class="pk-title"><span class="lights"><i class="l-close" title="Close"></i><i class="l-min"></i><i class="l-max"></i></span><img class="hk-logo" src="logo.png" alt=""><b>MAIN MENU</b>
           <span class="mn-me"><span class="mn-handle"></span><button class="mn-copy" type="button" title="Copy your name#tag, so friends can add you">⧉</button><button class="mn-status" type="button" title="Your status"></button></span></div>
@@ -316,7 +319,8 @@ window.Cloud = (() => {
           </section>
         </div>
         <div class="pk-foot"><span class="pk-sel note">esc to close</span><button class="pk-cancel">close</button><button class="pk-ok mn-save" disabled>save name</button></div>
-      </div>`;
+      </div>
+      <button class="mn-fbk" type="button" title="Send feedback to the developer"><i>${BUBBLE}</i><span>feedback</span></button></div>`;
 
     // settings: the hacker name
     const settings = q('.mn-settings');
@@ -361,6 +365,7 @@ window.Cloud = (() => {
       if (e.key === 'Enter') request();
     });
 
+    q('.mn-fbk').onclick = openFeedback;
     q('.hk-sw.act').onclick = toggleActivity;
     q('.hk-sw.brd').onclick = toggleBoard;
     q('.mn-board').addEventListener('click', boardAction);
@@ -386,6 +391,69 @@ window.Cloud = (() => {
     renderSocial();
     // Whatever changed while you weren't looking (a missed live event, another device) shows when the menu opens.
     Social.load();
+  }
+
+  // ---------- feedback: its own window over the main menu, opened by the speech bubble beside it ----------
+  // Goes straight to the developer with who sent it and when, no e-mail; ⌘↩ sends, esc goes back to the menu. Up to
+  // 4000 characters (the API and the database hold the same limit); the count shows once it's close.
+  const FEEDBACK_MAX = 4000;
+  function openFeedback() {
+    if (modal !== 'menu' || q('.fbk-layer')) return;
+    const layer = document.createElement('div');
+    layer.className = 'fbk-layer';
+    layer.innerHTML = `
+      <div class="pk hk fbk crt-on">
+        <div class="pk-border"></div>
+        <div class="pk-title"><span class="lights"><i class="l-close" title="Back to the menu"></i><i class="l-min"></i><i class="l-max"></i></span>${BUBBLE}<b>FEEDBACK</b></div>
+        <div class="hk-body">
+          <label class="hk-field fbk-field"><textarea class="fbk-in" maxlength="${FEEDBACK_MAX}" placeholder="A bug, an idea, something that bothers you…&#10;It goes straight to the developer with your name#tag, no e-mail needed."></textarea></label>
+        </div>
+        <div class="pk-foot"><span class="pk-sel hk-status fbk-status"></span><button class="pk-ok fbk-send" title="⌘↩" disabled>send</button></div>
+      </div>`;
+    root.appendChild(layer);
+    const $ = (sel) => layer.querySelector(sel);
+    const box = $('.fbk-in'), send = $('.fbk-send'), status = $('.fbk-status');
+    const say = (cls, msg) => {
+      status.className = `pk-sel hk-status fbk-status ${cls}`;
+      status.textContent = msg;
+    };
+    const update = () => {
+      const n = box.value.length;
+      send.disabled = !box.value.trim();
+      say(n >= FEEDBACK_MAX ? 'full' : '', n > FEEDBACK_MAX - 400 ? `${n} / ${FEEDBACK_MAX}` : '');
+    };
+    box.value = feedbackDraft;
+    update();
+    box.addEventListener('input', () => {
+      feedbackDraft = box.value;
+      update();
+    });
+    const submit = async () => {
+      const text = box.value.trim();
+      if (!text || send.disabled) return;
+      send.disabled = true;
+      say('wait', 'sending');
+      const r = await Social.feedback(text);
+      if (r.error) {
+        send.disabled = false;
+        return say('bad', errorText(r.error));
+      }
+      feedbackDraft = '';
+      layer.remove();
+      toast('feedback sent · thank you, every one is read');
+    };
+    send.onclick = submit;
+    box.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.metaKey) {
+        e.preventDefault();
+        submit();
+      }
+    });
+    $('.l-close').onclick = () => layer.remove();
+    layer.onmousedown = (e) => {
+      if (e.target === layer) layer.remove();
+    };
+    setTimeout(() => box.focus(), 60);
   }
 
   const REQUEST_ERRORS = {
@@ -849,6 +917,7 @@ window.Cloud = (() => {
     modal = null;
     tellModal(false);
     root.onmousedown = null;
+    q('.fbk-layer')?.remove();
     const pk = q('.pk');
     if (pk) pk.classList.replace('crt-on', 'crt-off');
     setTimeout(() => {
@@ -870,8 +939,8 @@ window.Cloud = (() => {
       return;
     }
     if (modal !== 'menu') return;
-    // Esc closes what's on top first: the confirmation, a small menu, then the main menu.
-    const top = q('.mn-confirm') || q('.mn-ctx') || q('.mn-pick');
+    // Esc closes what's on top first: the feedback window, the confirmation, a small menu, then the main menu.
+    const top = q('.fbk-layer') || q('.mn-confirm') || q('.mn-ctx') || q('.mn-pick');
     if (top) return top.remove();
     close();
   });

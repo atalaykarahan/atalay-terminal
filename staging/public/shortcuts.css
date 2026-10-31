@@ -33,7 +33,7 @@
 .pie .hub text { fill: #fff8f0; font: 700 11px var(--font); text-anchor: middle; pointer-events: none; }
 .pie .hub text.sub { fill: #ffb057; font-size: 8.5px; font-weight: 600; letter-spacing: 0.06em; }
 .pie .hub text.brand { fill: #f88008; font-size: 7.5px; letter-spacing: 0.32em; }
-.pie .hint { position: absolute; left: 50%; top: 100%; margin-top: 8px; padding: 3px 10px; transform: translateX(-50%); border: 1px solid rgba(248, 128, 8, 0.35); border-radius: 10px; background: rgba(10, 7, 5, 0.92); color: #b39a82; font: 9.5px var(--font); white-space: nowrap; text-align: center; }
+.pie .hint { position: absolute; left: 50%; top: 100%; margin-top: 8px; padding: 3px 10px; transform: translateX(-50%); border: 1px solid rgba(248, 128, 8, 0.35); border-radius: 10px; background: rgba(10, 7, 5, var(--glass-a)); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); color: #b39a82; font: 9.5px var(--font); white-space: nowrap; text-align: center; }
 
 @keyframes sc-open { from { opacity: 0; transform: scale(0.35) rotate(-40deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
 @keyframes sc-close { to { opacity: 0; transform: scale(0.6) rotate(25deg); } }
@@ -54,7 +54,7 @@
 @keyframes sc-filled { 0% { fill: rgba(248, 128, 8, 0.9); stroke: #fff8f0; } 100% { fill: rgba(22, 13, 7, 0.94); } }
 
 /* right-click menu on a filled slot */
-.sc-ctx { position: absolute; z-index: 3; min-width: 200px; padding: 6px; border: 1px solid rgba(248, 128, 8, 0.5); border-radius: 8px; background: rgba(16, 10, 5, 0.88); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(248, 128, 8, 0.25); animation: sc-ctx 0.18s ease-out; }
+.sc-ctx { position: absolute; z-index: 3; min-width: 200px; padding: 6px; border: 1px solid rgba(248, 128, 8, 0.5); border-radius: 8px; background: rgba(16, 10, 5, var(--glass-a)); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(248, 128, 8, 0.25); animation: sc-ctx 0.18s ease-out; }
 .sc-ctx .t { max-width: 260px; margin-bottom: 4px; padding: 2px 6px 6px; overflow: hidden; border-bottom: 1px solid rgba(248, 128, 8, 0.2); color: #8f7a66; font: 9.5px var(--font); white-space: nowrap; text-overflow: ellipsis; }
 .sc-ctx button { display: block; width: 100%; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent; color: #f5ebe0; font: 11px var(--font); text-align: left; cursor: pointer; }
 .sc-ctx button:hover { background: rgba(248, 128, 8, 0.2); }

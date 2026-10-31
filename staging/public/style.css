@@ -1,6 +1,10 @@
 :root {
   --bg: #0a0705;
-  --panel: rgba(22, 13, 7, 0.88);
+  /* How solid every window, panel and popup is, the same everywhere: as solid as the terminals (their frost plus a
+     60% background, about 80%). Behind it the page is blurred (backdrop-filter); the message windows, which float over
+     the desktop, get a native frost instead (Messages.swift). */
+  --glass-a: 0.8;
+  --panel: rgba(22, 13, 7, var(--glass-a));
   --line: rgba(248, 128, 8, 0.32);
   --line-soft: rgba(248, 128, 8, 0.13);
   --accent: #f88008;
@@ -193,7 +197,7 @@ body::after {
 
 /* a question in the dashboard's style (askBox in app.js) */
 .askbox { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: ask-in 0.15s ease-out; }
-.askbox .ab { width: min(420px, 90vw); padding: 18px 20px 14px; border: 1px solid rgba(var(--accent-rgb), 0.55); border-radius: 10px; background: rgba(16, 10, 5, 0.96); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 24px rgba(var(--accent-rgb), 0.25); color: var(--txt); font: 12px/1.5 var(--font); }
+.askbox .ab { width: min(420px, 90vw); padding: 18px 20px 14px; border: 1px solid rgba(var(--accent-rgb), 0.55); border-radius: 10px; background: rgba(16, 10, 5, var(--glass-a)); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 24px rgba(var(--accent-rgb), 0.25); color: var(--txt); font: 12px/1.5 var(--font); }
 .askbox b { display: block; margin-bottom: 6px; overflow: hidden; color: var(--hi); font-size: 1.1em; text-overflow: ellipsis; white-space: nowrap; }
 .askbox p { margin: 0 0 14px; color: var(--txt); opacity: 0.85; }
 .askbox .btns { display: flex; justify-content: flex-end; gap: 8px; }
@@ -240,7 +244,9 @@ body::after {
   max-width: 360px;
   padding: 8px 10px;
   border: 1px solid var(--accent-soft);
-  background: rgba(16, 9, 4, 0.96);
+  background: rgba(16, 9, 4, var(--glass-a));
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(16px) saturate(1.4);
   box-shadow: 0 0 24px rgba(var(--accent-rgb), 0.3);
   pointer-events: none;
 }
@@ -355,7 +361,9 @@ body::after {
   z-index: 3000;
   padding: 6px 12px;
   border: 1px solid var(--accent-soft);
-  background: rgba(16, 9, 4, 0.95);
+  background: rgba(16, 9, 4, var(--glass-a));
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(16px) saturate(1.4);
   opacity: 0;
   transform: translateX(-50%);
   transition: opacity 0.3s;

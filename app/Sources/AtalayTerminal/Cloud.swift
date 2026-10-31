@@ -448,9 +448,9 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
                 cloud.installUpdate()
                 replyHandler(true, nil)
             case "social":
-                // Only the friends and messages endpoints; the page never reaches anything else with the token.
+                // Only the friends, messages and feedback endpoints; the page never reaches anything else with the token.
                 let path = body["path"] as? String ?? ""
-                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
                       !path.contains("..") else {
                     replyHandler(["error": "bad_path"], nil)
                     return

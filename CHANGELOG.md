@@ -7,17 +7,18 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 - New terminal: 14 shortcut places around the folder picker; a filled one opens a terminal in its folder at once
 - Terminals: easier to read; the background is more solid (about 80%, as readable terminals are) and keeps its frost
+- One opacity everywhere: menus, friends' chats, notices, popups and the dashboard's panels are as solid as the terminals, frosted the same way
 - Chats: the whole conversation stays scrollable; the top no longer disappears while Claude writes (Claude opens in its full-screen view unless you picked the classic one with /tui)
 - Tabs and split panes in a window, with iTerm2's keys: ⌘T a new tab in the same folder, ⌘D / ⇧⌘D split side by side / one above the other, ⌘] ⌘[ and ⌥⌘ arrows move between panes, ⇧⌘] ⇧⌘[ and ⌘1–⌘9 between tabs, ⌃⌘ arrows move the divider (or drag it), ⇧⌘↩ shows only the pane in front, ⌘W closes a pane and ⇧⌘T brings it back, ⇧⌘W closes the window; tabs and panes keep running when the app quits and come back in their window, with their history
 - Session cards on the dashboard get macOS-style buttons instead of their colour squares: red ends the session wherever it runs (after a question), yellow folds the card to one line, its name and status
 - The dashboard has no ⌘1 any more (the chat windows stay above it, so it did nothing you could see)
+- Feedback: a speech bubble at the main menu's top left opens a feedback window; what you write goes straight to the developer with your name#tag and the time, no e-mail needed (⌘↩ sends)
 
 ## Next
 
 - Chats: ⌘W closes a friend's chat window
 - Chats: group chats, several friends in one conversation (users asked for it)
 - Reminder: add Alper's suggestions from the chat here before planning the next features
-- Settings: a feedback form, so complaints and requests go straight to the developer
 - Messages: the reply box at the bottom right doesn't close while you're typing in it (today it can close when another message arrives)
 - Messages: replying from the bottom-right box doesn't switch you to the app (today Enter brings the app forward, even from another desktop)
 - Shortcut wheel: also opens with the mouse's middle button, for people without a trackpad (today only a four-finger click)

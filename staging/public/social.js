@@ -163,6 +163,8 @@ window.Social = (() => {
     // Everyone with XP, by the last 7 days ('week') or ever ('all'); and whether you're listed there.
     leaderboard: (by) => api('GET', `v1/leaderboard?by=${by === 'all' ? 'all' : 'week'}`),
     setBoard: (show) => api('PATCH', 'v1/me/leaderboard', { show }),
+    // Settings → Feedback: straight to the developer, with who sent it and when.
+    feedback: (body) => api('POST', 'v1/feedback', { body }),
     setStatus: (status) =>
       api('PATCH', 'v1/me/status', { status }).then((r) => {
         if (!r.error) event({ type: 'status', status: r.status });

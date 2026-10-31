@@ -55,6 +55,10 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private let friend: String?
     private let panel: Panel
     private let webView: WKWebView
+    /// The frost under the box, the terminals' own (CSS can't blur what's behind a window; the box tints it to the app's
+    /// one opacity, --glass-a in style.css). It sits 8 pt in from the panel's edges, the room the box's glow takes, and
+    /// fades in and out with the box.
+    private let glass = NSVisualEffectView()
     private var ready = false
     /// Scripts that arrived before the page finished loading.
     private var waiting: [String] = []
@@ -96,7 +100,18 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             panel.collectionBehavior = [.fullScreenAuxiliary]
             panel.delegate = self
         }
-        panel.contentView = webView
+        let root = NSView(frame: webView.frame)
+        glass.material = .hudWindow
+        glass.blendingMode = .behindWindow
+        glass.state = .active
+        glass.maskImage = Self.roundedMask(radius: 10)
+        glass.frame = root.bounds.insetBy(dx: 8, dy: 8)
+        glass.autoresizingMask = [.width, .height]
+        glass.alphaValue = 0
+        webView.autoresizingMask = [.width, .height]
+        root.addSubview(glass)
+        root.addSubview(webView)
+        panel.contentView = root
         let dir = RadarView.webDirectory()
         webView.loadFileURL(dir.appendingPathComponent("messages.html"), allowingReadAccessTo: dir)
         if role == .notices {
@@ -106,6 +121,26 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
                     MainActor.assumeIsolated { self?.tellFocus() }
                 }
             }
+        }
+    }
+
+    /// A rounded rectangle that stretches: the frost's corners, the box's 10 px radius.
+    private static func roundedMask(radius r: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: r * 2 + 1, height: r * 2 + 1), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: r, left: r, bottom: r, right: r)
+        image.resizingMode = .stretch
+        return image
+    }
+
+    /// The frost in under a box that shows, out with one that leaves; none under the level-up takeover.
+    private func frost(_ on: Bool, duration: TimeInterval = 0.3) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = duration
+            glass.animator().alphaValue = on ? 0.97 : 0
         }
     }
 
@@ -251,11 +286,17 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             let size = CGSize(width: number("w"), height: number("h"))
             guard size.width >= 1, size.height >= 1 else {
                 if role == .notices { endTakeover() }
+                glass.alphaValue = 0
                 panel.parent?.removeChildWindow(panel)
                 panel.orderOut(nil)
                 return closed()
             }
-            role == .notices ? placeNotice(size, screen: body["place"] as? String == "screen") : placeChat(size, focus: body["focus"] as? Bool == true)
+            let takeover = role == .notices && body["place"] as? String == "screen"
+            frost(!takeover, duration: takeover ? 0 : 0.3)
+            role == .notices ? placeNotice(size, screen: takeover) : placeChat(size, focus: body["focus"] as? Bool == true)
+        case "leaving":
+            // The box plays its way out: the frost goes with it.
+            frost(false, duration: 0.18)
         case "drag":
             guard role == .chat else { return }
             var origin = panel.frame.origin
