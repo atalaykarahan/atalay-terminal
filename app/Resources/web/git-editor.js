@@ -6,13 +6,60 @@
 // side or inline with VS Code's colours for removed and inserted lines and text, lines that differ only in their
 // leading or trailing spaces left alone (`diffEditor.ignoreTrimWhitespace`), the middle gutter, the overview rulers (each
 // editor's, with its scroll bar and cursor, and the diff's, where the changes are), colour swatches in CSS, Better
-// Comments' colours, and GitLens's blame of the line clicked. Code in Menlo, bold, 13 px on 20 px lines: his
-// "Terminus (TTF) for Windows" isn't installed, so VS Code falls back to Menlo, and `editor.fontWeight` is bold.
+// Comments' colours, and GitLens's blame of the line clicked. The code looks as the user's terminals do: their font and
+// colours (Theme.swift, passed by RadarView), VS Code's colour roles turned into the terminals' own.
 window.GitEditor = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const git = (type, q = {}) =>
     window.webkit.messageHandlers.git.postMessage({ type, ...q }).catch((e) => ({ error: String((e && e.message) || e) }));
   const LINE = 20;
+
+  // The terminals' look: their font and their 16 colours. The theme's colours (GitHub Dark Default's) are roles, and each
+  // becomes the terminal colour with the same role, the way the terminals' palette was made from iTerm2's (Theme.swift).
+  const LOOK = window.__terminalLook || {
+    font: 'Menlo', size: 13, bg: '#251200', fg: '#f5ebe0', cursor: '#f88008',
+    ansi: ['#562f18', '#ff4d4d', '#c5e35a', '#ffd23f', '#c16100', '#e0849c', '#ff7345', '#ffb27a', '#7d6553', '#ff5c8a', '#ddf08f', '#ffe28a', '#f88008', '#ffa8c4', '#ff9b73', '#fff3e6'],
+  };
+  const A = LOOK.ansi;
+  const mix = (c, base, k) => {
+    const n = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const [x, y] = [n(c), n(base)];
+    return `#${x.map((v, i) => Math.round(v * k + y[i] * (1 - k)).toString(16).padStart(2, '0')).join('')}`;
+  };
+  const ROLE = {
+    '#ff7b72': A[1], // keywords, storage, units: red
+    '#79c0ff': A[12], // constants, numbers, properties: bright blue (the brand orange)
+    '#a5d6ff': A[14], // strings: bright cyan (light coral)
+    '#d2a8ff': A[13], // functions: bright magenta
+    '#ffa657': A[3], // variables, types, parameters: yellow (amber)
+    '#7ee787': A[2], // tags, selectors: green
+    '#8b949e': A[8], // comments: bright black
+    '#e6edf3': LOOK.fg,
+    '#ffa198': A[9], // invalid, deleted: bright red
+    '#f0f6fc': A[15],
+    '#161b22': LOOK.bg,
+    '#490202': mix(A[1], LOOK.bg, 0.25),
+    '#04260f': mix(A[2], LOOK.bg, 0.2),
+    '#5a1e02': mix(A[6], LOOK.bg, 0.3),
+  };
+  function terminalTheme(theme) {
+    const role = (c) => (c && ROLE[c.toLowerCase()]) || c;
+    return {
+      name: 'terminal',
+      settings: theme.settings.map((t, i) =>
+        i === 0 ? { settings: { foreground: LOOK.fg, background: LOOK.bg } } : { ...t, settings: { ...t.settings, foreground: role(t.settings?.foreground), background: role(t.settings?.background) } },
+      ),
+    };
+  }
+  {
+    const root = document.documentElement.style;
+    root.setProperty('--code-font', `"${LOOK.font}", Menlo, monospace`);
+    root.setProperty('--code-size', `${LOOK.size}px`);
+    root.setProperty('--code-bg', LOOK.bg);
+    root.setProperty('--code-fg', LOOK.fg);
+    root.setProperty('--code-cursor', LOOK.cursor);
+    A.forEach((c, i) => root.setProperty(`--a${i}`, c));
+  }
   const store = (k, v) => {
     try {
       localStorage.setItem(k, v);
@@ -55,7 +102,7 @@ window.GitEditor = (() => {
             return loaded[scope] || null;
           },
         });
-        registry.setTheme(window.__tmTheme);
+        registry.setTheme(terminalTheme(window.__tmTheme));
         // One class a colour: .tc<n>.
         const sheet = document.head.appendChild(document.createElement('style')).sheet;
         registry.getColorMap().forEach((c, i) => c && sheet.insertRule(`#git .tc${i} { color: ${c}; }`, sheet.cssRules.length));

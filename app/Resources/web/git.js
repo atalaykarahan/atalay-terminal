@@ -56,11 +56,12 @@ window.GitView = (() => {
     return `<span class="vs-fi mi-${esc(icon)}"></span>`;
   }
 
-  // The decorations' colours (an editor tab's name and letter): the theme's (GitHub Dark Default) where it sets them,
-  // the git extension's otherwise. Source Control's own rows show the letters uncoloured, as VS Code does.
+  // The decorations' colours (an editor tab's name and letter), in the terminals' colours: modified amber, added green,
+  // deleted red, renamed coral (staged: their bright ones). Source Control's own rows show the letters uncoloured, as
+  // VS Code does.
   const LETTER = {
-    index: { M: '#e2c08d', T: '#e2c08d', A: '#3fb950', D: '#c74e39', R: '#73c991', C: '#73c991' },
-    work: { M: '#d29922', T: '#d29922', A: '#3fb950', U: '#3fb950', D: '#f85149', R: '#73c991' },
+    index: { M: 'var(--a11)', T: 'var(--a11)', A: 'var(--a10)', D: 'var(--a9)', R: 'var(--a14)', C: 'var(--a14)' },
+    work: { M: 'var(--a3)', T: 'var(--a3)', A: 'var(--a2)', U: 'var(--a2)', D: 'var(--a1)', R: 'var(--a6)' },
   };
   const STATUS = {
     index: { M: 'Index Modified', T: 'Index Type Changed', A: 'Index Added', D: 'Index Deleted', R: 'Index Renamed', C: 'Index Copied' },
@@ -96,8 +97,6 @@ window.GitView = (() => {
   view.innerHTML =
     '<div class="vs-body">' +
     '<div class="vs-card vs-left">' +
-    `<nav class="vs-act"><a class="vs-ab" data-view="dash" title="Dashboard">${ci('files')}</a>` +
-    `<a class="vs-ab on" data-view="git" title="Source Control (⌃⇧G)">${ci('source-control')}<b class="vs-badge" hidden></b></a></nav>` +
     '<aside class="vs-sb">' +
     `<div class="vs-title"><h2>Source Control</h2><div class="vs-tact"><a class="vs-al" data-act="views-menu" title="Views and More Actions...">${ci('ellipsis')}</a></div></div>` +
     `<div class="vs-pane changes"><div class="vs-ph" data-pane="changes">${ci('chevron-down', 'vs-pt')}<h3>Changes</h3><div class="vs-pa">` +
@@ -177,7 +176,7 @@ window.GitView = (() => {
   const unique = (files) => new Set(files.map((f) => f.path)).size;
   function badge() {
     const n = repos.reduce((a, r) => a + unique(r.files), 0);
-    for (const b of document.querySelectorAll('#activity .vs-badge, #git .vs-act .vs-badge')) {
+    for (const b of document.querySelectorAll('#activity .vs-badge')) {
       b.hidden = !n;
       b.textContent = n > 99 ? '99+' : n;
     }
@@ -304,8 +303,10 @@ window.GitView = (() => {
   // ---------- GRAPH: VS Code's history graph ----------
   // Its swimlanes, as scmHistory.ts computes and draws them: 22 px rows, 11 px lanes, 5 px curves, 4 px nodes.
   const H = 22, W = 11, CURVE = 5, R = 4, STROKE = 2;
-  const LANES = ['#ffb000', '#dc267f', '#994f00', '#40b0a6', '#b66dff'];
-  const REF = '#59a4f9', REMOTE = '#b180d7', BASE = '#ea5c00';
+  // In the dashboard's colours: the branch in the brand orange, its upstream violet, its base cyan; other lanes amber,
+  // pink, green, sky and magenta.
+  const LANES = ['#ffd23f', '#ff5c8a', '#3dffa8', '#38bdf8', '#e879f9'];
+  const REF = '#f88008', REMOTE = '#9d6bff', BASE = '#00e5ff';
   const INCOMING = 'scm-graph-incoming-changes', OUTGOING = 'scm-graph-outgoing-changes';
 
   // The refs git's full decorations name: branches, remote branches and tags (HEAD itself isn't one).
@@ -1069,7 +1070,6 @@ window.GitView = (() => {
   function setOpen(on) {
     open = on;
     app.classList.toggle('git-mode', on);
-    document.documentElement.classList.toggle('vs-git', on);
     bar.querySelectorAll('.vs-ab').forEach((b) => b.classList.toggle('on', b.dataset.view === (on ? 'git' : 'dash')));
     if (on) load();
     dispatchEvent(new Event('resize'));
@@ -1083,11 +1083,10 @@ window.GitView = (() => {
     setOpen(true);
   }
 
-  for (const el of [bar, view.querySelector('.vs-act')])
-    el.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-view]');
-      if (b) setOpen(b.dataset.view === 'git');
-    });
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-view]');
+    if (b) setOpen(b.dataset.view === 'git');
+  });
   addEventListener('keydown', (e) => {
     // ⌃⇧G opens it, as in VS Code; Esc goes back to the dashboard.
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyG') return setOpen(!open);

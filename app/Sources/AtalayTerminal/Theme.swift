@@ -10,11 +10,13 @@ enum Theme {
     // The terminals, built on the brand orange: light text on dark orange, and every colour in its warm range
     // (oranges, peach, amber, reds, pinks, a warm green), modelled on a well-tuned iTerm2 theme: as many distinct
     // colours, with its lightness and contrast where the warm range allows.
-    static let terminalBg = NSColor(hex: 0x251200)
+    static let terminalBgHex: UInt32 = 0x251200
+    static let textHex: UInt32 = 0xF5EBE0
+    static let terminalBg = NSColor(hex: terminalBgHex)
     static let terminalCursor = NSColor(hex: accentHex)
     static let terminalLink = NSColor(hex: 0xFFB057)
     static let panel = NSColor(hex: 0x160D07)
-    static let text = NSColor(hex: 0xF5EBE0)
+    static let text = NSColor(hex: textHex)
     static let accent = NSColor(hex: accentHex)
 
     static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {

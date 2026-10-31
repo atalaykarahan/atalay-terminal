@@ -10,6 +10,7 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     override init() {
         let config = WKWebViewConfiguration()
         let ucc = WKUserContentController()
+        ucc.addUserScript(WKUserScript(source: Self.terminalLook, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = ucc
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800), configuration: config)
         super.init()
@@ -20,6 +21,20 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let dir = Self.webDirectory()
         webView.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
     }
+
+    /// The terminals' look for the page (Source Control shows code in it): their font (the user's iTerm2 one) and
+    /// colours (Theme), as `window.__terminalLook`.
+    private static let terminalLook: String = {
+        let look = ITermLook.current
+        let family = look?.fontName.flatMap { NSFont(name: $0, size: 13)?.familyName } ?? "Menlo"
+        let hex = { (c: UInt32) in String(format: "#%06x", c) }
+        let value: [String: Any] = [
+            "font": family, "size": Double(look?.fontSize ?? 13), "bg": hex(Theme.terminalBgHex), "fg": hex(Theme.textHex),
+            "cursor": hex(Theme.accentHex), "ansi": Theme.ansi.map(hex),
+        ]
+        let json = (try? JSONSerialization.data(withJSONObject: value)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return "window.__terminalLook = \(json);"
+    }()
 
     /// Bundled copy inside the .app, or the source folder when run with `swift run`.
     static func webDirectory() -> URL {
