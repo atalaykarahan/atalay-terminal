@@ -26,6 +26,8 @@
 - **Each chat in its own window**, running in a detached session: close the window or quit the app and Claude keeps
   working; the window comes back with its history.
 - **Terminals** for dev servers and tests fly around the orbit as cars and park when they're idle.
+- **Source Control** as in VS Code, for every repo your sessions work in: changes, commit, the history graph and diffs.
+- **Themes**: twelve colour themes (Dracula, Tokyo Night, Catppuccin, Nord…) for the whole app, terminals included.
 - **Friends**: add people by `name#tag`, message them, see who's online.
 - **Levels**: the time you actively work earns XP, ranks go from Academy Student to Kage, and a leaderboard shows the
   week.
