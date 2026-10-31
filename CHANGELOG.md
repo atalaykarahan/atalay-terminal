@@ -6,10 +6,15 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 ## Unreleased (on the staging branch, out with the next version)
 
 - New terminal: 14 shortcut places around the folder picker; a filled one opens a terminal in its folder at once
+- Terminals: easier to read; the background is more solid (about 80%, as readable terminals are) and keeps its frost
+- Chats: the whole conversation stays scrollable; the top no longer disappears while Claude writes (Claude opens in its full-screen view unless you picked the classic one with /tui)
+- Tabs and split panes in a window, with iTerm2's keys: ⌘T a new tab in the same folder, ⌘D / ⇧⌘D split side by side / one above the other, ⌘] ⌘[ and ⌥⌘ arrows move between panes, ⇧⌘] ⇧⌘[ and ⌘1–⌘9 between tabs, ⌃⌘ arrows move the divider (or drag it), ⇧⌘↩ shows only the pane in front, ⌘W closes a pane and ⇧⌘T brings it back, ⇧⌘W closes the window; tabs and panes keep running when the app quits and come back in their window, with their history
+- The dashboard has no ⌘1 any more (the chat windows stay above it, so it did nothing you could see)
 
 ## Next
 
 - Chats: ⌘W closes a friend's chat window
+- Chats: group chats, several friends in one conversation (users asked for it)
 - Reminder: add Alper's suggestions from the chat here before planning the next features
 - Settings: a feedback form, so complaints and requests go straight to the developer
 - Messages: the reply box at the bottom right doesn't close while you're typing in it (today it can close when another message arrives)
@@ -17,8 +22,17 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Shortcut wheel: also opens with the mouse's middle button, for people without a trackpad (today only a four-finger click)
 - Top bar: the 5-hour and weekly limits don't show for new installs; to decide: hide them while there's no data, so the bar isn't cluttered?
 - Terminals: behave one to one like iTerm2 on macOS (e.g. 24-bit colour, which Apple's screen can't pass on)
-- Terminals: iTerm2's shortcuts open a new terminal in the same folder here too (⌘T, ⇧⌘T, ⌘D, ⇧⌘D and the like); today they do nothing
 - Git changes: a panel like VS Code's Git changes or GitKraken / GitLens, to see what code a session changed (changed files and their diffs)
+
+### From user feedback (2026-10-31; the messages: feedback/2026-10-31.md, kept off git)
+
+- Terminals: a theme picker like Termius's (colours, background, how see-through)
+- Terminals: Claude's output stutters while it streams
+- Messages: an expand button on the bottom-right notice that opens the chat (today only through the profile, awkward on a touchpad)
+- Sidebar: a way to remove sessions from the list on the left (he couldn't find one)
+- Dashboard: widgets you arrange yourself: hide the ones you don't want (workers, your call…), add a chat widget, less clutter
+- Dashboard: a small widget with general updates (what's new)
+- Context: the gauge shows 1M even when the session compacts earlier (e.g. /autocompact at 500k); use the session's real limit
 
 ## 0.9.0
 

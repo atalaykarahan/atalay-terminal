@@ -599,6 +599,20 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private var copiedUntil = Date.distantPast
     /// Out of the way while the dashboard shows a menu (see stepAside).
     private var steppedAside = false
+    /// iTerm2's tabs and split panes (Panes.swift): where the shown tab goes, its tab bar, each tab's root view (a
+    /// terminal, or split views of them), and the panes besides this window's own terminal.
+    private let paneArea = NSView()
+    private let tabBar = PaneTabBar()
+    private var tabs: [NSView] = []
+    private var activeTab = 0
+    private(set) var extras: [ExtraPane] = []
+    private var paneTop: NSLayoutConstraint!
+    private var paneTopUnderTabs: NSLayoutConstraint!
+    /// ⇧⌘↩: only the pane in front shows in its tab.
+    private var zoomed = false
+    /// Terminals in the order they had the keyboard, the latest last (a tab shown again gives it back to its latest).
+    private var focusHistory: [ChatTerminalView] = []
+    private var focusWatch: NSKeyValueObservation?
 
     /// `claudeArgs` nil opens a plain terminal in `cwd`.
     init(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, fontSize: CGFloat, frame: NSRect,
@@ -633,7 +647,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         terminal.sessionShell = { [weak self] in self?.detached?.shellPid ?? 0 }
         terminal.onSelection = { [weak self] text in self?.showSelection(text) }
         terminal.onCopy = { [weak self] text in self?.showCopied(text) }
+        terminal.onFocus = { [weak self] in self?.focusChanged() }
         buildLayout()
+        focusWatch = w.observe(\.firstResponder) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.focusChanged() }
+        }
         // GPU text rendering: glyphs come from an atlas and cells are drawn as quads, far less CPU than
         // Core Graphics when Claude streams output. Falls back to Core Graphics if Metal can't start.
         try? terminal.setUseMetal(true)
@@ -667,8 +685,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         glass.material = .hudWindow
         glass.blendingMode = .behindWindow
         glass.state = .active
-        // Let some of the dashboard show through the frost.
-        glass.alphaValue = 0.74
+        // Only the frost shows what's behind: the 26% of sharp, unblurred dashboard that came through before put text
+        // under the terminal's text.
+        glass.alphaValue = 0.97
 
         let tint = NSView()
         let warm = CAGradientLayer()
@@ -712,10 +731,17 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         selectionBadge.drawsBackground = true
         selectionBadge.backgroundColor = NSColor.black.withAlphaComponent(0.55)
         selectionBadge.isHidden = true
-        for v in [glass, tint, header, terminal!, ticker, selectionBadge, border, flash] as [NSView] {
+        tabBar.isHidden = true
+        tabBar.onSelect = { [weak self] in self?.selectTab($0) }
+        tabBar.onClose = { [weak self] in self?.closeTab($0) }
+        for v in [glass, tint, header, tabBar, paneArea, ticker, selectionBadge, border, flash] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
+        tabs = [terminal]
+        mount(terminal)
+        paneTop = paneArea.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6)
+        paneTopUnderTabs = paneArea.topAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 5)
         for v in [glass, tint, border, flash] as [NSView] { pin(v, to: container) }
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: container.topAnchor),
@@ -726,12 +752,16 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             ticker.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             ticker.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             ticker.heightAnchor.constraint(equalToConstant: 26),
-            terminal.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
-            terminal.bottomAnchor.constraint(equalTo: ticker.topAnchor, constant: -4),
-            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
-            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
-            selectionBadge.trailingAnchor.constraint(equalTo: terminal.trailingAnchor, constant: -10),
-            selectionBadge.bottomAnchor.constraint(equalTo: terminal.bottomAnchor, constant: -6),
+            tabBar.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
+            tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            tabBar.heightAnchor.constraint(equalToConstant: 24),
+            paneTop,
+            paneArea.bottomAnchor.constraint(equalTo: ticker.topAnchor, constant: -4),
+            paneArea.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            paneArea.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
+            selectionBadge.trailingAnchor.constraint(equalTo: paneArea.trailingAnchor, constant: -10),
+            selectionBadge.bottomAnchor.constraint(equalTo: paneArea.bottomAnchor, constant: -6),
         ])
     }
 
@@ -774,20 +804,21 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         guard let w = window else { return }
         if isShown {
             w.makeKeyAndOrderFront(nil)
-            w.makeFirstResponder(terminal)
+            focus(focusTarget(in: activeTab))
             return
         }
         isShown = true
         hud.visible = true
-        terminal.suspendsRenderingWhenNotVisible = false
+        for tv in allTerminals { tv.suspendsRenderingWhenNotVisible = false }
         // A window that attached while hidden takes over the session size now.
         fitSession()
+        extras.forEach { $0.fit() }
         if hud.attached, let parent = manager?.window, parent.isVisible { parent.addChildWindow(w, ordered: .above) }
         w.layoutIfNeeded()
         setButtonsHidden(true)
         container.layer?.sublayerTransform = squeeze(0.003, 0.003)
         w.makeKeyAndOrderFront(nil)
-        w.makeFirstResponder(terminal)
+        focus(focusTarget(in: activeTab))
         runPowerOn()
         manager?.chatVisibilityChanged()
     }
@@ -803,7 +834,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             self.isShown = false
             // Nothing to draw while hidden; SwiftTerm resumes when the window is shown again.
             self.hud.visible = false
-            self.terminal.suspendsRenderingWhenNotVisible = true
+            for tv in self.allTerminals { tv.suspendsRenderingWhenNotVisible = true }
             self.resetEffect()
             self.manager?.chatVisibilityChanged()
             then?()
@@ -965,6 +996,355 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         fitSession()
     }
 
+    // MARK: iTerm2's split and pane shortcuts (MainWindowController.split and the rest)
+
+    /// ⇧⌘↩ with a single pane: the window fills the screen, and back.
+    func toggleMaximize() {
+        if tile == .fill, window?.frame == tiledFrame, untiledFrame != nil { tile(key: 15) } else { tile(key: 3) }
+    }
+
+    // MARK: tabs and split panes (iTerm2's ⌘T, ⌘D, ⇧⌘D, ⌘[ ⌘], ⌥⌘ arrows, ⇧⌘[ ⇧⌘], ⌃⌘ arrows, ⇧⌘↩, ⌘W)
+
+    /// Every terminal in this window: its own first, then the extra panes.
+    private var allTerminals: [ChatTerminalView] { [terminal] + extras.map(\.terminal) }
+
+    /// The shells of every pane (the dashboard maps them to this window).
+    var shellPids: [Int32] { [shellPid] + extras.map(\.shellPid) }
+
+    private func extra(of tv: ChatTerminalView) -> ExtraPane? { extras.first { $0.terminal === tv } }
+
+    /// The pane with the keyboard, else the one used last in the shown tab.
+    var focusedTerminal: ChatTerminalView {
+        if let tv = window?.firstResponder as? ChatTerminalView, allTerminals.contains(where: { $0 === tv }) { return tv }
+        return focusTarget(in: activeTab)
+    }
+
+    private func focusTarget(in tab: Int) -> ChatTerminalView {
+        let ts = terminals(in: tab)
+        return focusHistory.last { t in ts.contains { $0 === t } } ?? ts.first ?? terminal
+    }
+
+    /// Where a new terminal "here" opens: the folder the shell of the pane in front is in now (it may have cd'd).
+    var currentFolder: String {
+        if let pane = extra(of: focusedTerminal) { return pane.currentFolder }
+        return (shellPid > 0 ? Proc.cwd(shellPid) : nil) ?? cwd
+    }
+
+    /// Tab `i`'s terminals, left to right and top to bottom.
+    private func terminals(in i: Int) -> [ChatTerminalView] {
+        guard tabs.indices.contains(i) else { return [] }
+        func walk(_ v: NSView) -> [ChatTerminalView] {
+            if let tv = v as? ChatTerminalView { return [tv] }
+            return (v as? PaneSplitView)?.arrangedSubviews.flatMap(walk) ?? []
+        }
+        return walk(tabs[i])
+    }
+
+    /// The shown tab's root fills the pane area.
+    private func mount(_ v: NSView) {
+        v.removeFromSuperview()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        paneArea.addSubview(v)
+        pin(v, to: paneArea)
+    }
+
+    private func makeExtra(kind: PaneKind, cwd: String) -> ExtraPane {
+        let pane = ExtraPane(owner: self, cwd: cwd, kind: kind, fontSize: terminal.font.pointSize)
+        pane.terminal.sessionShell = { [weak pane] in pane?.link?.shellPid ?? 0 }
+        pane.terminal.onSelection = { [weak self] in self?.showSelection($0) }
+        pane.terminal.onCopy = { [weak self] in self?.showCopied($0) }
+        pane.terminal.onFocus = { [weak self] in self?.focusChanged() }
+        pane.terminal.suspendsRenderingWhenNotVisible = !isShown
+        extras.append(pane)
+        return pane
+    }
+
+    /// ⌘T: a new tab with a shell in the folder of the pane in front.
+    func newTab() {
+        guard !hud.mirror else { return }
+        let pane = makeExtra(kind: .tab, cwd: currentFolder)
+        tabs.append(pane.terminal)
+        selectTab(tabs.count - 1)
+        pane.start(session: nil, parent: detached?.name, fit: isShown)
+        focus(pane.terminal)
+    }
+
+    /// ⌘D (`vertical`: side by side) / ⇧⌘D (one above the other): the pane in front gives half its place to a shell in
+    /// its folder.
+    func split(vertical: Bool) {
+        guard !hud.mirror else { return }
+        if zoomed { _ = toggleZoom() }
+        let old = focusedTerminal
+        let pane = makeExtra(kind: vertical ? .vertical : .horizontal, cwd: currentFolder)
+        insert(pane.terminal, beside: old, vertical: vertical)
+        refreshPanes()
+        focus(pane.terminal)
+        pane.start(session: nil, parent: detached?.name, fit: isShown)
+    }
+
+    /// A pane's session still running (⇧⌘T right after closing it, or after the app restarted) comes back: in a tab of
+    /// its own or split off the shown tab's last pane.
+    func adoptPane(session: String, kind: PaneKind, cwd: String, focus: Bool) {
+        guard !hud.mirror else { return }
+        let pane = makeExtra(kind: kind, cwd: cwd)
+        if kind == .tab {
+            tabs.append(pane.terminal)
+            if focus { selectTab(tabs.count - 1) }
+        } else {
+            if zoomed { _ = toggleZoom() }
+            insert(pane.terminal, beside: terminals(in: activeTab).last ?? terminal, vertical: kind == .vertical)
+        }
+        refreshPanes()
+        if focus { self.focus(pane.terminal) }
+        pane.start(session: session, parent: detached?.name, fit: isShown)
+    }
+
+    private func insert(_ new: NSView, beside old: NSView, vertical: Bool) {
+        // Only the pane in front is halved, as in iTerm2; the others keep their size.
+        if let sv = old.superview as? PaneSplitView, sv.isVertical == vertical, let i = sv.arrangedSubviews.firstIndex(of: old) {
+            return sv.insertArrangedSubview(new, at: i + 1)
+        }
+        let sv = PaneSplitView()
+        sv.isVertical = vertical
+        replace(old, with: sv)
+        sv.addArrangedSubview(old)
+        sv.addArrangedSubview(new)
+    }
+
+    /// Puts `new` where `old` is: in its split view, or as its tab's root.
+    private func replace(_ old: NSView, with new: NSView) {
+        if let sv = old.superview as? PaneSplitView {
+            sv.replaceArrangedSubview(old, with: new)
+        } else if let t = tabs.firstIndex(where: { $0 === old }) {
+            let shown = old.superview === paneArea
+            old.removeFromSuperview()
+            tabs[t] = new
+            if shown { mount(new) }
+        }
+    }
+
+    /// Takes a pane's view out: its split view closes up, a split view left with one pane gives way to it, a tab left with
+    /// none closes.
+    private func removePaneView(_ v: NSView) {
+        focusHistory.removeAll { $0 === v }
+        if let t = tabs.firstIndex(where: { $0 === v }) {
+            v.removeFromSuperview()
+            tabs.remove(at: t)
+            if activeTab > t || activeTab >= tabs.count { activeTab = max(0, activeTab - 1) }
+            if let root = tabs.indices.contains(activeTab) ? tabs[activeTab] : nil, root.superview !== paneArea { mount(root) }
+            return
+        }
+        guard let sv = v.superview as? PaneSplitView else { return v.removeFromSuperview() }
+        v.removeFromSuperview()
+        if sv.arrangedSubviews.count == 1, let only = sv.arrangedSubviews.first {
+            replace(sv, with: only)
+        }
+    }
+
+    func selectTab(_ i: Int) {
+        guard tabs.indices.contains(i) else { return }
+        if zoomed { _ = toggleZoom() }
+        if tabs.indices.contains(activeTab), tabs[activeTab].superview === paneArea, activeTab != i { tabs[activeTab].removeFromSuperview() }
+        activeTab = i
+        if tabs[i].superview !== paneArea { mount(tabs[i]) }
+        refreshPanes()
+        focus(focusTarget(in: i))
+        for tv in terminals(in: i) { extra(of: tv)?.fit() }
+        if terminals(in: i).contains(where: { $0 === terminal }) { fitSession() }
+    }
+
+    /// ⇧⌘] / ⇧⌘[: the next or previous tab; false with only one (the caller moves to another window).
+    func selectTab(step: Int) -> Bool {
+        guard tabs.count > 1 else { return false }
+        selectTab((activeTab + step + tabs.count) % tabs.count)
+        return true
+    }
+
+    /// A tab's × (iTerm2 asks the same way when something runs in it).
+    private func closeTab(_ i: Int) {
+        guard tabs.indices.contains(i) else { return }
+        let panes = terminals(in: i).compactMap { extra(of: $0) }
+        // The tab with this window's own chat or terminal closes the window, which keeps it running.
+        guard panes.count == terminals(in: i).count else {
+            if hide() { manager?.closed(id) }
+            return
+        }
+        if panes.contains(where: \.busy), !confirmClose("Close this tab?") { return }
+        for pane in panes { close(pane, undoable: panes.count == 1) }
+    }
+
+    /// ⌘]/⌘[: the next or previous pane in the shown tab; false with only one.
+    func selectPane(step: Int) -> Bool {
+        if zoomed { _ = toggleZoom() }
+        let ts = terminals(in: activeTab)
+        guard ts.count > 1 else { return false }
+        let i = ts.firstIndex { $0 === focusedTerminal } ?? 0
+        focus(ts[(i + step + ts.count) % ts.count])
+        return true
+    }
+
+    /// ⌥⌘ and an arrow (`dy` up is +1): the pane that way in the shown tab; false when there's none.
+    func selectPane(dx: CGFloat, dy: CGFloat) -> Bool {
+        if zoomed { _ = toggleZoom() }
+        let cur = focusedTerminal
+        let cf = cur.convert(cur.bounds, to: nil)
+        var best: (ChatTerminalView, CGFloat)?
+        for tv in terminals(in: activeTab) where tv !== cur {
+            let f = tv.convert(tv.bounds, to: nil)
+            let x = f.midX - cf.midX, y = f.midY - cf.midY
+            let along = x * dx + y * dy
+            guard along > 10 else { continue }
+            let score = along + 2 * abs(x * dy - y * dx)
+            if best.map({ score < $0.1 }) ?? true { best = (tv, score) }
+        }
+        guard let best else { return false }
+        focus(best.0)
+        return true
+    }
+
+    /// ⌃⌘ and an arrow: the nearest divider across that way moves 40 points; false when there's none.
+    func moveDivider(dx: CGFloat, dy: CGFloat) -> Bool {
+        if zoomed { _ = toggleZoom() }
+        var v: NSView = focusedTerminal
+        while let sv = v.superview as? PaneSplitView {
+            if sv.isVertical == (dx != 0), let i = sv.arrangedSubviews.firstIndex(of: v) {
+                let k = i < sv.arrangedSubviews.count - 1 ? i : i - 1
+                let f = sv.arrangedSubviews[k].frame
+                // A split view counts from the top: up is a smaller y.
+                sv.setPosition(sv.isVertical ? f.maxX + dx * 40 : f.maxY - dy * 40, ofDividerAt: k)
+                return true
+            }
+            v = sv
+        }
+        return false
+    }
+
+    /// ⇧⌘↩: only the pane in front shows in its tab, and back; false with only one pane.
+    func toggleZoom() -> Bool {
+        if zoomed {
+            zoomed = false
+            func unhide(_ v: NSView) {
+                guard let sv = v as? PaneSplitView else { return }
+                for s in sv.arrangedSubviews {
+                    s.isHidden = false
+                    unhide(s)
+                }
+                sv.needsLayout = true
+            }
+            if tabs.indices.contains(activeTab) { unhide(tabs[activeTab]) }
+        } else {
+            guard terminals(in: activeTab).count > 1 else { return false }
+            zoomed = true
+            var v: NSView = focusedTerminal
+            while let sv = v.superview as? PaneSplitView {
+                for s in sv.arrangedSubviews where s !== v { s.isHidden = true }
+                sv.needsLayout = true
+                v = sv
+            }
+        }
+        window?.layoutIfNeeded()
+        dimInactive()
+        for tv in terminals(in: activeTab) { extra(of: tv)?.fit() }
+        fitSession()
+        return true
+    }
+
+    /// ⌘W: a pane besides this window's own closes (asking first if something runs in it), as in iTerm2. False for the
+    /// window's own pane: the window itself closes then (hides; its chat keeps running).
+    func closeFocusedPane() -> Bool {
+        guard let pane = extra(of: focusedTerminal) else { return false }
+        if pane.busy, !confirmClose("Close this pane?") { return true }
+        close(pane, undoable: true)
+        return true
+    }
+
+    private func confirmClose(_ title: String) -> Bool {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = "Something is still running there; closing stops it."
+        a.alertStyle = .warning
+        a.addButton(withTitle: "Close")
+        a.addButton(withTitle: "Cancel")
+        return a.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Closes a pane: its shell stops, after a few seconds when `undoable` (⇧⌘T brings it back until then).
+    private func close(_ pane: ExtraPane, undoable: Bool) {
+        if zoomed { _ = toggleZoom() }
+        let folder = pane.currentFolder
+        removePaneView(pane.terminal)
+        extras.removeAll { $0 === pane }
+        if undoable, let name = pane.link?.name {
+            pane.detach()
+            manager?.closedPane(of: self, session: name, kind: pane.kind, cwd: folder)
+        } else {
+            pane.end()
+        }
+        refreshPanes()
+        focus(focusTarget(in: activeTab))
+    }
+
+    /// A pane's shell exited: the pane goes, as in iTerm2.
+    func paneEnded(_ pane: ExtraPane) {
+        guard extras.contains(where: { $0 === pane }) else { return }
+        if zoomed { _ = toggleZoom() }
+        removePaneView(pane.terminal)
+        extras.removeAll { $0 === pane }
+        refreshPanes()
+        if window?.isKeyWindow == true { focus(focusTarget(in: activeTab)) }
+    }
+
+    /// Every extra pane's shell stops (End, or the window goes).
+    func endPanes() {
+        for pane in extras { pane.end() }
+    }
+
+    /// The app quits: the panes let go of their sessions, which keep running and come back next launch.
+    func detachPanes() {
+        for pane in extras { pane.detach() }
+    }
+
+    private func refreshPanes() {
+        let many = tabs.count > 1
+        tabBar.isHidden = !many
+        if many {
+            paneTop.isActive = false
+            paneTopUnderTabs.isActive = true
+            tabBar.show(titles: tabs.indices.map(tabTitle), active: activeTab)
+        } else {
+            paneTopUnderTabs.isActive = false
+            paneTop.isActive = true
+        }
+        dimInactive()
+        manager?.panesChanged()
+    }
+
+    private func tabTitle(_ i: Int) -> String {
+        let ts = terminals(in: i)
+        if ts.contains(where: { $0 === terminal }) { return window?.title ?? "" }
+        return ((ts.first.flatMap { extra(of: $0) }?.currentFolder ?? cwd) as NSString).lastPathComponent
+    }
+
+    /// As in iTerm2, the panes without the keyboard dim a little.
+    private func dimInactive() {
+        let ts = terminals(in: activeTab)
+        let focus = focusedTerminal
+        for tv in ts { tv.alphaValue = ts.count > 1 && tv !== focus ? 0.7 : 1 }
+    }
+
+    /// Gives a pane the keyboard.
+    private func focus(_ tv: ChatTerminalView) {
+        window?.makeFirstResponder(tv)
+        focusChanged()
+    }
+
+    private func focusChanged() {
+        guard let tv = window?.firstResponder as? ChatTerminalView, allTerminals.contains(where: { $0 === tv }) else { return }
+        focusHistory.removeAll { $0 === tv }
+        focusHistory.append(tv)
+        dimInactive()
+    }
+
     /// The dashboard's menus (friends, settings, updates) open on the dashboard, under the windows pinned above it:
     /// those step out of the way meanwhile. Always-on-top windows stay.
     func stepAside() {
@@ -1024,6 +1404,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         let finish = { [weak self] in
             guard let self else { return }
             if let detached = self.detached { Detached.quit(detached.name) }
+            self.endPanes()
             self.terminal.terminate()
             if let original { ITerm.end(original) }
             self.manager?.removeChat(self.id)
@@ -1083,7 +1464,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         border.setStatus(hud.status)
     }
 
-    func setFont(_ size: CGFloat) { terminal.font = Theme.mono(size) }
+    func setFont(_ size: CGFloat) { for tv in allTerminals { tv.font = Theme.mono(size) } }
 
     /// The process that is Claude's parent: the shell inside the detached session, or our own shell.
     var shellPid: Int32 {
@@ -1124,8 +1505,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             }
         } else {
             // Closing only hides: a chat comes back from its dashboard card, a terminal from its flying car on the
-            // orbit. Ending is the power button (End).
-            hide()
+            // orbit, the last one closed with ⇧⌘T. Ending is the power button (End).
+            if hide() { manager?.closed(id) }
         }
         return false
     }

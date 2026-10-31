@@ -11,6 +11,13 @@ final class ChatTerminalView: LocalProcessTerminalView {
     /// The selected text after every change (nil when nothing is selected), and what ⌘C copied.
     var onSelection: ((String?) -> Void)?
     var onCopy: ((String) -> Void)?
+    /// A click gave it the keyboard (its window dims the other split panes).
+    var onFocus: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        onFocus?()
+    }
 
     nonisolated override func selectionChanged(source: Terminal) {
         super.selectionChanged(source: source)
@@ -151,8 +158,10 @@ enum TerminalFactory {
         tv.font = look?.fontName.flatMap { NSFont(name: $0, size: fontSize) } ?? Theme.mono(fontSize)
         tv.nativeBackgroundColor = Theme.terminalBg
         tv.nativeForegroundColor = Theme.text
-        // Glass window: the terminal lets the blurred background through.
-        tv.backgroundOpacity = 0.28
+        // Glass window, but text first: readable terminals stay around 80% opaque over a blurred background (10–20%
+        // see-through); at 28% the busy dashboard behind made the text tiring to read. With the window's warm tint
+        // and frost this lands near that (ChatWindowController.buildLayout).
+        tv.backgroundOpacity = 0.6
         tv.caretColor = Theme.accent
         // Selection: a solid highlight with dark text on it. (Selected text is drawn in its own colour, black by
         // default, so the old see-through highlight hid the text it marked.)
@@ -214,6 +223,12 @@ enum TerminalFactory {
             || ["TERM_SESSION_ID", "LC_TERMINAL", "LC_TERMINAL_VERSION", "TERM_PROGRAM_VERSION", "OLDPWD"].contains(key) {
             env.removeValue(forKey: key)
         }
+        // Claude's full-screen renderer keeps the whole conversation scrollable inside Claude (the wheel goes there,
+        // ChatTerminalView.wheelGoesToProgram). The classic one redraws by clearing the screen whenever its output
+        // outgrows the window: iTerm2 keeps the cleared rows in its scrollback, screen and this emulator don't, so the
+        // top of a conversation kept vanishing. Which one Claude picks is otherwise up to a rollout on Anthropic's side;
+        // a user who chose the classic one (/tui default) keeps it.
+        if claudeTUI() != "default" { env["CLAUDE_CODE_NO_FLICKER"] = "1" }
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["TERM_PROGRAM"] = "AtalaysTerminal"
@@ -221,6 +236,14 @@ enum TerminalFactory {
         if env["HOME"] == nil { env["HOME"] = HOME }
         return env
     }
+}
+
+/// The renderer the user picked in Claude Code (`/tui`, "tui" in its settings.json): "fullscreen", "default" or nil.
+nonisolated func claudeTUI() -> String? {
+    let dir = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] ?? (HOME as NSString).appendingPathComponent(".claude")
+    guard let data = FileManager.default.contents(atPath: dir + "/settings.json"),
+          let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    return settings["tui"] as? String
 }
 
 /// From the default profile of the user's iTerm2: its font and what its Option key does. Nil without iTerm2.

@@ -185,9 +185,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 guard let self else { return }
                 // Everything comes back hidden, so a launch doesn't throw windows on screen: chats are hexagons on the
                 // orbit and in the sidebar, terminals flying (or parked) cars, and a click on one opens its window.
-                for s in running where !self.chats.values.contains(where: { $0.detached?.name == s.name }) {
+                // A window's tabs and split panes (sessions named after the window's) go back into it.
+                let panes = running.compactMap { s in Detached.extraInfo(s.name).map { (s, $0) } }
+                for s in running where Detached.extraInfo(s.name) == nil && !self.chats.values.contains(where: { $0.detached?.name == s.name }) {
                     self.openWindow(cwd: s.cwd, claudeArgs: s.claude ? [] : nil, sessionId: s.sessionId, title: s.title,
                                     detached: DetachedLink(name: s.name), show: false, restored: true)
+                }
+                for (s, info) in panes where !self.chats.values.contains(where: { c in c.extras.contains { $0.link?.name == s.name } }) {
+                    if let c = self.chats.values.first(where: { $0.detached?.name == info.parent }) {
+                        c.adoptPane(session: s.name, kind: info.kind, cwd: s.cwd, focus: false)
+                    } else {
+                        // Its window's session is gone: on its own.
+                        self.openWindow(cwd: s.cwd, claudeArgs: s.claude ? [] : nil, sessionId: s.sessionId, title: s.title,
+                                        detached: DetachedLink(name: s.name), show: false, restored: true)
+                    }
                 }
             }
         }
@@ -350,13 +361,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// A terminal in `cwd`, not a chat: a new conversation starts with `claude`, an earlier one in that folder
     /// with `claude -r`. Whatever Claude runs there shows up in the window like any chat.
-    func newTerminal(in cwd: String) {
+    func newTerminal(in cwd: String, frame: NSRect? = nil) {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else {
             alert("Folder not found", tildify(cwd))
             return
         }
-        makeChat(cwd: cwd, claudeArgs: nil, sessionId: nil, title: (cwd as NSString).lastPathComponent)
+        makeChat(cwd: cwd, claudeArgs: nil, sessionId: nil, title: (cwd as NSString).lastPathComponent, frame: frame)
     }
 
     /// Opens a saved or running conversation in its own window, in its project folder.
@@ -437,15 +448,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Opens a chat window and starts its shell (and Claude, with `claudeArgs`) in a detached session, so it
     /// outlives the app. The window opens at once; screen starts off the main thread and the window attaches after.
-    private func makeChat(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, origin: ITermOrigin? = nil) {
+    private func makeChat(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, origin: ITermOrigin? = nil,
+                          frame: NSRect? = nil) {
         guard Detached.available else {
-            openWindow(cwd: cwd, claudeArgs: claudeArgs, sessionId: sessionId, title: title, detached: nil).origin = origin
+            openWindow(cwd: cwd, claudeArgs: claudeArgs, sessionId: sessionId, title: title, detached: nil, frame: frame).origin = origin
             return
         }
         // A fresh name every time: a session named after the conversation clashed with an older one of the same
         // conversation, and screen refuses `-X quit` when two sessions match, so End did nothing.
         let link = DetachedLink(name: Detached.prefix + UUID().uuidString.lowercased())
-        let c = openWindow(cwd: cwd, claudeArgs: claudeArgs, sessionId: sessionId, title: title, detached: link, attach: false)
+        let c = openWindow(cwd: cwd, claudeArgs: claudeArgs, sessionId: sessionId, title: title, detached: link, attach: false, frame: frame)
         c.origin = origin
         Detached.start(name: link.name, cwd: cwd, claudeArgs: claudeArgs) { [weak self, weak c] ok in
             guard let self, let c else { return }
@@ -462,9 +474,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @discardableResult
     private func openWindow(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String,
                             detached: DetachedLink?, attach: Bool = true, show: Bool = true, mirror: Bool = false,
-                            restored: Bool = false) -> ChatWindowController {
+                            restored: Bool = false, frame: NSRect? = nil) -> ChatWindowController {
         let c = ChatWindowController(cwd: cwd, claudeArgs: claudeArgs, sessionId: sessionId, title: title,
-                                     fontSize: fontSize, frame: nextChatFrame(), manager: self, detached: detached, mirror: mirror)
+                                     fontSize: fontSize, frame: frame ?? nextChatFrame(), manager: self, detached: detached, mirror: mirror)
+        // An exact place (a split's half): the window's frame, title bar included, not just its content.
+        if let frame { c.window?.setFrame(frame, display: false) }
         c.takesHistory = restored
         chats[c.id] = c
         if let sessionId, let b = briefs[sessionId] { c.apply(b) } else { c.apply(nil) }
@@ -482,6 +496,124 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return NSRect(x: base.midX - w / 2 + k * 28, y: base.midY - h / 2 - k * 24, width: w, height: h)
     }
 
+    // MARK: iTerm2's shortcuts (the Chat and Window menus): tabs and split panes in the window in front
+    // (ChatWindowController); with nothing more there to move to, the next window instead.
+
+    /// The chat or terminal window in front, if the key window is one.
+    private var activeChat: ChatWindowController? { NSApp.keyWindow?.delegate as? ChatWindowController }
+
+    /// The chat and terminal windows on screen, left to right, then top to bottom.
+    private var shownChats: [ChatWindowController] {
+        chats.values.filter { $0.isShown && $0.window?.isVisible == true }.sorted { a, b in
+            let fa = a.window?.frame ?? .zero, fb = b.window?.frame ?? .zero
+            return abs(fa.minX - fb.minX) > 24 ? fa.minX < fb.minX : fa.maxY > fb.maxY
+        }
+    }
+
+    /// ⌘T / ⌥⌘T: a new tab in the window in front (from the dashboard: the folder picker).
+    func newTab() {
+        guard let c = activeChat else { return overlay.showNewTerminal() }
+        c.newTab()
+    }
+
+    /// ⌘D / ⇧⌘D: splits the pane in front.
+    func split(vertical: Bool) {
+        guard let c = activeChat else { return overlay.showNewTerminal() }
+        c.split(vertical: vertical)
+    }
+
+    /// ⌘W: the pane in front closes, or with only the window's own, the window.
+    func closePane() {
+        if let c = activeChat, c.closeFocusedPane() { return }
+        NSApp.keyWindow?.performClose(nil)
+    }
+
+    /// ⌘] / ⌘[: the next or previous pane; ⇧⌘] / ⇧⌘[ (`tabs`): the next or previous tab.
+    func selectPane(step: Int, tabs: Bool = false) {
+        if let c = activeChat, tabs ? c.selectTab(step: step) : c.selectPane(step: step) { return }
+        let list = shownChats
+        guard !list.isEmpty else { return }
+        guard let i = activeChat.flatMap({ cur in list.firstIndex { $0 === cur } }) else {
+            return (step > 0 ? list.first : list.last)?.show() ?? ()
+        }
+        list[(i + step + list.count) % list.count].show()
+    }
+
+    /// ⌥⌘ and an arrow (`dy` up is +1): the pane that way, else the window that way.
+    func selectPane(dx: CGFloat, dy: CGFloat) {
+        if let c = activeChat, c.selectPane(dx: dx, dy: dy) { return }
+        guard let cur = activeChat, let cf = cur.window?.frame else { return selectPane(step: 1) }
+        var best: (ChatWindowController, CGFloat)?
+        for o in shownChats where o !== cur {
+            guard let f = o.window?.frame else { continue }
+            let x = f.midX - cf.midX, y = f.midY - cf.midY
+            let along = x * dx + y * dy
+            guard along > 20 else { continue }
+            let score = along + 2 * abs(x * dy - y * dx)
+            if best.map({ score < $0.1 }) ?? true { best = (o, score) }
+        }
+        best?.0.show()
+    }
+
+    /// ⌘1–⌘9: that tab of the window in front.
+    func selectTab(number n: Int) { activeChat?.selectTab(n - 1) }
+
+    /// ⌃⌘ and an arrow: moves the divider between the panes.
+    func moveDivider(dx: CGFloat, dy: CGFloat) { _ = activeChat?.moveDivider(dx: dx, dy: dy) }
+
+    /// ⇧⌘↩: only the pane in front shows; with a single pane the window fills the screen.
+    func toggleMaximize() {
+        guard let c = activeChat, !c.toggleZoom() else { return }
+        c.toggleMaximize()
+    }
+
+    /// What ⇧⌘T can bring back, the latest last: a closed window (hidden; it kept running), or a closed pane, whose
+    /// session lives on for a few seconds, like iTerm2's.
+    private enum Closed {
+        case window(String)
+        case pane(window: String, session: String, kind: PaneKind, cwd: String, until: Date, quit: DispatchWorkItem)
+    }
+    private var closedItems: [Closed] = []
+
+    func closed(_ id: String) {
+        closedItems.removeAll { if case .window(id) = $0 { return true } else { return false } }
+        remember(.window(id))
+    }
+
+    func closedPane(of window: ChatWindowController, session: String, kind: PaneKind, cwd: String) {
+        let quit = DispatchWorkItem { Detached.quit(session) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: quit)
+        remember(.pane(window: window.id, session: session, kind: kind, cwd: cwd, until: Date().addingTimeInterval(4.8), quit: quit))
+    }
+
+    private func remember(_ item: Closed) {
+        closedItems.append(item)
+        if closedItems.count > 30 { closedItems.removeFirst() }
+    }
+
+    /// ⇧⌘T, iTerm2's Undo Close.
+    func undoClose() {
+        while let item = closedItems.popLast() {
+            switch item {
+            case let .window(id):
+                if let c = chats[id], !c.isShown, !c.hud.exited { return c.show() }
+            case let .pane(window, session, kind, cwd, until, quit):
+                guard Date() < until, let c = chats[window], !c.hud.exited else { continue }
+                quit.cancel()
+                c.show()
+                c.adoptPane(session: session, kind: kind, cwd: cwd, focus: true)
+                return
+            }
+        }
+        NSSound.beep()
+    }
+
+    /// Panes came or went in a window: the dashboard learns their shells (now, and once new ones have started).
+    func panesChanged() {
+        syncShells()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.syncShells() }
+    }
+
     /// A terminal ended with its End button: its car explodes on the orbit now, not at the next terminals update.
     func terminalEnding(_ id: String) {
         radar.push("terminalGone", "\"\(id)\"")
@@ -489,6 +621,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func removeChat(_ id: String) {
         guard let c = chats.removeValue(forKey: id) else { return }
+        c.endPanes()
         c.window?.parent?.removeChildWindow(c.window!)
         c.window?.orderOut(nil)
         syncShells()
@@ -504,7 +637,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func syncShells() {
         var map: [Int32: String] = [:]
-        for c in chats.values where c.shellPid > 0 { map[c.shellPid] = c.id }
+        for c in chats.values {
+            for pid in c.shellPids where pid > 0 { map[pid] = c.id }
+        }
         engine.setAppShells(map)
     }
 
@@ -526,6 +661,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func terminateAll() {
         for c in chats.values {
             c.saveHistory()
+            c.detachPanes()
             c.terminal.terminate()
         }
     }
