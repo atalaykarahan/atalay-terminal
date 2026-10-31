@@ -578,6 +578,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// ⌃⌘ and an arrow: moves the divider between the panes.
     func moveDivider(dx: CGFloat, dy: CGFloat) { _ = activeChat?.moveDivider(dx: dx, dy: dy) }
 
+    /// ⌥⇧⌘[ / ⌥⇧⌘]: the shown tab a place left or right.
+    func moveTab(step: Int) { _ = activeChat?.moveTab(step: step) }
+
     /// ⇧⌘↩: only the pane in front shows; with a single pane the window fills the screen.
     func toggleMaximize() {
         guard let c = activeChat, !c.toggleZoom() else { return }

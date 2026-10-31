@@ -612,6 +612,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private var zoomed = false
     /// Terminals in the order they had the keyboard, the latest last (a tab shown again gives it back to its latest).
     private var focusHistory: [ChatTerminalView] = []
+    /// A tab being dragged by its chip, and the orange area that shows where it would go (iTerm2's drag to split).
+    private var draggedTab: Int?
+    private let dropZone = NSView()
     private var focusWatch: NSKeyValueObservation?
 
     /// `claudeArgs` nil opens a plain terminal in `cwd`.
@@ -736,10 +739,18 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         tabBar.isHidden = true
         tabBar.onSelect = { [weak self] in self?.selectTab($0) }
         tabBar.onClose = { [weak self] in self?.closeTab($0) }
+        tabBar.onDrag = { [weak self] in self?.dragTab($0, $1) }
         for v in [glass, tint, header, tabBar, paneArea, ticker, selectionBadge, border, flash] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
+        dropZone.wantsLayer = true
+        dropZone.layer?.backgroundColor = NSColor(hex: Theme.accentHex, alpha: 0.2).cgColor
+        dropZone.layer?.borderColor = NSColor(hex: Theme.accentHex, alpha: 0.9).cgColor
+        dropZone.layer?.borderWidth = 2
+        dropZone.layer?.cornerRadius = 6
+        dropZone.isHidden = true
+        container.addSubview(dropZone)
         tabs = [terminal]
         mount(terminal)
         paneTop = paneArea.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6)
@@ -1102,16 +1113,17 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         pane.start(session: session, parent: detached?.name, fit: isShown)
     }
 
-    private func insert(_ new: NSView, beside old: NSView, vertical: Bool) {
+    /// `new` goes beside `old`: after it (right or below), or `before` it.
+    private func insert(_ new: NSView, beside old: NSView, vertical: Bool, before: Bool = false) {
         // Only the pane in front is halved, as in iTerm2; the others keep their size.
         if let sv = old.superview as? PaneSplitView, sv.isVertical == vertical, let i = sv.arrangedSubviews.firstIndex(of: old) {
-            return sv.insertArrangedSubview(new, at: i + 1)
+            return sv.insertArrangedSubview(new, at: before ? i : i + 1, from: old)
         }
         let sv = PaneSplitView()
         sv.isVertical = vertical
         replace(old, with: sv)
-        sv.addArrangedSubview(old)
-        sv.addArrangedSubview(new)
+        sv.addArrangedSubview(before ? new : old)
+        sv.addArrangedSubview(before ? old : new)
     }
 
     /// Puts `new` where `old` is: in its split view, or as its tab's root.
@@ -1154,6 +1166,105 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         focus(focusTarget(in: i))
         for tv in terminals(in: i) { extra(of: tv)?.fit() }
         if terminals(in: i).contains(where: { $0 === terminal }) { fitSession() }
+    }
+
+    // MARK: dragging a tab, as in iTerm2: along the bar to move it, onto a pane of the shown tab to split it there
+
+    /// Where a dragged tab would go: a pane of the shown tab and the side it would take, or a place in the tab bar.
+    private enum TabDrop { case pane(ChatTerminalView, NSRectEdge), slot(Int) }
+
+    private func tabDrop(at point: NSPoint) -> TabDrop? {
+        guard let i = draggedTab else { return nil }
+        if let slot = tabBar.slot(at: point) { return .slot(slot) }
+        // Only into another tab's panes: the shown one's (a tab can't split into itself).
+        guard i != activeTab else { return nil }
+        for tv in terminals(in: activeTab) where !tv.isHidden {
+            let f = tv.convert(tv.bounds, to: nil)
+            guard f.contains(point) else { continue }
+            // The nearest side (window coordinates count up from the bottom).
+            let dx = (point.x - f.midX) / f.width, dy = (point.y - f.midY) / f.height
+            return .pane(tv, abs(dx) > abs(dy) ? (dx < 0 ? .minX : .maxX) : (dy < 0 ? .minY : .maxY))
+        }
+        return nil
+    }
+
+    private func dragTab(_ i: Int, _ phase: TabDrag) {
+        switch phase {
+        case .began:
+            guard !hud.mirror, tabs.indices.contains(i) else { return }
+            if zoomed { _ = toggleZoom() }
+            draggedTab = i
+        case .moved(let p):
+            if draggedTab != nil { showDrop(tabDrop(at: p)) }
+        case .ended(let p):
+            guard draggedTab != nil else { return }
+            let drop = tabDrop(at: p)
+            showDrop(nil)
+            draggedTab = nil
+            switch drop {
+            case .slot(let slot): moveTab(i, to: slot)
+            case .pane(let tv, let edge): joinTab(i, beside: tv, edge: edge)
+            case nil: break
+            }
+        }
+    }
+
+    /// The orange area over the half of the pane the tab would take, or a line in the tab bar where it would go.
+    private func showDrop(_ drop: TabDrop?) {
+        guard let drop else { return dropZone.isHidden = true }
+        var r: NSRect
+        switch drop {
+        case .slot(let i):
+            r = tabBar.marker(at: i)
+        case .pane(let tv, let edge):
+            r = tv.convert(tv.bounds, to: nil)
+            switch edge {
+            case .minX: r.size.width /= 2
+            case .maxX: r.origin.x += r.width / 2; r.size.width /= 2
+            case .minY: r.size.height /= 2
+            default: r.origin.y += r.height / 2; r.size.height /= 2
+            }
+        }
+        dropZone.frame = container.convert(r, from: nil)
+        dropZone.isHidden = false
+    }
+
+    /// Tab `i` let go on a pane of the shown tab: its panes leave their tab and join this one, beside `target` on
+    /// `edge`'s side, taking half its room.
+    private func joinTab(_ i: Int, beside target: ChatTerminalView, edge: NSRectEdge) {
+        guard i != activeTab, tabs.indices.contains(i) else { return }
+        let root = tabs.remove(at: i)
+        root.removeFromSuperview()
+        if i < activeTab { activeTab -= 1 }
+        let vertical = edge == .minX || edge == .maxX
+        insert(root, beside: target, vertical: vertical, before: edge == .minX || edge == .maxY)
+        for tv in terminals(in: activeTab) where tv === root || tv.isDescendant(of: root) {
+            extra(of: tv)?.rekind(vertical ? .vertical : .horizontal)
+        }
+        refreshPanes()
+        window?.layoutIfNeeded()
+        for tv in terminals(in: activeTab) { extra(of: tv)?.fit() }
+        fitSession()
+        focus(terminals(in: activeTab).first { $0 === root || $0.isDescendant(of: root) } ?? target)
+    }
+
+    /// Tab `i` moves to `slot` in the bar (its place before the move: 0 is first, the tab count after the last).
+    private func moveTab(_ i: Int, to slot: Int) {
+        guard tabs.indices.contains(i) else { return }
+        let j = slot > i ? slot - 1 : slot
+        guard j != i, tabs.indices.contains(j) else { return }
+        let shown = tabs[activeTab]
+        tabs.insert(tabs.remove(at: i), at: j)
+        activeTab = tabs.firstIndex { $0 === shown } ?? activeTab
+        refreshPanes()
+    }
+
+    /// ⌥⇧⌘[ / ⌥⇧⌘]: the shown tab moves a place left or right; false when it can't.
+    func moveTab(step: Int) -> Bool {
+        let to = activeTab + step
+        guard tabs.count > 1, tabs.indices.contains(to) else { return false }
+        moveTab(activeTab, to: step > 0 ? to + 1 : to)
+        return true
     }
 
     /// ⇧⌘] / ⇧⌘[: the next or previous tab; false with only one (the caller moves to another window).

@@ -6,6 +6,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 ## Unreleased (on the staging branch, out with the next version)
 
 - Terminals: Claude's output no longer stutters while it streams, each frame shows whole
+- Tabs: drag one onto a pane to split it there (its left, right, top or bottom half), or along the tab bar to reorder; ⌥⇧⌘[ / ⌥⇧⌘] move the tab in front, as in iTerm2 (⌃⌘ and the arrows resize the split)
 - Messages: the reply box at the bottom right stays while you're typing in it; your friend's newer message shows above your reply, other notices wait
 - Messages: replying from the bottom-right box keeps you where you are, it no longer brings the app forward
 - Messages: the notice at the bottom right has a button that opens the chat (⤢)

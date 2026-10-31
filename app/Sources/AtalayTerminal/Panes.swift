@@ -18,6 +18,20 @@ extension Detached {
         return prefix + "x" + String(kind.rawValue) + hex + "-" + parent.dropFirst(prefix.count)
     }
 
+    /// The same session, renamed for another kind (a tab dragged into a split): it comes back that way after a restart.
+    static func renamed(_ name: String, kind: PaneKind) -> String? {
+        guard extraInfo(name) != nil else { return nil }
+        var chars = Array(name)
+        chars[prefix.count + 1] = kind.rawValue
+        let new = String(chars)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: screen)
+        p.arguments = ["-S", name, "-X", "sessionname", new]
+        guard (try? p.run()) != nil else { return nil }
+        p.waitUntilExit()
+        return p.terminationStatus == 0 ? new : nil
+    }
+
     /// The window session and the kind of an extra pane's session; nil for any other session.
     static func extraInfo(_ name: String) -> (parent: String, kind: PaneKind)? {
         guard name.hasPrefix(prefix) else { return nil }
@@ -32,7 +46,7 @@ extension Detached {
 @MainActor
 final class ExtraPane: NSObject, LocalProcessTerminalViewDelegate {
     private(set) var terminal: ChatTerminalView!
-    let kind: PaneKind
+    private(set) var kind: PaneKind
     let cwd: String
     private(set) var link: DetachedLink?
     weak var owner: ChatWindowController?
@@ -50,6 +64,13 @@ final class ExtraPane: NSObject, LocalProcessTerminalViewDelegate {
         super.init()
         terminal = TerminalFactory.makeIdle(chatId: owner.id, fontSize: fontSize, delegate: self)
         try? terminal.setUseMetal(true)
+    }
+
+    /// Now in a split rather than a tab of its own (or the other way): its session's name follows, for the next launch.
+    func rekind(_ new: PaneKind) {
+        guard new != kind else { return }
+        kind = new
+        if let old = link?.name, let name = Detached.renamed(old, kind: new) { link = DetachedLink(name: name) }
     }
 
     /// A new shell in a new session next to the window's, or (`session`) one still running from before.
@@ -159,12 +180,12 @@ final class PaneSplitView: NSView {
 
     func addArrangedSubview(_ v: NSView) { insertArrangedSubview(v, at: arrangedSubviews.count) }
 
-    /// `v` goes in at `i` and takes half the share of the pane before it (of the one after it when it's first).
-    func insertArrangedSubview(_ v: NSView, at i: Int) {
+    /// `v` goes in at `i` and takes half the share of `donor` (by default the pane before it, or after it when it's first).
+    func insertArrangedSubview(_ v: NSView, at i: Int, from donor: NSView? = nil) {
         v.removeFromSuperview()
         var share: CGFloat = 1
         if !arrangedSubviews.isEmpty {
-            let k = i > 0 ? i - 1 : 0
+            let k = donor.flatMap { arrangedSubviews.firstIndex(of: $0) } ?? (i > 0 ? i - 1 : 0)
             share = shares[k] / 2
             shares[k] -= share
         }
@@ -277,11 +298,16 @@ final class PaneSplitView: NSView {
     override func mouseUp(with event: NSEvent) { dragging = nil }
 }
 
-/// The window's tabs, under its header when there are two or more, as in iTerm2.
+/// A tab being dragged: it started, it's over a point of the window, or it was let go there.
+enum TabDrag { case began, moved(NSPoint), ended(NSPoint) }
+
+/// The window's tabs, under its header when there are two or more, as in iTerm2. A tab can be dragged: along the bar to
+/// move it, or onto a pane to split it there (ChatWindowController).
 @MainActor
 final class PaneTabBar: NSView {
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
+    var onDrag: ((Int, TabDrag) -> Void)?
     private let stack = NSStackView()
 
     override init(frame: NSRect) {
@@ -307,14 +333,34 @@ final class PaneTabBar: NSView {
             let chip = TabChip(title: t, number: i + 1, active: i == active)
             chip.onSelect = { [weak self] in self?.onSelect?(i) }
             chip.onClose = { [weak self] in self?.onClose?(i) }
+            chip.onDrag = { [weak self] in self?.onDrag?(i, $0) }
             stack.addArrangedSubview(chip)
         }
+    }
+
+    /// Where a tab let go at `point` (window coordinates) goes: before the tab whose middle is past it; nil off the bar.
+    func slot(at point: NSPoint) -> Int? {
+        let p = convert(point, from: nil)
+        guard bounds.insetBy(dx: 0, dy: -12).contains(p) else { return nil }
+        let chips = stack.arrangedSubviews
+        return chips.firstIndex { p.x < $0.convert($0.bounds, to: self).midX } ?? chips.count
+    }
+
+    /// The line that shows slot `i` (window coordinates).
+    func marker(at i: Int) -> NSRect {
+        let chips = stack.arrangedSubviews
+        guard !chips.isEmpty else { return .zero }
+        let x = i < chips.count ? chips[i].convert(chips[i].bounds, to: self).minX - 2 : chips[chips.count - 1].convert(chips[chips.count - 1].bounds, to: self).maxX + 2
+        return convert(NSRect(x: x - 1.5, y: 0, width: 3, height: bounds.height), to: nil)
     }
 }
 
 private final class TabChip: NSView {
     var onSelect: (() -> Void)?
     var onClose: (() -> Void)?
+    var onDrag: ((TabDrag) -> Void)?
+    private var pressedAt: NSPoint?
+    private var dragging = false
     private let label = NSTextField(labelWithString: "")
     private let close = NSButton(title: "×", target: nil, action: nil)
 
@@ -352,6 +398,33 @@ private final class TabChip: NSView {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    override func mouseDown(with event: NSEvent) { onSelect?() }
+    // A click selects the tab when it's let go; a press that moves a few points drags it instead.
+    override func mouseDown(with event: NSEvent) {
+        pressedAt = event.locationInWindow
+        dragging = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = pressedAt else { return }
+        let p = event.locationInWindow
+        if !dragging, hypot(p.x - start.x, p.y - start.y) > 5 {
+            dragging = true
+            NSCursor.closedHand.push()
+            onDrag?(.began)
+        }
+        if dragging { onDrag?(.moved(p)) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressedAt = nil }
+        guard dragging else {
+            onSelect?()
+            return
+        }
+        dragging = false
+        NSCursor.pop()
+        onDrag?(.ended(event.locationInWindow))
+    }
+
     @objc private func closeTab() { onClose?() }
 }

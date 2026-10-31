@@ -206,6 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.addItem(.separator())
         add(window, "Select Next Tab", #selector(nextTab), "]", [.command, .shift], target: self)
         add(window, "Select Previous Tab", #selector(previousTab), "[", [.command, .shift], target: self)
+        add(window, "Move Tab Left", #selector(moveTabLeft), "[", [.command, .option, .shift], target: self)
+        add(window, "Move Tab Right", #selector(moveTabRight), "]", [.command, .option, .shift], target: self)
         add(window, "Next Pane", #selector(nextPane), "]", target: self)
         add(window, "Previous Pane", #selector(previousPane), "[", target: self)
         add(window, "Select Pane Above", #selector(paneAbove), arrow(NSUpArrowFunctionKey), [.command, .option], target: self)
@@ -233,6 +235,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func closePane() { controller.closePane() }
     @objc private func nextTab() { controller.selectPane(step: 1, tabs: true) }
     @objc private func previousTab() { controller.selectPane(step: -1, tabs: true) }
+    @objc private func moveTabLeft() { controller.moveTab(step: -1) }
+    @objc private func moveTabRight() { controller.moveTab(step: 1) }
     @objc private func undoClose() { controller.undoClose() }
     @objc private func nextPane() { controller.selectPane(step: 1) }
     @objc private func previousPane() { controller.selectPane(step: -1) }
