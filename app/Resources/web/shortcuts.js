@@ -3,7 +3,7 @@
 // Radial shortcuts: a pie menu that opens at the pointer. Each of the 5 slices holds a folder the
 // user saved; picking one starts a new Claude chat (terminal) in that folder, it does not open Finder.
 // Empty slices open the folder picker. Right-click a filled slice to change or remove it.
-// App trigger: four-finger click on the trackpad. Staging trigger: ⌥-click (browsers can't count fingers).
+// Opens with a four-finger click on the trackpad (or a middle click).
 (() => {
   const SLOT_COUNT = 5;
   const C = 150, R0 = 46, R1 = 132, GAP = 2.2, POP = 8;
@@ -107,9 +107,7 @@
 
     const hint = document.createElement('div');
     hint.className = 'hint';
-    hint.textContent = API.inApp
-      ? '4-finger click · keys 1–5 · right-click a folder to change it · esc'
-      : 'app: 4-finger click · staging: ⌥-click · 1–5 · right-click a folder to change it · esc';
+    hint.textContent = '4-finger click · keys 1–5 · right-click a folder to change it · esc';
     pie.appendChild(hint);
     root.appendChild(pie);
     root.classList.add('on');
@@ -209,22 +207,6 @@
     }, 210);
   }
 
-  // Staging only: ⌥-click opens the menu at the pointer (the app uses a four-finger click instead).
-  const staging = !window.__RADAR_APP__ && !API.inApp;
-  if (staging) addEventListener('mousedown', (e) => {
-    if (!e.altKey || e.button !== 0 || window.Picker?.isOpen()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const before = JSON.stringify(SLOTS);
-    open(e.clientX, e.clientY);
-    loadSlots().then(() => pie && JSON.stringify(SLOTS) !== before && open(at.x, at.y));
-  }, true);
-  if (staging) addEventListener('click', (e) => {
-    if (e.altKey) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  }, true);
   root.addEventListener('mousedown', (e) => {
     if (e.target.classList.contains('veil')) close();
   });

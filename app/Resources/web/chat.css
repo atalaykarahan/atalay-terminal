@@ -141,37 +141,6 @@
 .h-btns button:hover { color: var(--hi); border-color: rgb(var(--glow)); box-shadow: 0 0 10px rgba(var(--glow), 0.5); }
 .h-btns button.on { color: var(--ink); background: rgb(var(--glow)); }
 
-/* ---- terminal body (staging: live transcript; the app shows the real Claude terminal here) ---- */
-.cw-body { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; background: rgba(8, 5, 3, 0.3); }
-.cw-body::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 3px); }
-.term { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 18px 6px; font-size: 12.5px; line-height: 1.5; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55); scrollbar-width: thin; scrollbar-color: var(--dim2) transparent; }
-.term pre { margin: 0; font: inherit; white-space: pre-wrap; word-break: break-word; }
-.it { display: grid; grid-template-columns: 18px minmax(0, 1fr); margin: 0 0 8px; animation: cw-line 0.35s ease-out; }
-.it .bul { color: var(--hi); }
-.it.prompt { margin: 6px 0 10px; padding: 4px 6px; background: rgba(255, 255, 255, 0.055); color: var(--hi); }
-.it.prompt .bul { color: var(--accent-soft); }
-.it.say pre { color: #fbf1e6; }
-.it.sys { color: var(--dim); font-style: italic; }
-.it.tool .call { color: var(--txt); }
-.it.tool .call b { font-weight: 700; }
-.it.tool .args { color: var(--dim); }
-.it.tool .res { margin-top: 2px; color: var(--dim); }
-.it.tool .res .ok { color: var(--green); }
-.it.tool .res .bad { color: var(--red); }
-.it.tool .res pre { margin-left: 22px; color: #c4ad94; }
-.it.tool.run .res { color: rgb(var(--glow)); animation: blink 0.8s steps(2) infinite; }
-.thinking { display: none; margin: 4px 0 8px; color: var(--accent); font-weight: 600; }
-.thinking.on { display: block; }
-.thinking .spin { display: inline-block; width: 16px; }
-.thinking .txt { background: linear-gradient(90deg, var(--accent) 0%, #ffe2bf 45%, var(--accent) 60%); -webkit-background-clip: text; background-clip: text; color: transparent; background-size: 220% 100%; animation: cw-shim 1.4s linear infinite; }
-.permit { display: none; margin: 4px 0 8px; padding: 8px 10px; border: 1px solid var(--warn); color: var(--warn); box-shadow: 0 0 18px rgba(255, 46, 99, 0.25); animation: blink 1.2s steps(2) infinite; }
-.permit.on { display: block; }
-.inputbox { display: flex; gap: 8px; margin: 0 14px; padding: 7px 10px; border: 1px solid rgba(var(--glow), 0.4); border-radius: 6px; background: rgba(0, 0, 0, 0.22); color: var(--dim); box-shadow: 0 0 14px rgba(var(--glow), 0.12) inset; }
-.inputbox span { color: var(--hi); }
-.inputbox em { font-style: normal; }
-.modeline { padding: 4px 16px 6px; color: var(--accent-soft); font-size: 0.9em; }
-.modeline .mdl { color: var(--dim); }
-
 /* ---- ticker footer ---- */
 .cw-ticker {
   display: flex;
@@ -230,11 +199,3 @@
 @keyframes cw-line { from { opacity: 0; transform: translateY(5px); } }
 @keyframes cw-chip { from { opacity: 0; transform: translateX(30px) scale(0.9); } }
 @keyframes cw-flash { 0% { background: rgba(var(--fc, 248, 128, 8), 0.35); } 100% { background: rgba(0, 0, 0, 0.25); } }
-
-/* new chat started from a shortcut */
-.welcome { margin: 6px 0 12px; }
-.wl-box { display: inline-flex; flex-direction: column; gap: 4px; padding: 10px 16px; border: 1px solid var(--accent); border-radius: 6px; box-shadow: 0 0 18px rgba(248, 128, 8, 0.25); }
-.wl-box b { color: var(--accent); }
-.wl-box span { color: var(--dim); }
-.wl-note { margin-top: 10px; color: var(--dim); }
-.wl-note code { color: var(--accent-soft); }

@@ -72,8 +72,7 @@
 .mb-input .send { flex: none; height: 20px; padding: 0 7px; border: 0; border-radius: 3px; background: var(--accent); color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; }
 .mb-input .send:disabled { opacity: 0.3; cursor: default; }
 
-/* the chat window: the whole conversation, dragged by its header. In the app it fills its own panel; in staging it
-   floats over the dashboard (left/top set by the script). */
+/* the chat window: the whole conversation, dragged by its header; it fills its own panel. */
 #chatwin { position: fixed; left: 8px; top: 8px; z-index: 2660; font: 12px/1.4 var(--font); color: var(--txt); }
 #chatwin:empty { display: none; }
 #chatwin .mb-head { cursor: grab; }
@@ -109,8 +108,8 @@
 .mb.xp:hover { filter: brightness(1.15); }
 .mb.xp .mb-tag { background: var(--amber); }
 
-/* The level-up takeover: the whole screen "hacked" for a few seconds (messages.js). In the app it fills its own
-   see-through panel over every window; in staging it covers the page. */
+/* The level-up takeover: the whole screen "hacked" for a few seconds (messages.js). It fills its own see-through
+   panel over every window. */
 #takeover { --rc: 248, 128, 8; position: fixed; inset: 0; z-index: 2900; overflow: hidden; cursor: none; color: var(--hi); font-family: var(--font); }
 #takeover.free { cursor: pointer; }
 #takeover.out { pointer-events: none; animation: tk-out 0.5s steps(6) both; }

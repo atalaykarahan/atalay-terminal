@@ -50,9 +50,11 @@ macOS 13 or later, Apple Silicon and Intel. Works with Claude Code; not affiliat
 
 - `app/` is the Mac app: Swift (SwiftPM), AppKit and [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm). Every
   chat and terminal runs in a detached `/usr/bin/screen` session, which is why they survive the app quitting.
-- The dashboard is a web page in a `WKWebView` (`app/Resources/web`), the orbit map is three.js.
-- `staging/` is where the dashboard is developed: the same page in a browser, with a small Node server that reads
-  `~/.claude` the way the app does.
+- The dashboard is a web page in a `WKWebView` (`app/Resources/web`); the app feeds it and answers its requests. The
+  orbit map is three.js (`app/orbit`, built into `app/Resources/web/orbit.js`).
+- Source Control looks like VS Code because it's made from it: `app/tools/vscode-assets.py` takes VS Code's icon font,
+  its syntax highlighter and grammars, and the user's colour and file icon themes from the VS Code on the Mac into
+  `app/Resources/web` (their licences are kept with them).
 - The server behind friends, messages and levels (Fastify and Postgres) is hosted and isn't part of this repository.
 
 ## Build from source
@@ -67,13 +69,12 @@ cd app
 A build from source has everything that runs on your Mac. Friends, messages and levels need the released app: its
 calls to the server are signed with a key that isn't in this repository.
 
-The dashboard in a browser, while working on it:
+After a change to the orbit map:
 
 ```sh
-cd staging
+cd app/orbit
 npm install
-npm run build              # the orbit map (src/orbit → public/orbit.js)
-node server.mjs            # http://127.0.0.1:4790
+npm run build              # → app/Resources/web/orbit.js
 ```
 
 ## License

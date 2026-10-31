@@ -3,3 +3,4 @@
 .DS_Store
 # Users' raw feedback stays on this Mac (the repo is public); CHANGELOG has the feature notes.
 /feedback/
+/app/orbit/node_modules/

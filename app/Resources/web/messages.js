@@ -7,18 +7,13 @@
 //    Your own progress shows there as well: the daily bonus as a strip, a new level or rank as a takeover of the whole
 //    screen for a few seconds, and five hours of work in a day as flames along the screen's edges.
 //  · chat: the conversation in its own window, opened mid-screen the first time and dragged anywhere by its header.
-// In the app each part is its own panel (Swift injects __MESSAGES_ROLE__ "notices" or "chat", places and moves the
-// panels), and every friend's chat has a panel of its own (__MESSAGES_FRIEND__), so several stay on screen side by
-// side; in staging both live in the dashboard page, with one chat window that switches between friends.
+// Each part is its own panel (Swift injects __MESSAGES_ROLE__ "notices" or "chat", places and moves the panels), and
+// every friend's chat has a panel of its own (__MESSAGES_FRIEND__), so several stay on screen side by side.
 window.Messages = (() => {
-  const APP_ROLE = window.__MESSAGES_ROLE__;
-  const FRIEND = window.__MESSAGES_FRIEND__ || null; // the one friend an app chat panel is for
-  // The app's dashboard leaves messages to the panels.
-  if (window.__RADAR_APP__ && !APP_ROLE) return null;
-  const ROLE = APP_ROLE || 'both';
-  const NOTICES = ROLE !== 'chat', CHAT = ROLE !== 'notices';
-  const native = APP_ROLE && window.webkit.messageHandlers.messages;
-  const post = (msg) => native && native.postMessage(msg);
+  const ROLE = window.__MESSAGES_ROLE__;
+  const FRIEND = window.__MESSAGES_FRIEND__ || null; // the one friend a chat panel is for
+  const NOTICES = ROLE === 'notices', CHAT = ROLE === 'chat';
+  const post = (msg) => window.webkit.messageHandlers.messages.postMessage(msg);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const time = (at) => new Date(at).toTimeString().slice(0, 5);
   // A friend's level shows next to their name (from the friends list; live events carry only the name).
@@ -173,12 +168,12 @@ window.Messages = (() => {
       if (act === 'close') return hidePeek();
       if (act === 'update') {
         hidePeek();
-        // The dashboard shows what's new (in the app, Swift brings its window to the front).
-        return APP_ROLE ? post({ type: 'openUpdate' }) : window.Cloud?.openUpdate();
+        // The dashboard shows what's new (Swift brings its window to the front).
+        return post({ type: 'openUpdate' });
       }
       if (act === 'profile') {
         hidePeek();
-        return APP_ROLE ? post({ type: 'openProfile' }) : window.Cloud?.openMenu('profile');
+        return post({ type: 'openProfile' });
       }
       if (act === 'open') {
         const id = peekFriend();
@@ -220,8 +215,7 @@ window.Messages = (() => {
     if (r.error) say(r.error === 'offline' ? "not sent · you're offline" : "not sent · you're not friends anymore");
   }
 
-  // A new version of the app (from Swift in the app, from the dashboard's state in staging): after whatever is on
-  // screen, and not on do-not-disturb.
+  // A new version of the app (from Swift): after whatever is on screen, and not on do-not-disturb.
   function updateNotice(u) {
     if (!NOTICES || !u || Social.dnd()) return;
     const p = { kind: 'update', version: u.version };
@@ -251,8 +245,8 @@ window.Messages = (() => {
     seenLevel = Number(localStorage.getItem('xpLevel')) || 0;
     fireDay = localStorage.getItem('fireDay') || '';
   } catch {}
-  // In front: the app tells (focus), staging asks the page.
-  let focused = !APP_ROLE && document.hasFocus() && !document.hidden;
+  // In front: the app tells (focus).
+  let focused = false;
   let pending = null; // the level-up waiting to play: the highest level, the one before, whether a rank changed
   let takeover = null; // the one on screen
 
@@ -328,29 +322,13 @@ window.Messages = (() => {
     sizeNotes();
   }
 
-  // Keys do nothing while it plays: in the app Swift drops them (never longer than 4 s), here the page does.
-  const swallow = (e) => {
-    e.preventDefault();
-    e.stopImmediatePropagation();
-  };
-  // After the lock a key ends the takeover (here; in the app Swift catches the key and calls skip).
-  const skipKey = (e) => {
-    swallow(e);
-    if (e.type === 'keydown') skip();
-  };
+  // Keys do nothing while it plays: Swift drops them (never longer than 4 s). After the lock a key ends the takeover
+  // (Swift catches it and calls skip).
   function lockKeys(ms) {
-    if (APP_ROLE) return post({ type: 'lock', ms });
-    for (const t of ['keydown', 'keypress', 'keyup']) addEventListener(t, swallow, true);
+    post({ type: 'lock', ms });
   }
   function unlockKeys() {
-    if (APP_ROLE) return post({ type: 'lock', ms: 0 });
-    for (const t of ['keydown', 'keypress', 'keyup']) {
-      removeEventListener(t, swallow, true);
-      if (takeover) addEventListener(t, skipKey, true);
-    }
-  }
-  function freeKeys() {
-    if (!APP_ROLE) for (const t of ['keydown', 'keypress', 'keyup']) removeEventListener(t, swallow, true), removeEventListener(t, skipKey, true);
+    post({ type: 'lock', ms: 0 });
   }
 
   // A key or a click once the lock is over: out now instead of waiting.
@@ -457,7 +435,6 @@ window.Messages = (() => {
     t.stop();
     t.el.remove();
     unlockKeys();
-    freeKeys();
     takeover = null;
     sizeNotes();
     // Another level-up waiting plays first; notices (the daily bonus) come after the last one.
@@ -519,12 +496,6 @@ window.Messages = (() => {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }
-
-  if (NOTICES && !APP_ROLE) {
-    addEventListener('focus', () => setFocus(!document.hidden));
-    addEventListener('blur', () => setFocus(false));
-    document.addEventListener('visibilitychange', () => setFocus(!document.hidden && document.hasFocus()));
   }
 
   function say(msg) {
@@ -627,7 +598,6 @@ window.Messages = (() => {
     isOpen = true;
     if (fresh || !q('.mb.open')) {
       win.innerHTML = frameHTML();
-      if (ROLE === 'both') centerOnce();
     } else win.firstElementChild.classList.remove('in');
     paint(true);
     tellShowing();
@@ -797,17 +767,8 @@ window.Messages = (() => {
     }
   }
 
-  // Dragging by the header, like a window. In the app Swift moves the panel; here the box moves on the page.
-  let placed = false;
-  function centerOnce() {
-    if (placed) return;
-    placed = true;
-    win.style.left = `${Math.max(8, (innerWidth - 420) / 2)}px`;
-    win.style.top = `${Math.max(8, (innerHeight - 560) / 2)}px`;
-  }
-
+  // Dragging by the header, like a window: Swift moves the panel.
   if (CHAT) {
-    if (ROLE === 'both') win.classList.add('floating');
     win.addEventListener('mousedown', (e) => {
       const head = e.target.closest('.mb-head');
       if (!head || e.button !== 0 || e.target.closest('button')) return;
@@ -817,10 +778,7 @@ window.Messages = (() => {
         const dx = ev.screenX - x, dy = ev.screenY - y;
         x = ev.screenX;
         y = ev.screenY;
-        if (!dx && !dy) return;
-        if (ROLE === 'chat') return post({ type: 'drag', dx, dy });
-        win.style.left = `${Math.min(innerWidth - 60, Math.max(-360, win.offsetLeft + dx))}px`;
-        win.style.top = `${Math.min(innerHeight - 40, Math.max(0, win.offsetTop + dy))}px`;
+        if (dx || dy) post({ type: 'drag', dx, dy });
       };
       const up = () => {
         removeEventListener('mousemove', move);
@@ -863,7 +821,7 @@ window.Messages = (() => {
 
   addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (CHAT && isOpen && (ROLE === 'chat' || win.contains(document.activeElement))) close();
+    if (CHAT && isOpen) close();
     else if (NOTICES && peek) hidePeek();
   });
 
@@ -911,23 +869,21 @@ window.Messages = (() => {
   }
 
   // ======================= the app's panels =======================
-  if (APP_ROLE) {
-    window.__messages = {
-      event: (ev) => Social.event(ev),
-      open: (id) => open(id),
-      close: () => close(),
-      showing: (ids) => (showing = new Set(ids || [])),
-      paste: (text) => pasteText(text),
-      copy: (cut) => copyText(cut),
-      selectAll: () => selectAll(),
-      update: (u) => updateNotice(u),
-      xp: (x) => progress({ xp: x }),
-      focus: (on) => setFocus(on),
-      skip: () => skip(),
-    };
-    Social.load();
-    post({ type: 'ready' });
-  }
+  window.__messages = {
+    event: (ev) => Social.event(ev),
+    open: (id) => open(id),
+    close: () => close(),
+    showing: (ids) => (showing = new Set(ids || [])),
+    paste: (text) => pasteText(text),
+    copy: (cut) => copyText(cut),
+    selectAll: () => selectAll(),
+    update: (u) => updateNotice(u),
+    xp: (x) => progress({ xp: x }),
+    focus: (on) => setFocus(on),
+    skip: () => skip(),
+  };
+  Social.load();
+  post({ type: 'ready' });
 
   return { open, close, canChat: CHAT, peek: () => peek, isOpen: () => isOpen, update: updateNotice, progress, focus: setFocus };
 })();

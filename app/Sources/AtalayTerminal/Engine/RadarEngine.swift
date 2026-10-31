@@ -840,6 +840,11 @@ final class RadarEngine {
 
     // MARK: snapshot
 
+    /// The session's name, or its folder's with the start of its id.
+    private func displayName(_ S: Session) -> String {
+        S.name.isEmpty ? clip(((S.cwd as NSString).lastPathComponent) + "-" + S.id.prefix(2), 24) : S.name
+    }
+
     private func statusOf(_ S: Session, _ now: Double) -> String {
         if S.live {
             switch S.reg {
@@ -915,7 +920,7 @@ final class RadarEngine {
             if status == "busy", pending.contains(where: { now - ($0["t"] as? Double ?? now) > 3 * Self.MIN }) { flags.append("slow tool") }
             if S.ctxMax > 0, Double(S.ctx) / S.ctxMax > 0.8 { flags.append("ctx 80%+") }
             var item: [String: Any] = [
-                "id": S.id, "name": S.name.isEmpty ? clip(((S.cwd as NSString).lastPathComponent) + "-" + S.id.prefix(2), 24) : S.name,
+                "id": S.id, "name": displayName(S),
                 "title": S.title, "lastPrompt": S.lastPrompt, "cwd": cwdLabel(S.cwd), "branch": S.branch,
                 "model": shortModel(S.model), "effort": S.effort, "status": status, "live": S.live,
                 "statusSince": S.live ? S.statusSince : (S.endedAt > 0 ? S.endedAt : S.lastTs),
@@ -1088,6 +1093,24 @@ final class RadarEngine {
                 if out.count >= limit { break }
             }
             DispatchQueue.main.async { completion(out) }
+        }
+    }
+
+    /// For Source Control (Git.swift): today's sessions and where they work, and the files they wrote today with the
+    /// sessions that wrote each. Called back on the engine's queue.
+    func gitSources(_ completion: @escaping ([GitSession], [String: [String]]) -> Void) {
+        queue.async {
+            let now = nowMs()
+            let list = self.sessions.values.filter { !$0.cwd.isEmpty && ($0.live || $0.lastTs >= self.day0) }.map { S in
+                GitSession(id: S.id, name: self.displayName(S), title: S.title, status: self.statusOf(S, now), live: S.live, cwd: S.cwd)
+            }
+            var written: [String: [String]] = [:]
+            for F in self.G.files.values where F.w > 0 {
+                var ids: [String] = []
+                for e in F.editors.values where !ids.contains(e.s) { ids.append(e.s) }
+                written[F.p] = ids
+            }
+            completion(list, written)
         }
     }
 

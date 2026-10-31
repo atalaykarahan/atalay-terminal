@@ -1,24 +1,16 @@
 'use strict';
 
-// Data access for the shortcut menu and folder picker. In the app they run in an overlay panel
-// and talk to Swift through the "overlay" message handler (with replies); in staging they use the HTTP server.
+// Data access for the shortcut menu and folder picker, in the app's overlay panel: Swift answers through the
+// "overlay" message handler (with replies).
 window.API = (() => {
-  const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.overlay;
-  const inApp = !!h;
-  const native = (type, payload) => h.postMessage(Object.assign({ type }, payload || {}));
-  const json = (r) => r.json();
-  const send = (url, method, body) =>
-    fetch(url, { method, headers: { 'content-type': 'application/json', 'x-radar': '1' }, body: JSON.stringify(body) }).then(json);
-
+  const native = (type, payload) => window.webkit.messageHandlers.overlay.postMessage(Object.assign({ type }, payload || {}));
   return {
-    inApp,
-    listDir: (p) => (inApp ? native('listDir', { path: p }) : fetch(`/api/fs/list?path=${encodeURIComponent(p)}`).then(json)),
-    places: () => (inApp ? native('places') : fetch('/api/fs/places').then(json)),
+    listDir: (p) => native('listDir', { path: p }),
+    places: () => native('places'),
     // set: undefined for the pie's slices, 'picker' for the places around the new-terminal folder picker.
-    getSlots: (set) => (inApp ? native('getSlots', { set }) : fetch(`/api/shortcuts${set ? `?set=${set}` : ''}`).then(json)),
-    saveSlots: (slots, set) =>
-      inApp ? native('saveSlots', { slots, set }) : send(`/api/shortcuts${set ? `?set=${set}` : ''}`, 'PUT', { slots }),
-    newTerminal: (dir, name) => (inApp ? native('newTerminal', { dir, name }) : window.Chat?.openNew(dir, name)),
-    done: () => (inApp ? native('done') : Promise.resolve()),
+    getSlots: (set) => native('getSlots', { set }),
+    saveSlots: (slots, set) => native('saveSlots', { slots, set }),
+    newTerminal: (dir, name) => native('newTerminal', { dir, name }),
+    done: () => native('done'),
   };
 })();

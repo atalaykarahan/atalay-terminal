@@ -44,6 +44,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         MessagePanel.dashboard = window
+        radar.handleGit(GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] }))
         overlay.manager = self
         buildLayout()
         wireEngine()
@@ -307,6 +308,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
               json != terminalsJSON else { return }
         terminalsJSON = json
         radar.push("terminals", json)
+    }
+
+    /// The folders the app's terminals are in now (each shell's own, after its cd's), for Source Control.
+    private func terminalFolders() -> [String] {
+        var shells: [Int32] = []
+        for c in chats.values where !c.hud.exited {
+            shells += c.extras.compactMap { $0.link?.shellPid }
+            if c.hud.status == "terminal", let shell = c.detached?.shellPid { shells.append(shell) }
+        }
+        return shells.compactMap(Proc.cwd)
     }
 
     /// The jobs and everything they started (npm starts node, node starts esbuild, …).

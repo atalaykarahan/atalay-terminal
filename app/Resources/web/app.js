@@ -24,13 +24,12 @@ const LOG_CAT = { prompt: ['you', '#ffffff'], say: ['claude', '#d9c3a8'], sys: [
 const FONT = '"SF Mono", Menlo, Monaco, Consolas, monospace';
 
 // ---------- native app bridge ----------
-const IN_APP = !!(window.__RADAR_APP__ && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.radar);
 function native(msg) {
   try {
     window.webkit.messageHandlers.radar.postMessage(msg);
   } catch {}
 }
-if (IN_APP) window.addEventListener('error', (e) => native({ type: 'log', msg: `${e.message} @ ${e.filename}:${e.lineno}` }));
+window.addEventListener('error', (e) => native({ type: 'log', msg: `${e.message} @ ${e.filename}:${e.lineno}` }));
 
 // ---------- helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -131,29 +130,11 @@ function setVisibility(visible, focused) {
   map('activity', visible, focused);
 }
 function connect() {
-  if (IN_APP) {
-    window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile') };
-    native({ type: 'ready' });
-    return;
-  }
-  const browserVisibility = () => setVisibility(!document.hidden, !document.hidden && document.hasFocus());
-  document.addEventListener('visibilitychange', browserVisibility);
-  addEventListener('focus', browserVisibility);
-  addEventListener('blur', browserVisibility);
-  const es = new EventSource('/api/stream');
-  es.addEventListener('init', (e) => handleInit(JSON.parse(e.data)));
-  es.addEventListener('state', (e) => handleState(JSON.parse(e.data)));
-  es.addEventListener('ev', (e) => {
-    for (const ev of JSON.parse(e.data)) onEvent(ev);
-  });
-  es.addEventListener('social', (e) => window.Social?.event(JSON.parse(e.data)));
-  es.addEventListener('terminals', (e) => map('terminals', JSON.parse(e.data)));
-  es.onopen = () => $('live').classList.remove('off');
-  es.onerror = () => $('live').classList.add('off');
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile') };
+  native({ type: 'ready' });
 }
 
 function onEvent(ev) {
-  if (window.Chat) window.Chat.onEvent(ev);
   map('event', ev);
   switch (ev.k) {
     case 'tool':
@@ -253,19 +234,8 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('on'), 2400);
 }
-async function focusSession(sid) {
-  if (!sid) return;
-  if (IN_APP) return native({ type: 'open', sid });
-  if (window.Chat) return window.Chat.open(sid);
-  const s = STATE?.sessions.find((x) => x.id === sid);
-  if (!s?.live) return toast('this session is not running anymore');
-  try {
-    const r = await fetch(`/api/focus?sid=${encodeURIComponent(sid)}`, { method: 'POST', headers: { 'x-radar': '1' } });
-    const j = await r.json();
-    toast(j.ok ? `→ ${s.name} · ${String(s.tty || '').replace('/dev/', '')}` : `can't focus: ${j.result}`);
-  } catch {
-    toast("can't reach the radar server");
-  }
+function focusSession(sid) {
+  if (sid) native({ type: 'open', sid });
 }
 
 const nums = new Map();
@@ -436,7 +406,6 @@ function renderAll() {
   renderSpend();
   renderCall();
   renderTicker();
-  if (window.Chat) window.Chat.onState(STATE);
   map('state', STATE);
   const T = STATE.totals;
   setText($('m-map'), `${T.live} live · ${T.runningAgents} agents running · ${T.sessionsToday} sessions today`);
@@ -531,14 +500,14 @@ function askBox({ title, text, ok }) {
     const done = (v) => {
       root.remove();
       removeEventListener('keydown', key, true);
-      if (IN_APP) native({ type: 'modal', open: false });
+      native({ type: 'modal', open: false });
       resolve(v);
     };
     root.querySelector('.cancel').onclick = () => done(false);
     root.querySelector('.ok').onclick = () => done(true);
     root.addEventListener('mousedown', (e) => e.target === root && done(false));
     addEventListener('keydown', key, true);
-    if (IN_APP) native({ type: 'modal', open: true });
+    native({ type: 'modal', open: true });
     document.body.appendChild(root);
     root.querySelector('.ok').focus();
   });
@@ -550,7 +519,7 @@ async function endSession(id) {
   const s = STATE.sessions.find((x) => x.id === id);
   if (!s) return;
   if (s.status !== 'ended') {
-    const winOpen = IN_APP ? !!(window.__winOpen && window.__winOpen[s.id]) : false;
+    const winOpen = !!(window.__winOpen && window.__winOpen[s.id]);
     const where = s.host === 'term' && !winOpen
       ? `Claude stops in the terminal it runs in${s.tty ? ` (${String(s.tty).replace('/dev/', '')})` : ''}.`
       : 'Claude stops and its window closes.';
@@ -563,8 +532,7 @@ async function endSession(id) {
     if (!yes) return;
   }
   document.querySelector(`#sessions .card[data-key="${CSS.escape(id)}"]`)?.classList.add('ending');
-  if (IN_APP) return native({ type: 'endSession', sid: id });
-  fetch(`/api/session/end?sid=${encodeURIComponent(id)}`, { method: 'POST', headers: { 'x-radar': '1' } }).catch(() => {});
+  native({ type: 'endSession', sid: id });
 }
 
 function createCard() {
@@ -596,7 +564,7 @@ function updateCard(el, s) {
   q('.l-close').title = s.status === 'ended' ? 'Remove from the list' : 'End session';
   q('.l-min').title = folded ? 'Expand' : 'Collapse';
   setText(q('.nm'), s.name);
-  const winOpen = IN_APP ? !!(window.__winOpen && window.__winOpen[s.id]) : !!(window.Chat && window.Chat.isOpen(s.id));
+  const winOpen = !!(window.__winOpen && window.__winOpen[s.id]);
   el.classList.toggle('winopen', winOpen);
   const host = winOpen ? 'window' : s.host === 'app' ? 'in app' : s.host === 'term' ? `ext ${String(s.tty || 'terminal').replace('/dev/', '')}` : '';
   setText(q('.kind'), [s.kind && s.kind !== 'interactive' ? s.kind : '', host].filter(Boolean).join(' · '));
@@ -871,12 +839,9 @@ function terminalTip(t) {
     `<div class="d">${t.running ? `running${t.cpu >= 1 ? ` · ${Math.round(t.cpu)}% cpu` : ''}` : 'idle shell'} · click to open</div>`
   );
 }
-// A terminal car was clicked: the app shows that terminal's window (hidden or behind others). Staging has no
-// windows, so the camera follows the car instead (a parked one has nowhere to go).
+// A terminal car was clicked: the app shows that terminal's window (hidden or behind others).
 function openTerminal(id) {
-  if (IN_APP) return native({ type: 'openTerminal', id });
-  if (window.Orbit?.follow(id)) toast('following this car · drag, double-click or esc to let go');
-  else toast('parked: nothing running in this terminal · in the app a click opens its window');
+  native({ type: 'openTerminal', id });
 }
 function showTip(html, x, y) {
   const t = $('tip');
@@ -898,20 +863,10 @@ $('log').addEventListener('click', (e) => {
   const ln = e.target.closest('.ln');
   if (ln && ln.dataset.sid) focusSession(ln.dataset.sid);
 });
-if (IN_APP) document.querySelector('.staging-badge')?.remove();
-
-$('newchat').addEventListener('click', () => {
-  if (IN_APP) return native({ type: 'newTerminal' });
-  window.Picker?.open({
-    title: 'NEW TERMINAL',
-    forLabel: 'choose the folder',
-    around: 'picker',
-    onPick: (dir) => API.newTerminal(dir, dir.replace(/\/+$/, '').split('/').pop()),
-  });
-});
+$('newchat').addEventListener('click', () => native({ type: 'newTerminal' }));
 
 // Shared with orbit.js.
-window.RADAR = { CAT, CATS, STATUS, FONT, IN_APP, MAPQ, sessColor, colorIndex, sessName, hexA, fmtTok, fmtUsd, fmtDur, clock, ago, clipT, esc, ctxColor, focusSession, sessionTip, agentTip, stationTip, terminalTip, openTerminal, showTip, hideTip };
+window.RADAR = { CAT, CATS, STATUS, FONT, MAPQ, sessColor, colorIndex, sessName, hexA, fmtTok, fmtUsd, fmtDur, clock, ago, clipT, esc, ctxColor, focusSession, sessionTip, agentTip, stationTip, terminalTip, openTerminal, showTip, hideTip };
 
 // ---------- start ----------
 setInterval(() => {

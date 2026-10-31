@@ -10,7 +10,6 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     override init() {
         let config = WKWebViewConfiguration()
         let ucc = WKUserContentController()
-        ucc.addUserScript(WKUserScript(source: "window.__RADAR_APP__ = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = ucc
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800), configuration: config)
         super.init()
@@ -31,6 +30,11 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         return URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Resources/web")
+    }
+
+    /// Source Control's requests (web/git.js) go to Git.swift.
+    func handleGit(_ bridge: GitBridge) {
+        webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "git")
     }
 
     func push(_ fn: String, _ json: String) {

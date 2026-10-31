@@ -1,19 +1,10 @@
 'use strict';
 
 // Friends, requests, statuses and messages, shared by the dashboard (main menu, badges) and the message box.
-// In the app, calls go through Swift (the "cloud" handler adds the device token) and live events come from its
-// WebSocket; in staging the server does both (POST /api/cloud/social, SSE "social" events).
+// Calls go through Swift (the "cloud" handler adds the device token) and live events come from its WebSocket.
 window.Social = (() => {
-  const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cloud;
-  const api = (method, path, body) =>
-    (h
-      ? h.postMessage({ type: 'social', method, path, body })
-      : fetch('/api/cloud/social', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-radar': '1' },
-          body: JSON.stringify({ method, path, body }),
-        }).then((r) => r.json())
-    ).catch(() => ({ error: 'offline' }));
+  const h = window.webkit.messageHandlers.cloud;
+  const api = (method, path, body) => h.postMessage({ type: 'social', method, path, body }).catch(() => ({ error: 'offline' }));
 
   // What friends see, and what each status means (like Discord's).
   const PRESENCE = {
@@ -127,11 +118,10 @@ window.Social = (() => {
     unread: () => (S ? S.friends.reduce((n, f) => n + (f.unread || 0), 0) : 0),
     requests: () => (S ? S.incoming.length : 0),
     dnd: () => !!(S && S.me.status === 'dnd'),
-    // The chat window lives on this page (staging, or the app's chat panel); anywhere else in the app (dashboard,
-    // notices) Swift opens its chat panel.
+    // In a chat panel the chat opens right there; anywhere else (dashboard, notices) Swift opens its chat panel.
     openChat(id) {
       if (window.Messages && window.Messages.canChat) return window.Messages.open(id);
-      if (h) h.postMessage({ type: 'openChat', id });
+      h.postMessage({ type: 'openChat', id });
     },
     // Your own actions show at once from their answers; the live echo of the same change then finds nothing to do.
     request: (text) =>

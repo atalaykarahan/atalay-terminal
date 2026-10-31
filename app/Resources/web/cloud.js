@@ -2,25 +2,15 @@
 
 // Hacker name (asked once, on first launch), the main menu (your profile, friends, the leaderboard, requests,
 // settings, your status) and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
-// tag (#0427) and name + tag is unique, like Discord. In the app, Swift's Cloud talks to the API,
-// pushes its state through window.__radar.cloud and answers the page through the "cloud" handler (with replies).
-// In staging the server proxies the same calls and the page asks for the state every half minute.
+// tag (#0427) and name + tag is unique, like Discord. Swift's Cloud talks to the API, pushes its state through
+// window.__radar.cloud and answers the page through the "cloud" handler (with replies).
 window.Cloud = (() => {
-  const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.cloud;
-  const call = (type, payload) =>
-    h
-      ? h.postMessage(Object.assign({ type }, payload || {}))
-      : fetch(`/api/cloud/${type}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-radar': '1' },
-          body: JSON.stringify(payload || {}),
-        }).then((r) => r.json());
+  const call = (type, payload) => window.webkit.messageHandlers.cloud.postMessage(Object.assign({ type }, payload || {}));
   const MAX = 16;
   const ERRORS = {
     name_full: 'too many hackers use this name · try another',
     offline: "can't reach the server · try again",
     unauthorized: 'this Mac lost its sign-in · restart the app',
-    app_only: 'updates install in the app, not in staging',
   };
   const errorText = (code) => ERRORS[code] || `didn't work (${code})`;
   // The app moves the chat windows pinned above the dashboard out of the way while a menu is open.
@@ -41,7 +31,6 @@ window.Cloud = (() => {
   let shownError = null;
   let shownNameError = null;
   let waitFor = null; // { test, then, until }: runs once a state shows the name just sent
-  let announced = null; // the build the "update available" notice was shown for
   let feedbackDraft = ''; // the feedback window's text, kept until it's sent
 
   const root = document.createElement('div');
@@ -73,12 +62,6 @@ window.Cloud = (() => {
     }
     renderUpdate();
     renderUpdateModal();
-    // A newer version than the last one announced: the "update available" notice. Staging shows it on this page; in
-    // the app Swift tells the notices panel (this page has no Messages there).
-    if (s.update && s.update.build !== announced) {
-      announced = s.update.build;
-      window.Messages?.update?.(s.update);
-    }
     if (s.updateError && s.updateError !== shownError) {
       toast(s.updateError === 'not_writable' ? "can't replace the app where it is · move it to Applications" : 'update failed · try again later');
     }
@@ -95,8 +78,6 @@ window.Cloud = (() => {
       renderProfile();
       renderActivity();
     }
-    // Staging shows level-ups on this page (the app's notices panel gets them from Swift).
-    if (!h && x) window.Messages?.progress?.({ xp: x });
     // Friends and messages need a signed-in Mac.
     if (s.registered && s.reachable && !Social.state()) Social.load();
     badges();
@@ -167,7 +148,7 @@ window.Cloud = (() => {
     st.textContent = busy ? S.updating : '';
   }
 
-  // The name's state reaches the page as a push (app) or after a fetch (staging), before or after the call's reply.
+  // The name's state reaches the page as a push from the app, before or after the call's reply.
   function whenState(test, then) {
     if (S && test(S)) then(S);
     else waitFor = { test, then, until: Date.now() + 10_000 };
@@ -219,7 +200,7 @@ window.Cloud = (() => {
     return { input, set, nudge };
   }
 
-  // Sends the name; on success the new state arrives (pushed by the app, fetched in staging) and closes the dialog.
+  // Sends the name; on success the new state arrives (pushed by the app) and closes the dialog.
   // Offline, the app keeps the name and sends it when the API answers again ("queued").
   function submitter(type, f, ok, done) {
     return async () => {
@@ -238,7 +219,6 @@ window.Cloud = (() => {
         return close();
       }
       done(name);
-      if (!h) refresh();
     };
   }
 
@@ -962,7 +942,6 @@ window.Cloud = (() => {
     close();
   });
   refresh();
-  if (!h) setInterval(refresh, 30_000);
 
   return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate };
 })();

@@ -59,7 +59,7 @@ body::after {
   height: 100vh;
   padding: 8px;
   gap: 8px;
-  grid-template-columns: minmax(250px, 21%) minmax(0, 1fr) minmax(270px, 23%);
+  grid-template-columns: 48px minmax(250px, 21%) minmax(0, 1fr) minmax(270px, 23%);
   grid-template-rows: auto minmax(0, 1fr) minmax(176px, 27vh) 22px;
 }
 
@@ -164,7 +164,7 @@ body::after {
 .enter { animation: enter 0.45s ease-out; }
 
 /* ---------- session cards ---------- */
-#sessions { grid-row: 2; grid-column: 1; display: flex; flex-direction: column; gap: 7px; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+#sessions { grid-row: 2; grid-column: 2; display: flex; flex-direction: column; gap: 7px; min-height: 0; overflow-y: auto; scrollbar-width: none; }
 #sessions::-webkit-scrollbar { display: none; }
 .card {
   position: relative;
@@ -230,7 +230,7 @@ body::after {
 .flag { display: inline-block; margin: 4px 4px 0 0; padding: 0 5px; color: var(--ink); background: var(--amber); font-size: 0.82em; font-weight: 700; animation: blink 1.2s steps(2) infinite; }
 
 /* ---------- map ---------- */
-#mapwrap { position: relative; grid-row: 2; grid-column: 2; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--line); background: rgba(12, 7, 3, 0.6); }
+#mapwrap { position: relative; grid-row: 2; grid-column: 3; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--line); background: rgba(12, 7, 3, 0.6); }
 .maptag { position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: 8px; height: 19px; pointer-events: none; }
 .maptag span { display: flex; align-items: center; height: 100%; padding: 0 8px; background: var(--accent); color: var(--ink); font-weight: 700; }
 .maptag em { color: var(--dim); font-style: normal; }
@@ -255,7 +255,7 @@ body::after {
 #tip .d { margin-top: 3px; color: var(--dim); }
 
 /* ---------- right column ---------- */
-#right { grid-row: 2; grid-column: 3; display: grid; grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr) auto; gap: 8px; min-height: 0; }
+#right { grid-row: 2; grid-column: 4; display: grid; grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr) auto; gap: 8px; min-height: 0; }
 .rf { display: flex; gap: 7px; padding: 4px 0; border-bottom: 1px dashed var(--line-soft); }
 .rf .k { flex: none; align-self: flex-start; margin-top: 1px; padding: 0 4px; font-size: 0.8em; font-weight: 700; color: var(--ink); }
 .rf .k.search { background: var(--sky); }
@@ -287,7 +287,7 @@ body::after {
 .chart { display: block; width: 100%; height: 34px; margin-top: 6px; }
 
 /* ---------- bottom row ---------- */
-#bottom { grid-row: 3; grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 0.95fr) minmax(0, 1fr); gap: 8px; min-height: 0; }
+#bottom { grid-row: 3; grid-column: 2 / -1; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 0.95fr) minmax(0, 1fr); gap: 8px; min-height: 0; }
 .log { overflow-y: auto; font-size: 0.93em; scrollbar-width: thin; scrollbar-color: var(--dim2) transparent; }
 .ln { display: grid; grid-template-columns: 58px 82px 50px minmax(0, 1fr) auto; gap: 6px; padding: 1px 0; white-space: nowrap; }
 .ln > span { overflow: hidden; text-overflow: ellipsis; }
@@ -373,7 +373,6 @@ body::after {
 #boot { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--bg); color: var(--accent-soft); transition: opacity 0.7s; }
 #boot.gone { opacity: 0; pointer-events: none; }
 .blogo { width: 132px; filter: drop-shadow(0 0 16px rgba(var(--accent-rgb), 0.65)); animation: blogo 2.4s ease-in-out infinite; }
-.staging-badge { padding: 1px 6px; color: var(--ink); background: var(--warn); font-size: 0.72em; font-weight: 700; letter-spacing: 0.08em; }
 
 @keyframes pulse { 50% { opacity: 0.35; } }
 @keyframes blink { 50% { opacity: 0.25; } }

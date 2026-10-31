@@ -16,11 +16,11 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Top bar: the 5-hour and weekly limits stay hidden until there's data for them
 - Friends and the leaderboard show the last 24 hours instead of "today", the same wherever someone lives (their today ended at their own midnight), and the fire burns on 5 hours in the last 24; their 7 days are named by their own dates
 - Levels: no 10-hour limit a day any more; past 8 hours XP comes at half the rate
+- Source Control, as in VS Code (its modern look, your theme and file icons): the branch icon on the dashboard's left edge (with how many files changed) lists every repo your Claude sessions and terminals work in, each with its commit message box, Commit (and Commit & Push, Commit & Sync), staged changes and changes, and the history graph with its branch, upstream and base; a file opens as VS Code shows it: its own syntax colours, wrapped lines, sticky scroll, the overview ruler of changes, colour swatches, GitLens's blame of the line clicked and the status bar. Files a Claude session edited carry a ✦ (⌃⇧G opens it)
 
 ## Next
 
 - Chats: group chats, several friends in one conversation (users asked for it)
-- Git changes: a panel like VS Code's Git changes or GitKraken / GitLens, to see what code a session changed (changed files and their diffs)
 
 ### From user feedback (2026-10-31; the messages: feedback/2026-10-31.md, kept off git)
 

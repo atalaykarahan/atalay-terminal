@@ -1,0 +1,270 @@
+/* ===== Source Control (git.js, git-editor.js) as in the user's VS Code: 1.144's modern look and metrics (from its
+   workbench CSS and its screenshots), the GitHub Dark Default theme's colours, VS Code's icons (codicon.ttf: Microsoft,
+   CC BY 4.0) and the Material Icon Theme's file icons (git-icons.js). ===== */
+@font-face { font-family: codicon; src: url("codicon.ttf") format("truetype"); font-display: block; }
+
+#activity, #git {
+  --fg: #e6edf3; --desc: #7d8590; --icon: #7d8590; --focus: #1f6feb;
+  --side: #010409; --window: #0d1117; --border: #30363d; --hover: #6e76811a; --sel: #6e768166; --tool-hover: #5a5d5e50;
+  --input: #0d1117; --placeholder: #6e7681;
+  --btn: #238636; --btn-hover: #2ea043; --btn-sep: rgba(255, 255, 255, 0.4); --badge: #1f6feb;
+  --editor: #0d1117; --ln: #6e7681; --crumb: #7d8590;
+  --ins: #23863626; --del: #da363326; --ins-t: #3fb9504d; --del-t: #ff7b724d; --fill: #cccccc33;
+  --ui: -apple-system, BlinkMacSystemFont, sans-serif;
+  --code: "Terminus (TTF) for Windows", Menlo, Monaco, "Courier New", monospace;
+}
+/* VS Code sizes boxes by their content (the dashboard sizes them by their border). */
+#activity, #activity *, #git, #git *, #git *::before, #git *::after { box-sizing: content-box; }
+#git .vs-ci, #activity .vs-ci { display: inline-block; flex: none; font: normal normal normal 16px/1 codicon; text-align: center; text-decoration: none; text-transform: none; -webkit-font-smoothing: antialiased; user-select: none; color: var(--icon); }
+
+/* In VS Code's place, VS Code's look: no scan lines or vignette, its cards from the window's edges. */
+html.vs-git body::before, html.vs-git body::after { display: none; }
+#app.git-mode { padding: 0; gap: 0; }
+#app.git-mode #top { margin: 8px; }
+#app.git-mode #ticker, #app.git-mode #activity { display: none; }
+#app.git-mode #sessions, #app.git-mode #mapwrap, #app.git-mode #right, #app.git-mode #bottom { display: none; }
+
+/* ---- the dashboard's activity bar (Source Control's own sits in its card) ---- */
+#activity { grid-row: 2 / 4; grid-column: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 3px; background: var(--window); border: 1px solid var(--border); border-radius: 8px; }
+#git .vs-act { display: flex; flex: none; flex-direction: column; align-items: center; gap: 8px; width: 43px; padding-top: 3px; background: var(--window); border-right: 1px solid var(--border); }
+#activity .vs-ab, #git .vs-ab { position: relative; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; cursor: pointer; }
+#activity .vs-ab .vs-ci, #git .vs-ab .vs-ci { position: relative; font-size: 24px; color: #7d8590; }
+#activity .vs-ab:hover .vs-ci, #activity .vs-ab.on .vs-ci, #git .vs-ab:hover .vs-ci, #git .vs-ab.on .vs-ci { color: #e6edf3; }
+#activity .vs-ab.on::before, #git .vs-ab.on::before { content: ""; position: absolute; inset: 2px; border-radius: 6px; background: rgba(110, 118, 129, 0.4); }
+#activity .vs-badge, #git .vs-badge { position: absolute; top: 18px; right: 3px; z-index: 1; min-width: 8px; height: 16px; padding: 0 4px; border-radius: 20px; background: var(--badge); color: #fff; font: 400 9px/16px var(--ui); font-style: normal; text-align: center; }
+#activity .vs-badge[hidden], #git .vs-badge[hidden] { display: none; }
+
+/* ---- the frame: floating cards, a status bar under them ---- */
+#git { grid-row: 2 / 4; grid-column: 2 / -1; display: none; flex-direction: column; min-height: 0; background: var(--window); color: var(--fg); font: 13px var(--ui); }
+#app.git-mode #git { display: flex; grid-row: 2 / -1; grid-column: 1 / -1; }
+#git .vs-body { position: relative; display: flex; flex: 1; gap: 4px; min-height: 0; padding: 0 4px 4px; }
+#git .vs-card { min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; }
+#git .vs-left { display: flex; flex: none; background: var(--side); }
+#git .vs-sb { position: relative; display: flex; flex-direction: column; flex: none; width: var(--sw, 300px); min-height: 0; background: var(--side); }
+#git .vs-sash-v { position: absolute; top: 0; bottom: 4px; left: calc(4px + 1px + 44px + var(--sw, 300px) + 1px); z-index: 30; width: 4px; cursor: ew-resize; }
+#git .vs-sash-h { position: absolute; top: -2px; left: 0; right: 0; z-index: 30; height: 4px; cursor: ns-resize; }
+#git .vs-sash-v.on, #git .vs-sash-v:hover, #git .vs-sash-h.on, #git .vs-sash-h:hover { background: var(--focus); transition: background 0.1s 0.3s; }
+#git .vs-edcard { display: flex; flex: 1; background: var(--editor); }
+#git .vs-ed { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+
+/* the side bar's title and its views */
+#git .vs-title { display: flex; flex: none; height: 32px; padding: 0 4px; }
+#git .vs-title h2 { flex: 1; min-width: 0; margin: 0; padding-left: 8px; overflow: hidden; color: var(--fg); font-size: 12px; font-weight: 600; line-height: 32px; white-space: nowrap; text-overflow: ellipsis; cursor: default; }
+#git .vs-tact { display: flex; align-items: center; padding-left: 4px; }
+#git .vs-tact .vs-al { margin-right: 4px; }
+#git .vs-pane { position: relative; display: flex; flex-direction: column; min-height: 0; }
+#git .vs-pane.changes { flex: 1 1 0; }
+#git .vs-pane.graph { flex: none; height: var(--gh, 40%); }
+#git .vs-pane.shut { flex: none; height: auto; }
+#git .vs-pane.shut > .vs-pb { display: none; }
+#git .vs-pane.changes.shut + .vs-pane.graph { flex: 1 1 0; height: auto; }
+#git .vs-pane.shut .vs-sash-h { display: none; }
+#git .vs-ph { position: relative; display: flex; flex: none; align-items: center; height: 28px; margin: 0 4px; padding: 0 4px; border-radius: 4px; overflow: hidden; color: var(--fg); line-height: 28px; cursor: pointer; }
+#git .vs-ph:hover { background: var(--hover); }
+#git .vs-pane.graph > .vs-ph::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: var(--border); pointer-events: none; }
+#git .vs-ph > .vs-pt { margin: 0 2px; transform: translateY(1px); }
+#git .vs-pane.shut > .vs-ph > .vs-pt { transform: none; }
+#git .vs-ph h3 { flex: none; min-width: 3ch; margin: 0; overflow: hidden; font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+#git .vs-pa { display: flex; align-items: center; justify-content: flex-end; min-width: 0; height: 100%; margin-left: auto; overflow: hidden; }
+#git .vs-pa .vs-al { margin-right: 4px; padding: 2px; }
+#git .vs-pa .vs-al:last-child { margin-right: 0; }
+#git .vs-picker { color: var(--icon); font-size: 12px; font-weight: 400; line-height: 16px; }
+#git .vs-picker[hidden] { display: none; }
+#git .vs-picker { min-width: 0; }
+#git .vs-picker span { max-width: 96px; margin-left: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#git .vs-pb { flex: 1; min-height: 0; padding: 0 4px; overflow-x: hidden; overflow-y: auto; outline: 0; }
+#git .vs-welcome { padding: 0 16px 1em; color: var(--fg); line-height: 1.4em; }
+
+/* action labels (toolbars) */
+#git .vs-al { display: flex; flex: none; align-items: center; padding: 3px; border-radius: 6px; color: inherit; font-size: 11px; line-height: 16px; text-decoration: none; cursor: pointer; }
+#git .vs-al:hover { background: var(--tool-hover); }
+#git .vs-al.on { background: rgba(110, 118, 129, 0.4); }
+#git .vs-al.fit-off { display: none; }
+#git .vs-al.on .vs-ci { color: var(--fg); }
+#git .vs-al > span { min-width: 0; margin-left: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ---- rows: VS Code's tree, rounded and set in 4 px ---- */
+#git .vs-r { position: relative; display: flex; align-items: center; height: 22px; box-sizing: border-box; border-radius: 4px; line-height: 22px; white-space: nowrap; cursor: pointer; user-select: none; }
+#git .vs-r:hover { background: var(--hover); }
+#git .vs-r.sel { background: var(--sel); }
+#git .vs-pb:focus .vs-r.sel { outline: 1px solid var(--focus); outline-offset: -1px; }
+#git .vs-r.vs-nh, #git .vs-r.vs-nh:hover { background: transparent; cursor: default; }
+#git .vs-tw { display: flex; flex: none; align-items: center; justify-content: center; width: 16px; height: 100%; padding-right: 6px; transform: translateX(3px); color: var(--icon); font: normal 16px/1 codicon; }
+#git .vs-tw > i { font-style: normal; }
+#git .vs-tw.shut > i { transform: rotate(-90deg); }
+#git .vs-tw.leaf { width: 0; padding-right: 0; visibility: hidden; }
+#git .vs-ct { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+#git .vs-ct > div { padding-right: 4px; overflow: hidden; }
+
+/* a repository (several open: each under its own row) */
+#git .vs-prov { display: flex; align-items: center; height: 100%; }
+#git .vs-prov > .vs-ci { padding-right: 2px; }
+#git .vs-pn { flex: 0 1 auto; min-width: 0; overflow: hidden; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+#git .vs-pact { display: flex; flex: 1 10000 auto; align-items: center; justify-content: flex-end; gap: 2px; min-width: 24px; height: 100%; overflow: hidden; }
+#git .vs-pact .vs-al { margin-left: 2px; padding: 2px; }
+#git .vs-pact .vs-al.vs-st { cursor: default; }
+#git .vs-pact .vs-al.vs-st:hover { background: transparent; }
+
+/* the message box */
+#git .vs-inp { height: 26px; }
+#git .vs-input { display: flex; align-items: center; height: 100%; padding-left: 11px; }
+#git .vs-editor { display: flex; flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--input); }
+#git .vs-editor.focus { outline: 1px solid var(--focus); outline-offset: -1px; }
+#git .vs-msg { display: block; flex: 1; min-width: 0; height: 20px; margin: 0; padding: 2px 6px; border: 0; outline: 0; resize: none; overflow-y: auto; background: transparent; color: var(--fg); font: 13px/20px var(--ui); white-space: pre-wrap; overflow-wrap: break-word; }
+#git .vs-msg::placeholder { color: var(--placeholder); }
+#git .vs-msg:placeholder-shown { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* the Commit button: VS Code's button with a dropdown */
+#git .vs-btn { height: 28px; }
+#git .vs-bc { display: flex; align-items: center; height: 100%; padding-left: 11px; }
+#git .vs-bd { display: flex; flex-grow: 1; overflow: hidden; }
+#git .vs-tb { display: flex; flex: 1; align-items: center; justify-content: center; min-width: 0; padding: 4px 8px; border: 1px solid transparent; border-right-width: 0; border-radius: 4px 0 0 4px; background: var(--btn); color: #fff; font-size: 12px; line-height: 16px; text-align: center; cursor: pointer; }
+#git .vs-tb:last-child { border-right-width: 1px; border-radius: 4px; }
+#git .vs-tb .vs-ci { margin: 0 0.2em; color: inherit; }
+#git .vs-tb .vs-ci.vs-sm { margin: 0 4px 0 0; font-size: small; }
+#git .vs-tb > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#git .vs-bsep { padding: 4px 0; border-top: 1px solid transparent; border-bottom: 1px solid transparent; background: var(--btn); }
+#git .vs-bsep > div { width: 1px; height: 100%; background: var(--btn-sep); }
+#git .vs-db { display: flex; align-items: center; padding: 0 4px; border: 1px solid transparent; border-left-width: 0; border-radius: 0 4px 4px 0; background: var(--btn); color: #fff; cursor: pointer; }
+#git .vs-db .vs-ci { color: inherit; }
+#git .vs-tb:hover, #git .vs-db:hover { background: var(--btn-hover); }
+#git .vs-bd.off > * { opacity: 0.4; cursor: default; }
+#git .vs-bd.off .vs-tb:hover { background: var(--btn); }
+
+/* a group: Staged Changes, Changes */
+#git .vs-rg { display: flex; align-items: center; height: 100%; }
+#git .vs-gn { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+#git .vs-acts { display: none; gap: 2px; max-width: fit-content; height: 100%; }
+#git .vs-r:hover .vs-acts, #git .vs-r.sel .vs-acts { display: flex; align-items: center; }
+#git .vs-acts .vs-al { padding: 2px; }
+#git .vs-count { display: flex; margin-left: 6px; }
+#git .vs-cb { display: inline-block; min-width: 19px; min-height: 19px; padding: 4px 6px; box-sizing: border-box; border-radius: 9999px; background: var(--badge); color: #fff; font-size: 10px; font-weight: 400; line-height: 11px; text-align: center; }
+
+/* a file: its icon, its name and folder, its actions and its letter (uncoloured, as Source Control shows it) */
+#git .vs-res { display: flex; height: 100%; }
+#git .vs-name { flex: 1; min-width: 0; overflow: hidden; }
+#git .vs-il { display: flex; height: 100%; overflow: hidden; text-overflow: ellipsis; }
+#git .vs-il[data-l]::after { content: attr(data-l); flex: none; margin: auto 4px 0 5px; font-size: 90%; font-weight: 600; opacity: 0.75; text-align: center; }
+#git .vs-fi { display: inline-block; flex: none; width: 16px; height: 22px; padding-right: 6px; background: no-repeat left center / 16px; vertical-align: top; }
+#git .vs-lc { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#git .vs-ln { white-space: pre; }
+#git .vs-ld { margin-left: 0.5em; font-size: 0.9em; opacity: 0.7; white-space: pre; }
+#git .vs-r.sel .vs-ld { opacity: 1; }
+#git .vs-il > .vs-acts { flex-grow: 100; justify-content: flex-end; }
+#git .vs-res.strike .vs-ln, #git .vs-res.strike .vs-ld { text-decoration: line-through; }
+#git .vs-deco { display: flex; flex: none; align-items: center; justify-content: center; width: 16px; height: 100%; margin-left: 5px; color: #f88008; font-size: 10px; }
+
+/* ---- the graph ---- */
+#git .vs-history { display: flex; align-items: center; height: 100%; }
+#git .vs-gc { display: flex; flex: none; height: 22px; }
+#git .vs-graph-svg circle { stroke: var(--side); }
+#git .vs-gc.current .vs-graph-svg circle:last-child, #git .vs-gc.incoming-changes .vs-graph-svg circle:last-child, #git .vs-gc.outgoing-changes .vs-graph-svg circle:nth-of-type(2) { fill: var(--side); }
+#git .vs-r:hover .vs-gc .vs-graph-svg circle:first-of-type { stroke: transparent; }
+#git .vs-hi.open .vs-gc .vs-graph-svg path:last-of-type { stroke-width: 3px; }
+#git .vs-history > .vs-il { flex-grow: 1; align-items: center; min-width: 0; }
+#git .vs-hi.cur .vs-ln, #git .vs-hi.cur .vs-ld { font-weight: 600; }
+#git .vs-lbl { display: flex; flex-shrink: 0; gap: 4px; margin-left: 4px; }
+#git .vs-lbl:empty { display: none; }
+#git .vs-label { display: flex; align-items: center; border-radius: 10px; color: #fff; line-height: 18px; }
+#git .vs-label .vs-ci { padding: 1px; color: inherit; }
+#git .vs-label .vs-ci.vs-br { padding: 3px; font-size: 12px; }
+#git .vs-lc-n { padding-left: 4px; font-size: 12px; }
+#git .vs-lc-d { max-width: 100px; padding-right: 4px; overflow: hidden; font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+#git .vs-gp { position: absolute; top: 0; left: 0; display: flex; height: 22px; pointer-events: none; }
+#git .vs-hc .vs-ct > div, #git .vs-more .vs-ct > span { padding-right: 4px; }
+#git .vs-more .vs-ln { color: var(--fg); }
+
+/* ---- the editor: its tab (connected to it), its toolbar and breadcrumbs ---- */
+#git .vs-tabs { position: relative; display: flex; flex: none; align-items: flex-end; height: 32px; padding-left: 2px; background: #010409; }
+#git .vs-tabs::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; z-index: 1; height: 1px; background: var(--border); }
+#git .vs-tab { position: relative; z-index: 2; display: flex; flex: none; align-items: center; min-width: fit-content; height: 29px; padding-left: 8px; border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--editor); white-space: nowrap; cursor: pointer; }
+#git .vs-tl { flex: 1; overflow: hidden; font-style: italic; text-overflow: ellipsis; }
+#git .vs-tdeco { margin-left: 6px; font-size: 90%; font-weight: 600; }
+#git .vs-ta { display: flex; flex: none; align-items: center; justify-content: center; width: 28px; }
+#git .vs-ta .vs-ci { color: var(--fg); }
+#git .vs-eda { display: flex; flex: none; align-items: center; align-self: center; margin-left: auto; padding: 0 8px 0 4px; }
+#git .vs-eda .vs-al { margin-right: 4px; }
+#git .vs-crumbs { display: flex; flex: none; align-items: center; height: 22px; padding-left: 14px; overflow: hidden; color: var(--crumb); white-space: nowrap; cursor: default; }
+#git .vs-bi { display: flex; align-items: center; height: 100%; }
+#git .vs-bi .vs-fi { padding-right: 6px; }
+#git .vs-bs { color: inherit; }
+#git .vs-view { position: relative; flex: 1; min-height: 0; }
+#git .vs-note { padding: 20px; color: var(--desc); }
+
+/* ---- the diff: rows of the two sides (a middle gutter between them), wrapped, scrolled as one ---- */
+#git .vs-dv { position: absolute; inset: 0; color: var(--fg); font: bold 13px/20px var(--code); }
+#git .vs-sc { position: absolute; top: 0; bottom: 0; left: 0; right: 30px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+#git .vs-dv.single .vs-sc { right: 0; }
+#git .vs-sc::-webkit-scrollbar { display: none; }
+#git .vs-dr { display: grid; grid-template-columns: minmax(0, 1fr) 35px minmax(0, 1fr); }
+#git .vs-dv.inline .vs-dr, #git .vs-dv.single .vs-dr { display: block; }
+#git .vs-dr.gap { display: flex; align-items: center; justify-content: center; height: 20px; background: var(--side); color: var(--desc); font: 12px/20px var(--ui); }
+#git .vs-h { display: flex; flex-direction: column; min-width: 0; }
+#git .vs-pad, #git .vs-h.fill { flex: 1; background: linear-gradient(-45deg, var(--fill) 12.5%, transparent 12.5%, transparent 50%, var(--fill) 50%, var(--fill) 62.5%, transparent 62.5%, transparent 100%) 0 0 / 8px 8px; }
+#git .vs-mid { background: var(--editor); box-shadow: inset -1px 0 rgba(48, 54, 61, 0.6); }
+#git .vs-hl { --lc: transparent; display: flex; min-height: 20px; padding-right: 14px; background: var(--lc); }
+#git .vs-hl.del { --lc: var(--del); }
+#git .vs-hl.ins { --lc: var(--ins); }
+#git .vs-hl.del.whole { background: linear-gradient(var(--del-t), var(--del-t)), var(--del); }
+#git .vs-hl.ins.whole { background: linear-gradient(var(--ins-t), var(--ins-t)), var(--ins); }
+#git .vs-hl.cur:not(.del):not(.ins) { background: #6e76811a; }
+#git .vs-n { flex: none; width: calc(5ch + 3px); color: var(--ln); text-align: right; user-select: none; }
+#git .vs-hl.cur .vs-n { color: var(--fg); }
+#git .vs-dv.inline .vs-n { width: calc(4ch + 3px); }
+#git .vs-i { flex: none; width: 16px; background-repeat: repeat-y; background-position: 3px 0; }
+#git .vs-i.m { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='20'%3E%3Crect x='0' y='9.5' width='7' height='1.2' fill='%238b949e'/%3E%3C/svg%3E"); }
+#git .vs-i.p { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='20'%3E%3Crect x='0' y='9.5' width='7' height='1.2' fill='%238b949e'/%3E%3Crect x='2.9' y='6.5' width='1.2' height='7.2' fill='%238b949e'/%3E%3C/svg%3E"); }
+#git .vs-t { flex: 1; min-width: 0; padding-left: var(--ws, 0ch); text-indent: calc(-1 * var(--ws, 0ch)); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+#git .vs-hl.del .vs-m { background: var(--del-t); }
+#git .vs-hl.ins .vs-m { background: var(--ins-t); }
+#git .vs-it { font-style: italic; }
+#git .vs-bd { font-weight: bold; }
+#git .vs-ul { text-decoration: underline; }
+#git .vs-strike { text-decoration: line-through; }
+#git .vs-sw { display: inline-block; width: 0.8em; height: 0.8em; margin: 0.1em 0.2em 0; box-sizing: border-box; border: 0.1em solid #eee; line-height: 0.8em; text-indent: 0; vertical-align: -0.02em; cursor: pointer; }
+#git .vs-blame { display: inline-block; width: 0; overflow: visible; color: rgba(153, 153, 153, 0.35); font-weight: normal; white-space: pre; text-indent: 0; vertical-align: top; }
+#git .vs-blame > span { padding-left: 3em; }
+#git .vs-hl { overflow: hidden; }
+
+/* sticky scroll: the blocks the top line sits in, pinned */
+#git .vs-sticky { position: absolute; top: 0; left: 0; z-index: 3; width: calc((100% - 65px) / 2 - 14px); background: var(--editor); box-shadow: 0 3px 4px -2px #000; cursor: pointer; }
+#git .vs-sticky.right { left: calc((100% - 65px) / 2 + 35px); }
+#git .vs-dv.inline .vs-sticky.right, #git .vs-dv.single .vs-sticky.right { left: 0; width: calc(100% - 44px); }
+#git .vs-dv.single .vs-sticky.right { width: calc(100% - 14px); }
+#git .vs-sticky[hidden] { display: none; }
+#git .vs-sticky .vs-hl { height: 20px; padding-right: 0; overflow: hidden; }
+#git .vs-sticky .vs-t { overflow: hidden; white-space: pre; text-overflow: ellipsis; text-indent: 0; padding-left: 0; }
+#git .vs-sticky .vs-hl:hover { background: #6e76811a; }
+
+/* the overview rulers: each editor's (its scroll bar, its cursor) and the diff's (where the changes are) */
+#git .vs-er { position: absolute; top: 0; bottom: 0; z-index: 4; width: 13px; border-left: 1px solid #010409; }
+#git .vs-er.left { left: calc((100% - 65px) / 2 - 14px); }
+#git .vs-er.right { right: 30px; }
+#git .vs-dv.single .vs-er.right { right: 0; }
+#git .vs-slider { position: absolute; left: 0; right: 0; background: #8b949e33; }
+#git .vs-slider:hover { background: #8b949e3d; }
+#git .vs-slider.on { background: #8b949e47; }
+#git .vs-slider[hidden] { display: none; }
+#git .vs-cur { position: absolute; left: 0; right: 0; height: 2px; background: #2f81f7; pointer-events: none; }
+#git .vs-cur[hidden] { display: none; }
+#git .vs-dov { position: absolute; top: 0; bottom: 0; right: 0; z-index: 4; width: 30px; background: var(--editor); }
+#git .vs-marks { position: absolute; inset: 0; pointer-events: none; }
+#git .vs-mk { position: absolute; left: 0; width: 15px; background: rgba(255, 123, 114, 0.6); }
+#git .vs-mk.b { left: 15px; background: rgba(63, 185, 80, 0.6); }
+#git .vs-vp { position: absolute; left: 0; right: 0; background: rgba(139, 148, 158, 0.2); }
+#git .vs-vp.on, #git .vs-vp:hover { background: rgba(139, 148, 158, 0.28); }
+
+/* ---- the status bar ---- */
+#git .vs-status { display: flex; flex: none; align-items: center; justify-content: space-between; height: 22px; padding: 0 4px; overflow: hidden; background: var(--window); color: #7d8590; font-size: 12px; }
+#git .vs-sl, #git .vs-sr { display: flex; align-items: center; height: 100%; min-width: 0; }
+#git .vs-si { display: flex; flex: none; align-items: center; gap: 4px; height: 100%; padding: 0 5px; border-radius: 4px; color: inherit; text-decoration: none; white-space: nowrap; cursor: pointer; }
+#git .vs-si:hover { background: #e6edf314; color: #e6edf3; }
+#git .vs-si .vs-ci { font-size: 14px; color: inherit; }
+
+/* a session card's chip on the dashboard: its repo's changes, a click opens them */
+.gchip { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 2px 7px; border: 1px solid rgba(var(--accent-rgb), 0.25); border-radius: 5px; color: var(--dim); font-size: 0.86em; cursor: pointer; white-space: nowrap; }
+.gchip:hover { border-color: var(--accent); color: var(--txt); }
+.gchip svg { width: 12px; height: 12px; flex: none; fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; }
+.gchip b { color: var(--txt); font-weight: 400; }
+.gchip .g-add { color: var(--green); }
+.gchip .g-del { color: var(--red); }
