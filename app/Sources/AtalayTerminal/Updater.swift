@@ -1,11 +1,16 @@
 import AppKit
 import CryptoKit
 
-/// Installs a newer build offered by the API: downloads its zip, checks the SHA-256 and the Ed25519 signature made
-/// with the release key (its public half is AtalayUpdateKey in Info.plist), swaps the app bundle and relaunches.
-/// Chats keep running in their detached sessions meanwhile and come back with the new build.
+/// Installs a newer build offered by the API in two steps. `prepare` downloads its zip, checks the SHA-256 and the
+/// Ed25519 signature made with the release key (its public half is AtalayUpdateKey in Info.plist) and unpacks it next to
+/// the running app: safe in the background, nothing changes yet. `apply` swaps the bundles once the app has quit, and
+/// starts the new build at once or waits for the user to quit. Chats keep running in their detached sessions meanwhile
+/// and come back with the new build.
 @MainActor
 enum Updater {
+    /// A newer build, checked and unpacked next to the running app (hidden), waiting to replace it.
+    struct Staged { let build: Int; let version: String; let url: URL }
+
     enum Failure: Error {
         case noKey, download(Int), badSignature, badBundle, cancelled
         /// The folder holding the app can't be written to (or macOS privacy settings refused it).
@@ -15,7 +20,7 @@ enum Updater {
         var code: String { if case .notWritable = self { return "not_writable" }; return "failed" }
     }
 
-    static func install(_ release: Release, progress: @escaping @MainActor (String) -> Void) async throws {
+    static func prepare(_ release: Release, progress: @escaping @MainActor (String) -> Void) async throws -> Staged {
         guard let raw = (Bundle.main.object(forInfoDictionaryKey: "AtalayUpdateKey") as? String).flatMap({ Data(base64Encoded: $0) }),
               let key = try? Curve25519.Signing.PublicKey(rawRepresentation: raw) else { throw Failure.noKey }
         guard let url = URL(string: release.url) else { throw Failure.download(0) }
@@ -27,7 +32,7 @@ enum Updater {
         guard digest == release.sha256, let signature = Data(base64Encoded: release.signature),
               key.isValidSignature(signature, for: data) else { throw Failure.badSignature }
 
-        progress("installing \(release.version)…")
+        progress("unpacking \(release.version)…")
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("atalay-terminal-update-\(release.build)")
         try? fm.removeItem(at: work)
@@ -47,21 +52,26 @@ enum Updater {
         try? fm.removeItem(at: staged)
         do { try fm.moveItem(at: app, to: staged) } catch { throw Failure.notWritable }
         try? fm.removeItem(at: work)
+        return Staged(build: release.build, version: release.version, url: staged)
+    }
 
-        // Once this process has quit: swap the bundles (back to the old one if that fails), drop the download
-        // quarantine and start the app.
+    /// Once this process has quit: swap the bundles (back to the old one if that fails), drop the download quarantine
+    /// and, with `relaunch`, start the new build. With `relaunch` the app quits now; without, it's the user's quit.
+    static func apply(_ staged: Staged, relaunch: Bool) throws {
         let script = """
         while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done
+        [ -d "$1" ] || exit 0
         rm -rf "$2.old"
         mv "$2" "$2.old" && { mv "$1" "$2" || mv "$2.old" "$2"; }
         rm -rf "$2.old" "$1"
         xattr -dr com.apple.quarantine "$2" 2>/dev/null
-        open "$2"
+        \(relaunch ? "open \"$2\"" : "")
         """
         let swap = Process()
         swap.executableURL = URL(fileURLWithPath: "/bin/sh")
-        swap.arguments = ["-c", script, "swap", staged.path, current.path]
+        swap.arguments = ["-c", script, "swap", staged.url.path, Bundle.main.bundleURL.path]
         try swap.run()
+        guard relaunch else { return }
         NSApp.terminate(nil)
         // Still here: quitting was cancelled (chats running outside detached sessions). Keep the current build.
         swap.terminate()

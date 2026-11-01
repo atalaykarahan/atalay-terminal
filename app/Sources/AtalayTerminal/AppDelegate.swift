@@ -25,14 +25,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.restoreSessions()
         HangWatchdog.shared.start()
         Cloud.shared.installUpdatesRightAway = CommandLine.arguments.contains("--update")
+        // An update restarts the app only when that stops nothing: no chat runs outside its detached session.
+        Cloud.shared.canRestart = { [weak self] in (self?.controller?.runningChatCount ?? 0) == 0 }
         Cloud.shared.start()
         // Load the notices' page now, so a message can pop up at any time (chats load when opened).
         _ = MessagePanel.notices
+        // A newer build than last time (it updated itself, maybe while the user was away): say so in the corner.
+        let build = Cloud.shared.build, last = UserDefaults.standard.integer(forKey: "lastRunBuild")
+        if build > 0 {
+            if last > 0, build > last { MessagePanel.notices.announce(updated: Cloud.shared.version) }
+            UserDefaults.standard.set(build, forKey: "lastRunBuild")
+        }
         handleLaunchArguments()
     }
 
     // Closing the dashboard keeps the app (and every running chat) alive; the Dock icon brings it back.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    // A downloaded update waiting for the user to step away goes in now: the next launch is the new build.
+    func applicationWillTerminate(_ notification: Notification) {
+        Cloud.shared.installOnQuit()
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         controller.showDashboard()

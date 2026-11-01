@@ -71,6 +71,15 @@ final class Cloud {
         var tag: Int?
         var online = 0
         var update: Release?
+        /// The build on offer is downloaded, checked and waiting next to the app (`Updater.prepare`).
+        var updateReady = false
+        /// Install updates as soon as they're ready, without waiting for the user to step away (Settings).
+        var updateRightAway = UserDefaults.standard.bool(forKey: "updateRightAway")
+        /// Settings → "check for updates": asking now, and when it last asked.
+        var checking = false
+        var checkedAt: Date?
+        /// This build is a day or more behind a newer release: the API credits no XP until the app updates.
+        var xpPaused = false
         /// Progress while an update installs.
         var updating: String?
         /// Why the last install attempt failed ("not_writable", "failed"), for the page to show once.
@@ -109,6 +118,16 @@ final class Cloud {
     var onChange: ((State) -> Void)?
     /// `--update`: install a newer build as soon as one is offered.
     var installUpdatesRightAway = false
+    /// Whether the app can restart now without stopping anything (MainWindowController: no chat runs outside its
+    /// detached session).
+    var canRestart: () -> Bool = { true }
+    private var staged: Updater.Staged?
+    private var preparing = false
+    private var applying = false
+    /// The build whose download or check failed: not tried again on every heartbeat ("update now" tries again).
+    private var failedBuild: Int?
+    /// "Update now" was clicked while the build was still downloading in the background.
+    private var restartWhenReady = false
 
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     /// 0 when run unbundled (swift run), which never asks for updates.
@@ -180,7 +199,7 @@ final class Cloud {
 
     /// Keeps this Mac online, says whether its user is working (XP), picks up updates and sends a name picked offline.
     private func heartbeat(_ token: String) async {
-        struct Answer: Decodable { let hackerName: String; let tag: Int; let online: Int; let update: Release?; let xp: XP? }
+        struct Answer: Decodable { let hackerName: String; let tag: Int; let online: Int; let update: Release?; let xp: XP?; let xpPaused: Bool? }
         // The theme too: the leaderboard shows someone's card in their theme, and anyone can take it.
         let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60, "theme": ThemeStore.shared.chosenId]
         do {
@@ -207,9 +226,12 @@ final class Cloud {
             s.tag = tag
             s.online = a.online
             s.update = build > 0 ? a.update : nil
+            s.updateReady = s.update != nil && staged?.build == s.update?.build
             s.xp = a.xp ?? s.xp
+            s.xpPaused = a.xpPaused ?? false
             state = s
-            if installUpdatesRightAway, state.update != nil { installUpdate() }
+            if let u = state.update { prepareUpdate(u) }
+            maybeRestart()
         } catch Failure.status(401, _) {
             // The token isn't valid anymore: start over.
             self.token = nil
@@ -322,21 +344,86 @@ final class Cloud {
         return .queued
     }
 
-    func installUpdate() {
-        guard let update = state.update, state.updating == nil else { return }
-        state.updating = "downloading \(update.version)…"
-        state.updateError = nil
+    // MARK: updates
+    // A newer build on offer is fetched, checked and unpacked in the background at once (nothing changes yet). It goes in
+    // when the user has stepped away for 10 minutes, at once with "install updates right away" or "update now", or when
+    // the app quits; chats keep running in their detached sessions across the restart.
+
+    private var rightAway: Bool { installUpdatesRightAway || state.updateRightAway }
+
+    private func prepareUpdate(_ u: Release) {
+        guard !preparing, staged?.build != u.build, failedBuild != u.build, state.updating == nil else { return }
+        preparing = true
         Task {
+            defer { preparing = false }
             do {
-                try await Updater.install(update) { self.state.updating = $0 }
-            } catch Updater.Failure.cancelled {
-                state.updating = nil
+                let s = try await Updater.prepare(u) { _ in }
+                staged = s
+                state.updateReady = state.update?.build == s.build
+                if restartWhenReady { return restart(into: s) }
+                maybeRestart()
             } catch {
-                NSLog("Atalay's Terminal: update failed: %@", String(describing: error))
-                state.updating = nil
+                NSLog("Atalay's Terminal: update download failed: %@", String(describing: error))
+                failedBuild = u.build
+                if restartWhenReady { state.updating = nil }
+                restartWhenReady = false
                 state.updateError = (error as? Updater.Failure)?.code ?? "failed"
             }
         }
+    }
+
+    /// A staged build goes in when it interrupts nothing: the user has been away 10 minutes (or wants updates right away)
+    /// and no chat runs outside its detached session, which quitting would stop.
+    func maybeRestart() {
+        guard let staged, staged.build == state.update?.build, !applying, state.updating == nil, canRestart(),
+              rightAway || Social.idleSeconds() >= 600 else { return }
+        restart(into: staged)
+    }
+
+    private func restart(into staged: Updater.Staged) {
+        restartWhenReady = false
+        applying = true
+        state.updating = "restarting into \(staged.version)…"
+        do {
+            try Updater.apply(staged, relaunch: true)
+        } catch {
+            // Quitting was cancelled: keep this build, the staged one goes in later.
+            applying = false
+            state.updating = nil
+        }
+    }
+
+    /// "Update now" (the top bar, Settings, the what's-new screen): at once, downloading first if it isn't ready yet.
+    func installUpdate() {
+        guard let update = state.update, state.updating == nil else { return }
+        state.updateError = nil
+        if let staged, staged.build == update.build { return restart(into: staged) }
+        state.updating = "downloading \(update.version)…"
+        restartWhenReady = true
+        failedBuild = nil
+        prepareUpdate(update)
+    }
+
+    /// Settings → "check for updates": a heartbeat now, which brings any newer build.
+    func checkForUpdates() async {
+        guard !state.checking else { return }
+        state.checking = true
+        await beat()
+        state.checking = false
+        state.checkedAt = Date()
+    }
+
+    func setUpdateRightAway(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "updateRightAway")
+        state.updateRightAway = on
+        maybeRestart()
+    }
+
+    /// The app is quitting with a build staged: it's in place for the next launch.
+    func installOnQuit() {
+        guard let staged, !applying else { return }
+        applying = true
+        try? Updater.apply(staged, relaunch: false)
     }
 
     /// A live event with your XP (the daily bonus, a new level): the same state a heartbeat brings, now.
@@ -424,6 +511,8 @@ extension Cloud {
             "online": s.online, "version": version, "build": build,
             "update": s.update.map { ["version": $0.version, "build": $0.build, "notes": $0.notes] as [String: Any] } ?? NSNull(),
             "updating": s.updating ?? NSNull(), "updateError": s.updateError ?? NSNull(), "nameError": s.nameError ?? NSNull(),
+            "updateReady": s.updateReady, "updateRightAway": s.updateRightAway, "checking": s.checking,
+            "checkedAt": s.checkedAt.map { $0.timeIntervalSince1970 * 1000 } ?? NSNull(), "xpPaused": s.xpPaused,
             "xp": s.xp.flatMap { try? JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) } ?? NSNull(),
         ]
     }
@@ -448,10 +537,17 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
             case "update":
                 cloud.installUpdate()
                 replyHandler(true, nil)
+            case "checkUpdate":
+                await cloud.checkForUpdates()
+                replyHandler(cloud.json, nil)
+            case "updateRightAway":
+                cloud.setUpdateRightAway(body["on"] as? Bool ?? false)
+                replyHandler(cloud.json, nil)
             case "social":
-                // Only the friends, messages and feedback endpoints; the page never reaches anything else with the token.
+                // Only the friends, messages, notifications and feedback endpoints; the page never reaches anything else
+                // with the token.
                 let path = body["path"] as? String ?? ""
-                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
                       !path.contains("..") else {
                     replyHandler(["error": "bad_path"], nil)
                     return

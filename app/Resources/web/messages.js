@@ -23,10 +23,9 @@ window.Messages = (() => {
     return `${Social.dot(p.presence)}<span>${esc(Social.handle(p))}</span>${xp ? Xp.badge(xp.level) : ''}`;
   };
   const PEEK_MS = 12_000;
-  const ONLINE_MS = 6000; // "is now online" goes sooner
+  const STRIP_MS = 6000; // a strip (the daily bonus) goes sooner
+  const NOTE_MS = 30_000; // a notification from the developer stays longer: it's rare, and it's for reading
   // A friend back after less than this offline (a dropped connection, a short sleep) isn't news.
-  const BACK_MS = 60_000;
-  const offlineAt = new Map(); // friend id -> when they went offline
 
   const mount = (id) => {
     const el = document.createElement('div');
@@ -84,7 +83,7 @@ window.Messages = (() => {
       p.heard = true;
       Sfx.play('xp');
     }
-    peekTimer = setTimeout(autoHide, p.kind === 'online' || p.kind === 'xp' ? ONLINE_MS : p.kind === 'fire' ? FIRE_MS + 3000 : PEEK_MS);
+    peekTimer = setTimeout(autoHide, p.kind === 'xp' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
   }
 
   function hidePeek() {
@@ -123,6 +122,20 @@ window.Messages = (() => {
         `<div class="mb-head"><span class="mb-tag">UPDATE</span><span class="mb-who"><span>Version ${esc(p.version)} is out</span>` +
         `<small>see what's new ›</small></span></div></div>`
       );
+    } else if (p.kind === 'updated') {
+      // The app updated itself since it last ran (maybe while you were away).
+      return (
+        `<div class="mb peek update in" data-act="close" title="Close"><div class="mb-border"></div>` +
+        `<div class="mb-head"><span class="mb-tag">UPDATED</span><span class="mb-who"><span>You're on version ${esc(p.version)}</span>` +
+        `<small>updated by itself · your chats kept running</small></span></div></div>`
+      );
+    } else if (p.kind === 'note') {
+      // A notification from the developer (the admin page): a click opens the notifications on the dashboard.
+      return (
+        `<div class="mb peek note in" data-act="notes" title="See your notifications"><div class="mb-border"></div>` +
+        `<div class="mb-head"><span class="mb-tag">NOTICE</span><span class="mb-who"><span>${esc(p.title)}</span>` +
+        `<small>${p.body ? esc(p.body.length > 110 ? `${p.body.slice(0, 110)}…` : p.body) : 'from the developer ›'}</small></span></div></div>`
+      );
     } else if (p.kind === 'xp') {
       return (
         `<div class="mb peek xp in" data-act="profile" title="See your profile"><div class="mb-border"></div>` +
@@ -134,14 +147,6 @@ window.Messages = (() => {
         `<div class="mb peek fire in" data-act="profile" title="See your profile"><div class="mb-border"></div>` +
         `<div class="mb-head"><span class="mb-tag"><i class="mb-flame"></i>ON FIRE</span><span class="mb-who">` +
         `<span>You passed 5 hours today</span><small>you're on fire · keep it burning</small></span></div></div>`
-      );
-    } else if (p.kind === 'online') {
-      // One thin strip, no buttons: a click opens the chat. Friends coming online together share it.
-      const more = p.friends.length - 1;
-      return (
-        `<div class="mb peek online in" data-act="open" title="Open the chat"><div class="mb-border"></div>` +
-        `<div class="mb-head"><span class="mb-tag">ONLINE</span><span class="mb-who">${who(p.friends[more])}` +
-        `<small>${more ? `and ${more} more are` : 'is'} now online</small></span></div></div>`
       );
     } else {
       body =
@@ -156,7 +161,6 @@ window.Messages = (() => {
     if (!peek) return null;
     if (peek.kind === 'message') return peek.from && peek.from.id;
     if (peek.kind === 'friend') return peek.friend.id;
-    if (peek.kind === 'online') return peek.friends[peek.friends.length - 1].id;
     return null;
   };
 
@@ -174,6 +178,10 @@ window.Messages = (() => {
       if (act === 'profile') {
         hidePeek();
         return post({ type: 'openProfile' });
+      }
+      if (act === 'notes') {
+        hidePeek();
+        return post({ type: 'openNotifications' });
       }
       if (act === 'open') {
         const id = peekFriend();
@@ -211,6 +219,8 @@ window.Messages = (() => {
     ta.blur();
     hidePeek();
     Sfx.play('send');
+    // Answering it means it was read: the unread count (the friends badge) goes with it, here and on the server.
+    if (Social.friend(to)?.unread) Social.read(to);
     const r = await Social.send(to, text);
     if (r.error) say(r.error === 'offline' ? "not sent · you're offline" : "not sent · you're not friends anymore");
   }
@@ -529,6 +539,10 @@ window.Messages = (() => {
         Sfx.play('friend');
         if (!Social.dnd()) showPeek({ kind: 'friend', friend: ev.friend });
         return;
+      case 'notification':
+        Sfx.play('request');
+        if (!Social.dnd()) showPeek({ kind: 'note', title: ev.notification.title, body: ev.notification.body });
+        return;
       case 'request_gone':
         if (peek && peek.kind === 'request' && peek.request.id === ev.id) hidePeek();
         return;
@@ -538,19 +552,6 @@ window.Messages = (() => {
         // Do not disturb ended: a level-up or the flames it held play now.
         if (ev.status !== 'dnd') play(), ignite();
         return;
-      case 'presence': {
-        if (ev.presence === 'offline') return void offlineAt.set(ev.id, Date.now());
-        // Only offline -> online counts, not away/busy changes; and not while their chat is open, or over a message
-        // or request on screen.
-        const f = Social.friend(ev.id);
-        if (!f || ev.was !== 'offline' || Date.now() - (offlineAt.get(ev.id) || 0) < BACK_MS || showing.has(ev.id)) return;
-        if (peek && peek.kind !== 'online') return;
-        Sfx.play('online');
-        if (Social.dnd()) return;
-        const others = peek ? peek.friends.filter((x) => x.id !== f.id) : [];
-        showPeek({ kind: 'online', friends: [...others, f], at: Date.now() });
-        return;
-      }
     }
   }
 
@@ -879,6 +880,7 @@ window.Messages = (() => {
     copy: (cut) => copyText(cut),
     selectAll: () => selectAll(),
     update: (u) => updateNotice(u),
+    updated: (version) => NOTICES && showPeek({ kind: 'updated', version }),
     xp: (x) => progress({ xp: x }),
     focus: (on) => setFocus(on),
     skip: () => skip(),

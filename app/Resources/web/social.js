@@ -43,6 +43,19 @@ window.Social = (() => {
     return loading;
   }
 
+  // Notifications from the developer (the admin page): the newest 100 and how many are unread. Loaded when the line
+  // (re)connects and kept up by live events.
+  let N = null;
+  function loadNotes() {
+    return api('GET', 'v1/notifications').then((r) => {
+      if (r && !r.error) {
+        N = { list: r.notifications, unread: r.unread };
+        emit({ type: 'notes' });
+      }
+      return r;
+    });
+  }
+
   const friend = (id) => (S ? S.friends.find((f) => f.id === id) : null);
   const drop = (list, id) => list.filter((r) => r.id !== id);
 
@@ -50,6 +63,7 @@ window.Social = (() => {
   function event(ev) {
     if (!ev || !ev.type) return;
     // (Re)connected: anything that happened while the line was down is in a fresh snapshot.
+    if (ev.type === 'hello') loadNotes();
     if (ev.type === 'hello' || !S) {
       load().then(() => emit(ev));
       return;
@@ -96,6 +110,19 @@ window.Social = (() => {
         if (f) f.unread = 0;
         break;
       }
+      case 'notification':
+        if (N && !N.list.some((n) => n.id === ev.notification.id)) {
+          N.list.unshift(ev.notification);
+          N.unread++;
+        }
+        break;
+      case 'notification_gone':
+        if (N) {
+          const gone = N.list.find((n) => n.id === ev.id);
+          N.list = N.list.filter((n) => n.id !== ev.id);
+          if (gone && !gone.read) N.unread--;
+        }
+        break;
       // A friend's new level, sent quietly (no notice): whatever shows them updates.
       case 'friend_xp': {
         const f = friend(ev.id);
@@ -114,6 +141,19 @@ window.Social = (() => {
     event,
     on: (f) => (subs.add(f), () => subs.delete(f)),
     state: () => S,
+    notes: () => N,
+    loadNotes,
+    unreadNotes: () => (N ? N.unread : 0),
+    // All of yours read (the notifications view is open).
+    readNotes: () =>
+      api('POST', 'v1/notifications/read', {}).then((r) => {
+        if (!r.error && N) {
+          N.list.forEach((n) => (n.read = true));
+          N.unread = 0;
+          emit({ type: 'notes' });
+        }
+        return r;
+      }),
     friend,
     unread: () => (S ? S.friends.reduce((n, f) => n + (f.unread || 0), 0) : 0),
     requests: () => (S ? S.incoming.length : 0),

@@ -88,7 +88,8 @@ window.GitView = (() => {
 
   // ---------- the frame: activity bar, side bar (CHANGES and GRAPH), editor ----------
   // The activity bar switches what the dashboard's middle shows: the dashboard, Source Control (here), friends and
-  // messages, the leaderboard or the themes (cloud.js); feedback, at its foot, opens its window over whatever shows.
+  // messages, the leaderboard, the themes or the notifications (cloud.js); feedback, at its foot, opens its window over
+  // whatever shows.
   const bar = document.createElement('nav');
   bar.id = 'activity';
   bar.innerHTML =
@@ -97,6 +98,7 @@ window.GitView = (() => {
     `<a class="vs-ab" data-view="friends" title="Friends and messages">${ci('organization')}<b class="vs-badge" hidden></b></a>` +
     `<a class="vs-ab" data-view="board" title="Leaderboard">${ci('trophy')}</a>` +
     `<a class="vs-ab" data-view="themes" title="Themes">${ci('symbol-color')}</a>` +
+    `<a class="vs-ab" data-view="notifications" title="Notifications">${ci('bell')}<b class="vs-badge" hidden></b></a>` +
     `<a class="vs-ab vs-ab-foot" data-view="feedback" title="Send feedback to the developer">${ci('feedback')}</a>`;
   app.appendChild(bar);
   const view = document.createElement('section');
@@ -181,12 +183,12 @@ window.GitView = (() => {
   }
 
   const unique = (files) => new Set(files.map((f) => f.path)).size;
+  // The changed files' count, on Source Control's own icon only (friends and notifications have theirs, cloud.js).
   function badge() {
     const n = repos.reduce((a, r) => a + unique(r.files), 0);
-    for (const b of document.querySelectorAll('#activity .vs-badge')) {
-      b.hidden = !n;
-      b.textContent = n > 99 ? '99+' : n;
-    }
+    const b = bar.querySelector('[data-view=git] .vs-badge');
+    b.hidden = !n;
+    b.textContent = n > 99 ? '99+' : n;
   }
 
   // ---------- CHANGES: VS Code's tree ----------
@@ -1092,11 +1094,12 @@ window.GitView = (() => {
   }
 
   const mark = (v) => bar.querySelectorAll('.vs-ab').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
-  // One of the activity bar's views: Source Control's here; friends, the leaderboard's and the themes' in cloud.js.
+  // One of the activity bar's views: Source Control's here; friends, the leaderboard, the themes and the notifications
+  // in cloud.js.
   function switchTo(v) {
     if (v === 'feedback') return window.Cloud?.openFeedback();
     setOpen(v === 'git');
-    if (v === 'friends' || v === 'board' || v === 'themes') {
+    if (['friends', 'board', 'themes', 'notifications'].includes(v)) {
       window.Cloud?.showView(v);
       mark(v);
     } else window.Cloud?.showView(null);

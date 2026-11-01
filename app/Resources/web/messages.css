@@ -55,9 +55,10 @@
 .mb-actions button.go:hover { background: var(--accent-soft); color: var(--ink); }
 
 /* thin strips, no buttons (a click opens what they're about): a friend came online, a new version of the app */
-.mb.peek.online, .mb.peek.update { width: auto; max-width: 372px; cursor: pointer; }
-.mb.online .mb-head, .mb.update .mb-head { padding-right: 12px; }
-.mb.online:hover, .mb.update:hover { filter: brightness(1.15); }
+.mb.peek.online, .mb.peek.update, .mb.peek.note { width: auto; max-width: 372px; cursor: pointer; }
+.mb.online .mb-head, .mb.update .mb-head, .mb.note .mb-head { padding-right: 12px; }
+.mb.online:hover, .mb.update:hover, .mb.note:hover { filter: brightness(1.15); }
+.mb.note .mb-who small { white-space: normal; }
 .mb.online { --glow: var(--green-rgb); }
 .mb.online .mb-tag { background: var(--green); }
 .mb.update { --glow: var(--cyan-rgb); }

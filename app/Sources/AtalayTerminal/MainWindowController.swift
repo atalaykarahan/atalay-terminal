@@ -127,6 +127,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.showDashboard()
             self?.radar.push("openProfile", "null")
         }
+        // A notification from the developer was clicked: the dashboard in front, on the notifications.
+        MessagePanel.onOpenNotifications = { [weak self] in
+            self?.showDashboard()
+            self?.radar.push("openView", "\"notifications\"")
+        }
         if UserDefaults.standard.bool(forKey: "sidebarHidden") { side.isHidden = true }
     }
 

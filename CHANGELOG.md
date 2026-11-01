@@ -3,6 +3,14 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.12.0
+
+- Notifications: news from the developer on the dashboard's left edge (the bell shows how many are unread); a new one shows in the corner at once, even with the app in the background
+- Updates: a new version downloads by itself and installs when you step away for 10 minutes (or when you quit), your chats keep running; Settings has "check for updates", "update now" and "install updates right away"
+- XP: a version a newer one replaced more than a day ago earns no XP until it updates; the update button says so
+- Left edge: the friends icon no longer shows Source Control's count of changed files now and then
+- Friends: no more "is now online" notices (they came again whenever a friend's connection dropped); answering a message from the corner box marks it read
+
 ## 0.11.0
 
 - Terminals: Claude's output no longer stutters while it streams, each frame shows whole

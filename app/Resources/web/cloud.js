@@ -1,7 +1,7 @@
 'use strict';
 
 // Hacker name (asked once, on first launch), the main menu (your profile, settings, your status), friends and messages,
-// the leaderboard and the themes (views of the activity bar, git.js), feedback and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
+// the leaderboard, the themes and the notifications (views of the activity bar, git.js), feedback and app updates. Your level and rank (xp.js) show in the top bar and on your profile. Names can repeat: the API gives every Mac a
 // tag (#0427) and name + tag is unique, like Discord. Swift's Cloud talks to the API, pushes its state through
 // window.__radar.cloud and answers the page through the "cloud" handler (with replies).
 window.Cloud = (() => {
@@ -89,12 +89,18 @@ window.Cloud = (() => {
     b.hidden = !(S.update || busy);
     b.disabled = busy;
     b.classList.toggle('busy', busy);
+    // A day after a newer version came out, an older one earns no XP (the API): the button says so.
+    b.classList.toggle('paused', !busy && !!S.xpPaused);
     // Short label so the top bar fits; the version and progress are in the tooltip and in settings.
-    setHTML(b, `${ARROW}<span>${busy ? 'updating…' : 'update'}</span>`);
+    setHTML(b, `${ARROW}<span>${busy ? 'updating…' : S.xpPaused ? 'update · XP paused' : 'update'}</span>`);
     b.title = busy
       ? S.updating
       : S.update
-        ? `Version ${S.update.version} is out · click to see what's new`
+        ? S.xpPaused
+          ? `Version ${S.update.version} is out · XP is paused until you update · click to see what's new`
+          : S.updateReady
+            ? `Version ${S.update.version} is ready · it installs when you step away, your chats keep running · click to see what's new`
+            : `Version ${S.update.version} is out · click to see what's new`
         : '';
   }
 
@@ -843,12 +849,15 @@ window.Cloud = (() => {
   });
 
   function badges() {
-    const n = Social.unread() + Social.requests();
-    for (const b of [brand.querySelector('.bdg'), document.querySelector('#activity [data-view=friends] .vs-badge')]) {
-      if (!b) continue;
-      b.textContent = n > 99 ? '99+' : n;
-      b.hidden = !n;
-    }
+    const n = Social.unread() + Social.requests(), notes = Social.unreadNotes();
+    const show = (b, k) => {
+      if (!b) return;
+      b.textContent = k > 99 ? '99+' : k;
+      b.hidden = !k;
+    };
+    show(brand.querySelector('.bdg'), n);
+    show(document.querySelector('#activity [data-view=friends] .vs-badge'), n);
+    show(document.querySelector('#activity [data-view=notifications] .vs-badge'), notes);
     const me = brand.querySelector('.bme');
     const st = Social.state()?.me?.status;
     me.hidden = !st;
@@ -856,18 +865,33 @@ window.Cloud = (() => {
   }
   Social.on(() => renderSocial());
 
-  // Settings stay plain: the version, and an update button only when there is one.
+  // Settings: the version and its updates. They download by themselves and go in when you step away (or at once, with
+  // the switch); "check for updates" asks now, "update now" shows what's new and restarts into it.
   function renderInfo() {
     const el = q('.hk-info');
     if (!el) return;
-    const extra = S.updating
+    const status = S.updating
       ? `<em>${esc(S.updating)}</em>`
       : S.update
-        ? `<button type="button" class="hk-upd">update to ${esc(S.update.version)}</button>`
-        : '';
-    setHTML(el, `<div class="hk-row"><span>version</span><div class="hk-val"><b>${esc(S.version || '?')}</b>${extra}</div></div>`);
-    const b = el.querySelector('.hk-upd');
-    if (b) b.onclick = openUpdate;
+        ? `<em class="${S.xpPaused ? 'bad' : ''}">${esc(S.update.version)} ${S.updateReady ? 'ready · installs when you step away' : 'is out · downloading'}${S.xpPaused ? ' · XP paused until then' : ''}</em>`
+        : S.checking
+          ? '<em class="dim">checking…</em>'
+          : S.checkedAt
+            ? `<em class="dim">up to date · checked ${ago(S.checkedAt)}</em>`
+            : '';
+    setHTML(
+      el,
+      `<div class="hk-row"><span>version</span><div class="hk-val"><b>${esc(S.version || '?')}</b>${status}</div></div>` +
+        '<div class="hk-row"><span>updates<small>they download by themselves and install when you step away · your chats keep running</small></span><div class="hk-val">' +
+        `<button type="button" class="hk-upd hk-check"${S.checking || S.updating ? ' disabled' : ''}>check for updates</button>` +
+        `${S.update && !S.updating ? '<button type="button" class="hk-upd hk-now">update now</button>' : ''}</div></div>` +
+        `<div class="hk-row"><span>install updates right away<small>off: an update waits until you're away for 10 minutes</small></span>` +
+        `<button type="button" class="hk-sw upd${S.updateRightAway ? ' on' : ''}" role="switch" aria-checked="${!!S.updateRightAway}" title="Install updates as soon as they're downloaded"><i></i></button></div>`,
+    );
+    el.querySelector('.hk-check').onclick = () => call('checkUpdate').then((s) => s && render(s)).catch(() => toast(errorText('offline')));
+    const now = el.querySelector('.hk-now');
+    if (now) now.onclick = openUpdate;
+    el.querySelector('.hk-sw.upd').onclick = () => call('updateRightAway', { on: !S.updateRightAway }).then((s) => s && render(s));
   }
 
 
@@ -962,7 +986,7 @@ window.Cloud = (() => {
 
   // ---------- the activity bar's views (git.js): the leaderboard and the themes, where the dashboard's middle is ----------
   const views = {};
-  for (const v of ['friends', 'board', 'themes']) {
+  for (const v of ['friends', 'board', 'themes', 'notifications']) {
     const el = document.createElement('section');
     el.id = `${v}-view`;
     el.className = 'cv';
@@ -1013,6 +1037,42 @@ window.Cloud = (() => {
       if (e.key === 'Enter') request();
     });
   }
+  // Notifications from the developer (the admin page), newest first. The ones you hadn't read when the view opened keep
+  // their NEW mark while it stays open; opening it reads them all.
+  views.notifications.innerHTML =
+    '<section class="panel cv-notes"><header><span class="tag">notifications</span><span class="meta"></span></header><div class="body nt-list"></div></section>';
+  let fresh = new Set();
+  function renderNotes() {
+    const N = Social.notes();
+    const el = views.notifications.querySelector('.nt-list');
+    setText(views.notifications.querySelector('.meta'), N ? `${N.list.length} from the developer` : '');
+    if (!N) return setHTML(el, `<div class="mn-empty">${S && S.reachable ? 'loading…' : "can't reach the server · notifications come back with the connection"}</div>`);
+    setHTML(el, N.list.length
+      ? N.list.map((n) =>
+          `<div class="nt-item${fresh.has(n.id) ? ' new' : ''}"><div class="nt-head"><b>${esc(n.title)}</b>${fresh.has(n.id) ? '<em>NEW</em>' : ''}` +
+          `<span class="nt-time" title="${esc(new Date(n.at).toLocaleString())}">${ago(n.at)}</span></div>` +
+          `${n.body ? `<div class="nt-body">${esc(n.body)}</div>` : ''}</div>`).join('')
+      : '<div class="mn-empty">no notifications yet · news from the developer shows up here</div>');
+  }
+  function openNotes() {
+    const N = Social.notes();
+    fresh = new Set(N ? N.list.filter((n) => !n.read).map((n) => n.id) : []);
+    renderNotes();
+    if (!N) Social.loadNotes();
+    else if (N.unread) Social.readNotes();
+  }
+  Social.on((ev) => {
+    if (ev.type === 'notification' && shown === 'notifications') {
+      fresh.add(ev.notification.id);
+      Social.readNotes();
+    }
+    if (shown === 'notifications' && (ev.type === 'notes' || ev.type === 'notification' || ev.type === 'notification_gone')) {
+      // Loaded while the view was open: whatever was unread is new now.
+      if (ev.type === 'notes' && !fresh.size && Social.unreadNotes()) return openNotes();
+      renderNotes();
+    }
+  });
+
   let shown = null;
   function showView(v) {
     if (v === shown) return;
@@ -1027,6 +1087,7 @@ window.Cloud = (() => {
     }
     if (v === 'board') loadBoard();
     if (v === 'themes') openThemes();
+    if (v === 'notifications') openNotes();
   }
 
   function close() {
@@ -1069,6 +1130,7 @@ window.Cloud = (() => {
     close();
   });
   refresh();
+  Social.loadNotes();
 
   return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView };
 })();
