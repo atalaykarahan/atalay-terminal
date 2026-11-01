@@ -32,7 +32,8 @@
 - **Levels**: the time you actively work earns XP, ranks go from Academy Student to Kage, and a leaderboard shows the
   week.
 
-macOS 13 or later, Apple Silicon and Intel. Works with Claude Code; not affiliated with Anthropic.
+macOS 13 or later, Apple Silicon and Intel. A Windows version is being built in [`windows/`](windows/) (not released
+yet). Works with Claude Code; not affiliated with Anthropic.
 
 ## Privacy
 

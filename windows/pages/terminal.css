@@ -1,0 +1,14 @@
+/* A chat or terminal window: a strip with its name and status over the terminal, in the theme's colours (the app
+   inserts the theme's tokens, Themes). */
+html, body { height: 100%; margin: 0; }
+body { display: flex; flex-direction: column; overflow: hidden; background: var(--code-bg, #251200); color: var(--txt, #f5ebe0); font: 12px "Cascadia Mono", Consolas, monospace; }
+#hud { display: flex; align-items: center; gap: 10px; height: 32px; flex: none; padding: 0 10px; border-bottom: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.32); background: linear-gradient(rgba(var(--accent-rgb, 248, 128, 8), 0.1), transparent); }
+#dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st, var(--dim, #8f7a66)); box-shadow: 0 0 6px var(--st, transparent); }
+#title { overflow: hidden; color: var(--hi, #fff8f0); white-space: nowrap; text-overflow: ellipsis; }
+#status { color: var(--st, var(--dim, #8f7a66)); font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
+#where { flex: 1; overflow: hidden; color: var(--dim, #8f7a66); white-space: nowrap; text-overflow: ellipsis; }
+#hud button { height: 22px; padding: 0 10px; border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.45); border-radius: 4px; background: transparent; color: var(--accent-soft, #ffb057); font: inherit; cursor: pointer; }
+#hud button:hover { border-color: var(--accent, #f88008); color: var(--hi, #fff8f0); }
+#hud #end:hover { border-color: var(--red, #ff4d4d); color: var(--red, #ff4d4d); }
+#term { flex: 1; min-height: 0; padding: 6px 4px 4px 8px; }
+.xterm .xterm-viewport { scrollbar-color: rgba(var(--accent-rgb, 248, 128, 8), 0.35) transparent; }

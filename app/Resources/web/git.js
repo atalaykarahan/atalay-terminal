@@ -37,6 +37,8 @@ window.GitView = (() => {
     trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
+  // The command key as this platform names it (the Windows app sets __platform).
+  const MOD = window.__platform === 'win32' ? 'Ctrl+' : '⌘';
   const ci = (n, cls = '') => `<i class="vs-ci${cls ? ` ${cls}` : ''}">${ch(n)}</i>`;
 
   // File icons from the Material Icon Theme (git-icons.js), matched as VS Code does: the file's name, then its longest
@@ -219,7 +221,7 @@ window.GitView = (() => {
   function inputRow(r, depth) {
     const body =
       `<div class="vs-input"><div class="vs-editor"><textarea class="vs-msg" rows="1" data-root="${esc(r.root)}" spellcheck="false" ` +
-      `placeholder="Message (⌘Enter to commit on &quot;${esc(r.branch)}&quot;)">${esc(drafts.get(r.root) || '')}</textarea></div></div>`;
+      `placeholder="Message (${MOD}Enter to commit on &quot;${esc(r.branch)}&quot;)">${esc(drafts.get(r.root) || '')}</textarea></div></div>`;
     return row('vs-nh vs-inp', null, depth, null, body, ` data-root="${esc(r.root)}"`);
   }
 
@@ -634,7 +636,7 @@ window.GitView = (() => {
     edEl.innerHTML =
       `<div class="vs-tabs"><div class="vs-tab" title="${esc(`${r?.path || editor.root}/${editor.path}`)}">${fileIcon(editor.path)}<span class="vs-tl" style="color:${color}">${esc(title())}</span>` +
       `<span class="vs-tdeco" style="color:${color}">${esc(letter || '')}</span>` +
-      `<div class="vs-ta"><a class="vs-al" data-act="close-editor" title="Close (⌘W)">${ci('close')}</a></div></div>` +
+      `<div class="vs-ta"><a class="vs-al" data-act="close-editor" title="Close (${MOD}W)">${ci('close')}</a></div></div>` +
       `<div class="vs-eda"><a class="vs-al" data-act="open-file" title="Open File">${ci('go-to-file')}</a>` +
       `<a class="vs-al" data-act="prev-change" title="Previous Change">${ci('arrow-up')}</a><a class="vs-al" data-act="next-change" title="Next Change">${ci('arrow-down')}</a>` +
       `<a class="vs-al${st.ignoreTrim ? '' : ' on'}" data-act="toggle-whitespace" title="Show Leading/Trailing Whitespace Differences">${ci('whitespace')}</a>` +

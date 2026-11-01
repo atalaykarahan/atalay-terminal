@@ -5,12 +5,15 @@
 // tag (#0427) and name + tag is unique, like Discord. Swift's Cloud talks to the API, pushes its state through
 // window.__radar.cloud and answers the page through the "cloud" handler (with replies).
 window.Cloud = (() => {
+  // The computer and the command key, as this platform names them (the Windows app sets __platform, preload.js).
+  const MACHINE = window.__platform === 'win32' ? 'PC' : 'Mac';
+  const MOD = window.__platform === 'win32' ? 'Ctrl+' : '⌘';
   const call = (type, payload) => window.webkit.messageHandlers.cloud.postMessage(Object.assign({ type }, payload || {}));
   const MAX = 16;
   const ERRORS = {
     name_full: 'too many hackers use this name · try another',
     offline: "can't reach the server · try again",
-    unauthorized: 'this Mac lost its sign-in · restart the app',
+    unauthorized: `this ${MACHINE} lost its sign-in · restart the app`,
   };
   const errorText = (code) => ERRORS[code] || `didn't work (${code})`;
   // The app moves the chat windows pinned above the dashboard out of the way while a menu is open.
@@ -221,7 +224,7 @@ window.Cloud = (() => {
         return f.nudge();
       }
       if (r.queued) {
-        toast("saved on this Mac · syncs when you're back online");
+        toast(`saved on this ${MACHINE} · syncs when you're back online`);
         return close();
       }
       done(name);
@@ -245,7 +248,7 @@ window.Cloud = (() => {
           <p class="hk-status"></p>
           <p class="hk-hint">2–${MAX} characters · letters, digits, spaces, _ . - · plus a #tag</p>
         </div>
-        <div class="pk-foot"><span class="pk-sel note">no signup · tied to this Mac</span><button class="pk-ok" disabled>enter ⏎</button></div>
+        <div class="pk-foot"><span class="pk-sel note">no signup · tied to this ${MACHINE}</span><button class="pk-ok" disabled>enter ⏎</button></div>
       </div>`;
     const ok = q('.pk-ok');
     const f = nameField(root, null, (ready) => (ok.disabled = !ready));
@@ -349,7 +352,7 @@ window.Cloud = (() => {
         <div class="hk-body">
           <label class="hk-field fbk-field"><textarea class="fbk-in" maxlength="${FEEDBACK_MAX}" placeholder="A bug, an idea, something that bothers you…&#10;It goes straight to the developer with your name#tag, no e-mail needed."></textarea></label>
         </div>
-        <div class="pk-foot"><span class="pk-sel hk-status fbk-status"></span><button class="pk-ok fbk-send" title="⌘↩" disabled>send</button></div>
+        <div class="pk-foot"><span class="pk-sel hk-status fbk-status"></span><button class="pk-ok fbk-send" title="${MOD}↩" disabled>send</button></div>
       </div>`;
     const $ = (sel) => root.querySelector(sel);
     const box = $('.fbk-in'), send = $('.fbk-send'), status = $('.fbk-status');
@@ -384,7 +387,7 @@ window.Cloud = (() => {
     };
     send.onclick = submit;
     box.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.metaKey) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         submit();
       }

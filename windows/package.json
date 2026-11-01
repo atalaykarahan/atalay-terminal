@@ -1,0 +1,70 @@
+{
+  "name": "atalay-terminal",
+  "productName": "Atalay's Terminal",
+  "version": "0.1.0",
+  "description": "A HUD for running many Claude Code sessions: every session on a live orbit map, each chat in its own window",
+  "author": "atalay karahan",
+  "license": "MIT",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.11",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.atalaykarahan.atalay-terminal",
+    "productName": "Atalay's Terminal",
+    "artifactName": "Atalays-Terminal-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**",
+      "pages/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../app/Resources/web",
+        "to": "web"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "Atalay's Terminal"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "atalaykarahan",
+      "repo": "atalay-terminal-releases"
+    }
+  }
+}

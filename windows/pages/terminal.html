@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atalay's Terminal</title>
+<link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+<link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+<header id="hud">
+  <span id="dot"></span>
+  <b id="title">terminal</b>
+  <span id="status"></span>
+  <span id="where"></span>
+  <button id="dash" type="button" title="Back to the dashboard (this keeps running)">dashboard</button>
+  <button id="end" type="button" title="End this terminal">end</button>
+</header>
+<main id="term"></main>
+<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+<script src="../node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"></script>
+<script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+<script src="terminal.js"></script>
+</body>
+</html>
