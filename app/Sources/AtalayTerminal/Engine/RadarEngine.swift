@@ -56,7 +56,7 @@ final class RadarEngine {
     private var cpuSeen: [Int32: (ns: UInt64, at: Double)] = [:]
 
     init() {
-        claudeDir = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] ?? (HOME as NSString).appendingPathComponent(".claude")
+        claudeDir = CLAUDE_DIR
         projects = (claudeDir as NSString).appendingPathComponent("projects")
         registry = (claudeDir as NSString).appendingPathComponent("sessions")
     }
