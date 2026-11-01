@@ -1,5 +1,5 @@
 'use strict';
-// Writes src/clientkey.js from ATALAY_CLIENT_KEY ("keyid:hexsecret", a GitHub Actions secret): the key this build's API
+// Writes src/clientkey.js from ATALAY_CLIENT_KEY ("keyid:hexsecret", copied from the Mac; README): the key this build's API
 // calls are signed with (the API refuses unsigned calls). It goes in masked, as two byte strings that only give the key
 // back together, so it isn't a plain string in the app; never committed (.gitignore). Without the variable the build is
 // unsigned: the dashboard and terminals work, friends, messages and levels don't.

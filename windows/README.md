@@ -1,8 +1,8 @@
 # Atalay's Terminal for Windows
 
-**Work in progress, not released yet.** It's built in the open, like the rest of the app: GitHub Actions builds an
-installer for every push that touches it (the run's `atalay-terminal-windows` artifact), but there's no release and no
-update channel for it yet.
+**Work in progress, not released yet.** It's built in the open, like the rest of the app, but its installers are built
+on the Windows PC, not on GitHub, since they carry the app's API key (below). There's no release and no update channel
+for it yet.
 
 The Windows app: Electron around the same dashboard the Mac app shows (`app/Resources/web`, used as it is), with
 terminals from xterm.js and node-pty (ConPTY), the way VS Code runs its terminal on Windows. It talks to the same API
@@ -14,15 +14,16 @@ terminals from xterm.js and node-pty (ConPTY), the way VS Code runs its terminal
 cd windows
 npm install          # also builds node-pty for Electron (postinstall)
 npm start            # the app, from the sources
-npm run dist         # dist/Atalays-Terminal-Setup-<version>.exe (on Windows; GitHub Actions builds it on every push)
+npm run dist         # dist/Atalays-Terminal-Setup-<version>.exe (on Windows)
 ```
 
 `ATALAY_API_URL=http://127.0.0.1:4800 npm start` runs it against a local API.
 
-The installer's API calls are signed with a key of its own (the API refuses unsigned ones): GitHub Actions writes it into
-the build, masked, from the `ATALAY_CLIENT_KEY` secret, and the packaged app can't be run as plain Node, inspected or
-edited (Electron fuses). Before a release, `scripts/new-key.sh` (on the Mac with the admin token) makes a fresh key;
-the old one is revoked a month later, as the Mac app's are with every release.
+The app's API calls are signed with a key of its own (the API refuses unsigned ones). The key never goes to GitHub: it
+lives in `~/.atalay-terminal/client-key-windows` on the Mac (`scripts/new-key.sh` makes a fresh one before a release;
+the old one is revoked a month later) and is copied by hand to the Windows PC, where one command writes it, masked,
+into the gitignored `src/clientkey.js`: `$env:ATALAY_CLIENT_KEY="<key>"; node scripts/clientkey.js`. Then `npm start`
+and `npm run dist` there are signed. The packaged app can't be run as plain Node, inspected or edited (Electron fuses).
 
 ## How it's put together
 
