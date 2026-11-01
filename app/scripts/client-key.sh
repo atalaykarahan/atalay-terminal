@@ -1,7 +1,8 @@
 #!/bin/bash
 # The key released builds sign their API calls with (Sources/AtalayTerminal/ClientKey.swift; the API checks it in
-# src/clientauth.ts). It lives in ~/.atalay-terminal/client-key, never in the repository: this makes it once and
-# registers it with the API (scripts/release.sh runs it every time; registering it again changes nothing).
+# src/clientauth.ts). It lives in ~/.atalay-terminal/client-key, never in the repository: this makes it when there's
+# none and registers it with the API (registering it again changes nothing). scripts/release.sh puts the old one aside
+# first (scripts/rotate-key.sh), so every release has a key of its own; ATALAY_CLIENT_KEY_LABEL names it.
 #   scripts/client-key.sh                                        production
 #   ATALAY_API_URL=http://127.0.0.1:4800 scripts/client-key.sh   the local API, with ~/.atalay-terminal/client-key-staging
 # A key that leaked: retire it (DELETE /v1/admin/client-keys/<id>), delete the file and release again.
@@ -29,7 +30,7 @@ ID=$(cut -d: -f1 "$FILE")
 
 # The key and the admin token go through stdin and a file descriptor, not the command line (others can read arguments).
 auth() { printf 'authorization: Bearer %s\n' "$TOKEN"; }
-python3 - "$FILE" "$(hostname -s) $(date +%F)" <<'PY' |
+python3 - "$FILE" "${ATALAY_CLIENT_KEY_LABEL:-$(hostname -s) $(date +%F)}" <<'PY' |
 import json, sys
 kid, secret = open(sys.argv[1]).read().strip().split(':')
 print(json.dumps({"secret": secret, "label": sys.argv[2]}))

@@ -19,6 +19,11 @@ npm run dist         # dist/Atalays-Terminal-Setup-<version>.exe (on Windows; Gi
 
 `ATALAY_API_URL=http://127.0.0.1:4800 npm start` runs it against a local API.
 
+The installer's API calls are signed with a key of its own (the API refuses unsigned ones): GitHub Actions writes it into
+the build, masked, from the `ATALAY_CLIENT_KEY` secret, and the packaged app can't be run as plain Node, inspected or
+edited (Electron fuses). Before a release, `scripts/new-key.sh` (on the Mac with the admin token) makes a fresh key;
+the old one is revoked a month later, as the Mac app's are with every release.
+
 ## How it's put together
 
 The dashboard's pages call the app through `window.webkit.messageHandlers.<name>.postMessage(...)`, as WKWebView has it

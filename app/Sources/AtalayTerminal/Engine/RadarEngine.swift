@@ -1176,12 +1176,27 @@ final class RadarEngine {
         item.title = ""
         item.lastPrompt = ""
         // The first record's cwd is where the chat started; `claude --resume` must run from there,
-        // later records follow any `cd` the session made.
+        // later records follow any `cd` the session made. A resumed or compacted conversation can open with records
+        // that have none (a long summary, file snapshots), well past the first 64 KB: the head is read in steps, up to
+        // 8 MB, until a record with a cwd turns up. Stopping short made the chat resume in its last folder instead.
         item.cwd = ""
-        for line in lines(from: 0, count: 64 << 10) where line.prefix(800).range(of: Data("\"cwd\":\"".utf8)) != nil {
-            if let rec = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let cwd = rec["cwd"] as? String {
-                item.cwd = cwd
-                break
+        var offset: UInt64 = 0
+        var rest = Data()
+        while item.cwd.isEmpty, offset < min(size, 8 << 20) {
+            try? fh.seek(toOffset: offset)
+            guard let chunk = try? fh.read(upToCount: 256 << 10), !chunk.isEmpty else { break }
+            offset += UInt64(chunk.count)
+            let data = rest + chunk
+            guard let nl = data.lastIndex(of: 10) else {
+                rest = data
+                continue
+            }
+            rest = Data(data[data.index(after: nl)...])
+            for line in data[..<nl].split(separator: 10) where line.prefix(800).range(of: Data("\"cwd\":\"".utf8)) != nil {
+                if let rec = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any], let cwd = rec["cwd"] as? String {
+                    item.cwd = cwd
+                    break
+                }
             }
         }
         scan(lines(from: size > 96 << 10 ? size - (96 << 10) : 0, count: 96 << 10))

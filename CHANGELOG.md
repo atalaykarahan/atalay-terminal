@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased (on the staging branch, out with the next version)
+
+- Chats: a long or resumed conversation resumes in the folder it started in (it could open in the last folder it worked in)
+
 ## 0.12.0
 
 - Notifications: news from the developer on the dashboard's left edge (the bell shows how many are unread); a new one shows in the corner at once, even with the app in the background

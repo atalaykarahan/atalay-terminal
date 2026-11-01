@@ -142,11 +142,13 @@ const cloud = createCloud({
   },
 });
 
-// The signing key this build's API calls carry (src/clientkey.json, written at build time and never committed).
+// The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed).
 function loadClientKey() {
   try {
-    const k = JSON.parse(fs.readFileSync(path.join(__dirname, 'clientkey.json'), 'utf8'));
-    return k && k.id && k.secret ? k : null;
+    const k = require('./clientkey');
+    const a = Buffer.from(k.a, 'base64'), b = Buffer.from(k.b, 'base64');
+    const secret = Buffer.from(a.map((x, i) => x ^ b[i])).toString('hex');
+    return k.id && secret ? { id: k.id, secret } : null;
   } catch {
     return null;
   }
