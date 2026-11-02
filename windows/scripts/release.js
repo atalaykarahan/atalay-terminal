@@ -150,11 +150,18 @@ let auth = '';
   }
 
   const title = "Atalay's Terminal for Windows";
+  // The page new users land on, so it walks them past the warnings an installer without a code signature still meets
+  // (the browser hasn't seen the file often, SmartScreen doesn't know its publisher).
   const body =
     `**${version}**\n\n${notes ? notes.split('\n').map((n) => `- ${n}`).join('\n') + '\n\n' : ''}` +
-    `Download **${STABLE}** below. Installed copies update themselves.\n\n` +
-    // Until the installer is code-signed, Windows doesn't know its publisher.
-    'Windows may say it protected your PC: click **More info**, then **Run anyway** (the installer isn\'t code-signed yet).';
+    '### Install\n\n' +
+    `1. Download **${STABLE}** below (Windows 10 or 11, 64-bit). If the browser says the file isn't commonly ` +
+    'downloaded, keep it (in Edge: **…** next to it, **Keep**, **Show more**, **Keep anyway**).\n' +
+    '2. Run it. If Windows says it protected your PC, click **More info**, then **Run anyway**: the installer isn\'t ' +
+    'code-signed yet. It installs for your Windows user only (no administrator needed) and opens the app.\n' +
+    '3. Chats need Claude Code on the PC (in PowerShell: `irm https://claude.ai/install.ps1 | iex`); Source Control ' +
+    'needs [Git for Windows](https://git-scm.com/download/win).\n\n' +
+    'Installed copies update themselves.';
   const release =
     current ||
     (await api('POST', '/releases', { tag_name: tag, name: title, body, prerelease: true, make_latest: 'false' }));
