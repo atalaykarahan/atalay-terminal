@@ -164,9 +164,14 @@ const cloud = createCloud({
   },
 });
 
-// The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed).
+// The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed). A run
+// from the sources against the local API (npm run staging) brings its own instead; a packaged app never reads one.
 function loadClientKey() {
   try {
+    if (!app.isPackaged && process.env.ATALAY_CLIENT_KEY_FILE) {
+      const [id, secret] = fs.readFileSync(process.env.ATALAY_CLIENT_KEY_FILE, 'utf8').trim().split(':');
+      return id && /^[0-9a-f]+$/i.test(secret || '') ? { id, secret } : null;
+    }
     const k = require('./clientkey');
     const a = Buffer.from(k.a, 'base64'), b = Buffer.from(k.b, 'base64');
     const secret = Buffer.from(a.map((x, i) => x ^ b[i])).toString('hex');

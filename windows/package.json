@@ -9,6 +9,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "staging": "node scripts/staging.js",
     "rebuild": "electron-rebuild -f -w node-pty",
     "dist": "electron-builder --win --publish never",
     "release": "node scripts/release.js"

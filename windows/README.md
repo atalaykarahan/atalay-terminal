@@ -13,11 +13,16 @@ terminals from xterm.js and node-pty (ConPTY), the way VS Code runs its terminal
 cd windows
 npm install          # node-pty comes prebuilt (N-API, loads in Electron as it is): nothing to compile
 npm start            # the app, from the sources
+npm run staging      # the same against the local API, never the live one (below)
 npm run dist         # dist/Atalays-Terminal-Setup-<version>.exe (on Windows)
 npm run release -- "what changed"     # a signed build, published as the update every installed copy takes
 ```
 
-`ATALAY_API_URL=http://127.0.0.1:4800 npm start` runs it against a local API.
+`npm run staging` is for trying things without touching real users' data, as the Mac's `dev.sh` and staging build
+are: the private API repo cloned as `api/` next to `app/` and `windows/` (gitignored there), running in Docker
+(`docker compose up -d` in `api/`, with an `ADMIN_TOKEN` of its own in `api/.env`). It registers a key of its own with
+that API (`~/.atalay-terminal/client-key-windows-staging`, so the release key in `src/clientkey.js` is never swapped)
+and keeps its own profile, so it runs next to the installed app.
 
 The app's API calls are signed with a key of its own (the API refuses unsigned ones). The key never goes to GitHub: it
 lives in `~/.atalay-terminal/client-key-windows` on the Mac (`scripts/new-key.sh` makes a fresh one before a release;
