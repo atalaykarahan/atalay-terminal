@@ -3,8 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
-## Unreleased (on the staging branch, out with the next version)
+## 0.12.1
 
+- Chats: Claude Code from its native installer is recognised: the mouse wheel scrolls its history, a paste goes in whole (a picture too) and a running chat comes back as a chat after a restart or an update
+- Chats: the end session, pin and dashboard buttons at the top right work at the first click
 - Chats: a long or resumed conversation resumes in the folder it started in (it could open in the last folder it worked in)
 
 ## 0.12.0
