@@ -86,16 +86,24 @@ const terminals = createTerminals({
     quitIfIdle();
   },
   // The session host keeps chats and terminals going without the app, as screen does on the Mac. Each build has its
-  // own, as there: the installed app's, a development run's (npm start).
+  // own, as there (the installed app's, a development run's), and so does a profile of its own (npm run staging's): a
+  // launch only ever brings back its own app's chats.
   host:
     process.platform === 'win32' && !PROBE
       ? {
-          name: `atalay-terminal-host-v1-${os.userInfo().username.replace(/[^\w.-]/g, '_')}${app.isPackaged ? '' : '-dev'}`,
+          name: `atalay-terminal-host-v1-${os.userInfo().username.replace(/[^\w.-]/g, '_')}${app.isPackaged ? '' : '-dev'}${profileSuffix()}`,
           dir: path.join(process.env.LOCALAPPDATA || app.getPath('temp'), 'atalay-terminal-host'),
           source: path.join(__dirname, 'host.cs'),
         }
       : null,
 });
+
+// "" for the app's usual profile, else a short mark of the one it was given (--user-data-dir).
+function profileSuffix() {
+  const own = app.getPath('userData').toLowerCase();
+  if (path.resolve(own) === path.resolve(path.join(app.getPath('appData'), app.getName())).toLowerCase()) return '';
+  return '-' + crypto.createHash('sha256').update(own).digest('hex').slice(0, 8);
+}
 
 // Closing the dashboard keeps the app and its chats going, as on the Mac, where the Dock brings it back (here, starting
 // the app again). With no chat or terminal left there's nothing to keep it for: it quits rather than stay on out of
