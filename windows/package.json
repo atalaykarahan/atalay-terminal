@@ -11,8 +11,7 @@
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w node-pty",
     "dist": "electron-builder --win --publish never",
-    "release": "electron-builder --win --publish always",
-    "postinstall": "electron-builder install-app-deps"
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -36,10 +35,13 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "npmRebuild": false,
     "files": [
       "src/**",
       "pages/**",
-      "package.json"
+      "package.json",
+      "!**/*.pdb",
+      "!node_modules/node-pty/prebuilds/darwin-*/**"
     ],
     "extraResources": [
       {
@@ -62,9 +64,8 @@
       "shortcutName": "Atalay's Terminal"
     },
     "publish": {
-      "provider": "github",
-      "owner": "atalaykarahan",
-      "repo": "atalay-terminal-releases"
+      "provider": "generic",
+      "url": "https://github.com/atalaykarahan/atalay-terminal-releases/releases/download/windows"
     },
     "electronFuses": {
       "runAsNode": false,

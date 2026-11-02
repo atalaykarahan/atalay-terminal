@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('atl', {
   on: (channel, fn) => TERM.test(channel) && ipcRenderer.on(channel, (_e, data) => fn(data)),
 });
 
+// WKWebView draws the Mac's thin overlay scrollbars; Chromium on Windows draws wide light ones, which glare in a dark
+// page wherever it left them alone (Source Control's lists). Thin ones in the theme's colours instead: an area that
+// hides its own keeps it hidden (its rule is more specific), and the terminal keeps xterm.js's.
+webFrame.insertCSS(':where(:not(.xterm *)){scrollbar-width:thin;scrollbar-color:var(--dim2) transparent}', { cssOrigin: 'author' });
+
 // The theme: before the page draws, and again when it changes.
 let themeKey = boot.css ? webFrame.insertCSS(boot.css, { cssOrigin: 'author' }) : null;
 ipcRenderer.on('atl:theme', (_e, css) => {

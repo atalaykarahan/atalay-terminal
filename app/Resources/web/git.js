@@ -37,8 +37,9 @@ window.GitView = (() => {
     trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
-  // The command key as this platform names it (the Windows app sets __platform).
-  const MOD = window.__platform === 'win32' ? 'Ctrl+' : '⌘';
+  // The command key as this platform names it (the Windows app sets __platform), and how its paths are written.
+  const WIN = window.__platform === 'win32';
+  const MOD = WIN ? 'Ctrl+' : '⌘';
   const ci = (n, cls = '') => `<i class="vs-ci${cls ? ` ${cls}` : ''}">${ch(n)}</i>`;
 
   // File icons from the Material Icon Theme (git-icons.js), matched as VS Code does: the file's name, then its longest
@@ -96,7 +97,7 @@ window.GitView = (() => {
   bar.id = 'activity';
   bar.innerHTML =
     `<a class="vs-ab on" data-view="dash" title="Dashboard">${ci('files')}</a>` +
-    `<a class="vs-ab" data-view="git" title="Source Control (⌃⇧G)">${ci('source-control')}<b class="vs-badge" hidden></b></a>` +
+    `<a class="vs-ab" data-view="git" title="Source Control (${window.__platform === 'win32' ? 'Ctrl+Shift+G' : '⌃⇧G'})">${ci('source-control')}<b class="vs-badge" hidden></b></a>` +
     `<a class="vs-ab" data-view="friends" title="Friends and messages">${ci('organization')}<b class="vs-badge" hidden></b></a>` +
     `<a class="vs-ab" data-view="board" title="Leaderboard">${ci('trophy')}</a>` +
     `<a class="vs-ab" data-view="themes" title="Themes">${ci('symbol-color')}</a>` +
@@ -163,10 +164,15 @@ window.GitView = (() => {
 
   // ---------- data ----------
   let loading = null;
+  // The Windows app found no git.exe (a Mac always has git).
+  let noGit = false;
   function load() {
     if (loading) return loading;
     loading = git('repos')
-      .then((r) => (repos = r.repos || []))
+      .then((r) => {
+        repos = r.repos || [];
+        noGit = !!r.noGit;
+      })
       .catch(() => (repos = []))
       .then(() => {
         loading = null;
@@ -263,12 +269,14 @@ window.GitView = (() => {
       `<div class="vs-res${f.status === 'D' ? ' strike' : ''}"><div class="vs-name"><div class="vs-il" data-l="${esc(f.status)}">` +
       `${fileIcon(f.path)}<span class="vs-lc"><span class="vs-ln">${esc(basename(f.path))}</span><span class="vs-ld">${esc(dirname(f.path))}</span></span>` +
       `<div class="vs-acts">${acts}</div></div></div>${claude}</div>`;
-    return row('vs-file', key, depth, null, body, ` data-root="${esc(r.root)}" data-path="${esc(f.path)}" data-staged="${f.staged ? 1 : 0}" title="${esc(`${r.path}/${f.path}`)} • ${STATUS[side][f.status] || f.status}"`);
+    return row('vs-file', key, depth, null, body, ` data-root="${esc(r.root)}" data-path="${esc(f.path)}" data-staged="${f.staged ? 1 : 0}" title="${esc(WIN ? `${r.path}\\${f.path.replace(/\//g, '\\')}` : `${r.path}/${f.path}`)} • ${STATUS[side][f.status] || f.status}"`);
   }
 
   function renderChanges() {
     if (!repos.length) {
-      changesEl.innerHTML = '<div class="vs-welcome">The repositories your Claude sessions and terminals work in show here.</div>';
+      changesEl.innerHTML = noGit
+        ? '<div class="vs-welcome">Git isn\'t installed on this PC: install Git for Windows (git-scm.com), then the repositories your Claude sessions and terminals work in show here.</div>'
+        : '<div class="vs-welcome">The repositories your Claude sessions and terminals work in show here.</div>';
       return;
     }
     // A message box keeps its text, cursor and focus across a refresh.

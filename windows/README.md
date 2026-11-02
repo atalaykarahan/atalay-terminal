@@ -1,8 +1,7 @@
 # Atalay's Terminal for Windows
 
 **Work in progress, not released yet.** It's built in the open, like the rest of the app, but its installers are built
-on the Windows PC, not on GitHub, since they carry the app's API key (below). There's no release and no update channel
-for it yet.
+and published on the Windows PC, not on GitHub's machines, since they carry the app's API key (below).
 
 The Windows app: Electron around the same dashboard the Mac app shows (`app/Resources/web`, used as it is), with
 terminals from xterm.js and node-pty (ConPTY), the way VS Code runs its terminal on Windows. It talks to the same API
@@ -12,18 +11,39 @@ terminals from xterm.js and node-pty (ConPTY), the way VS Code runs its terminal
 
 ```sh
 cd windows
-npm install          # also builds node-pty for Electron (postinstall)
+npm install          # node-pty comes prebuilt (N-API, loads in Electron as it is): nothing to compile
 npm start            # the app, from the sources
 npm run dist         # dist/Atalays-Terminal-Setup-<version>.exe (on Windows)
+npm run release -- "what changed"     # a signed build, published as the update every installed copy takes
 ```
 
 `ATALAY_API_URL=http://127.0.0.1:4800 npm start` runs it against a local API.
 
 The app's API calls are signed with a key of its own (the API refuses unsigned ones). The key never goes to GitHub: it
 lives in `~/.atalay-terminal/client-key-windows` on the Mac (`scripts/new-key.sh` makes a fresh one before a release;
-the old one is revoked a month later) and is copied by hand to the Windows PC, where one command writes it, masked,
-into the gitignored `src/clientkey.js`: `$env:ATALAY_CLIENT_KEY="<key>"; node scripts/clientkey.js`. Then `npm start`
-and `npm run dist` there are signed. The packaged app can't be run as plain Node, inspected or edited (Electron fuses).
+the old one is revoked a month later) and is copied by hand to the Windows PC, which keeps it like an SSH key in
+`~/.atalay-terminal/client-key-windows` (readable by its user only). `node scripts/clientkey.js` writes it from there
+(or from `$env:ATALAY_CLIENT_KEY`), masked, into the gitignored `src/clientkey.js`; then `npm start` and `npm run dist`
+there are signed. The packaged app can't be run as plain Node, inspected or edited (Electron fuses).
+
+### Releases and updates
+
+Installed copies look for updates every 30 minutes in the `windows` release of
+[atalay-terminal-releases](https://github.com/atalaykarahan/atalay-terminal-releases) (electron-updater; package.json's
+`publish`). It's a pre-release, so it never becomes the repo's latest, the Mac's `.dmg` link keeps working, and a newer
+Mac release can't hide the Windows files. An update downloads by itself and goes in when the app quits, or right away
+when nothing would be stopped by a restart and the PC has been left alone for 10 minutes (or "right away" is on in
+Settings). New users download `Atalays-Terminal-Setup.exe` from that release; it's always the newest.
+
+A release, on the Windows PC:
+
+1. On the Mac, `windows/scripts/new-key.sh`: a fresh key for this release (the old one stops working a month later, by
+   when every running copy has updated). Copy it, then here, without it ever showing:
+   `$env:ATALAY_CLIENT_KEY = (Get-Clipboard -Raw).Trim(); node scripts/clientkey.js --save; Remove-Item Env:ATALAY_CLIENT_KEY`
+2. Raise `version` in package.json.
+3. `npm run release -- "what changed" "what else"`: writes the key in, builds, and replaces the release's files
+   (`latest.yml`, the installer and its blockmap; `--dry-run` only shows them). It signs in to GitHub as git does on
+   this PC (or with `$env:GH_TOKEN`).
 
 ## How it's put together
 
@@ -36,17 +56,30 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/main.js` | windows, IPC between pages and the parts below, keys | MainWindowController, AppDelegate |
 | `src/preload.js` | `window.webkit.messageHandlers` over IPC, the values the Mac injects into pages | RadarView, Messages, Overlay |
 | `src/engine.js` | Claude Code's sessions and transcripts (`%USERPROFILE%\.claude`) into the dashboard's state | Engine/*.swift |
-| `src/terminals.js` | shells and Claude in ConPTY (node-pty), one per chat or terminal window | ChatTerminal, Detached |
+| `src/terminals.js` | shells and Claude in ConPTY, one per chat or terminal window, in the session host | ChatTerminal, Detached |
+| `src/host.cs`, `src/sessionhost.js` | the session host, which keeps them running without the app, and the app's line to it | Detached (screen) |
 | `src/git.js` | Source Control's requests: the repos, diffs, history, commit, push | Git.swift |
 | `src/cloud.js` | the API: hacker name, heartbeat (XP), friends and messages, the live socket, notifications | Cloud, Social, ClientKey |
 | `src/themes.js` | the themes: every colour token from a palette, into each page | Themes.swift |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
 | `pages/terminal.*` | a chat or terminal window: xterm.js and its header | ChatWindow |
 
+### The session host
+
+Windows has no `screen`, so the app brings its own: `src/host.cs`, compiled at first use by the C# compiler that comes
+with Windows (.NET Framework's `csc.exe`) into `%LOCALAPPDATA%\atalay-terminal-host`. Every chat and terminal runs in a
+pseudo console it holds, so the app can quit, update or crash and Claude keeps working; at the next launch the windows
+attach again (hidden, as on the Mac: a click on the dashboard opens one), starting from the end of the output the host
+kept. It runs outside the app's folder because an update's installer ends everything that runs from there; it ends by
+itself once its last session has and no app is connected, and uninstalling ends it (`build/installer.nsh`). The
+installed app and a development run (`npm start`) each have their own. Without it (it couldn't be built or started) the
+chats run in the app, through node-pty, and end with it.
+
 ## Not like the Mac app (yet)
 
-- Chats live as long as the app: Windows has no `screen`, so a session host that keeps them running after the app quits
-  comes later.
-- No three-finger click (Mac trackpads only): Ctrl+K opens the shortcut wheel.
+- Closing the dashboard keeps the app going while a chat or terminal runs (starting the app again brings it back, as
+  the Dock does on the Mac); with none, it quits.
+- No three-finger click (Mac trackpads only): Ctrl+K opens the shortcut wheel and Ctrl+N a new terminal, in the
+  terminal windows too (where they'd otherwise go to the shell).
 - No iTerm2: a chat started in another terminal shows on the dashboard and can be opened as a copy.
-- Updates come from GitHub releases (electron-updater), not from the API's offer, which is the Mac app's.
+- Updates come from the releases repo's `windows` release (above), not from the API's offer, which is the Mac app's.

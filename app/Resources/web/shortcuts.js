@@ -25,7 +25,9 @@
     if (parent) parent.appendChild(n);
     return n;
   };
-  const baseName = (p) => p.replace(/\/+$/, '').split('/').pop() || p;
+  // Windows (the Windows app sets __platform): "\" between a path's names, and Ctrl+K opens the wheel (no trackpad).
+  const WIN = window.__platform === 'win32';
+  const baseName = WIN ? (p) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p : (p) => p.replace(/\/+$/, '').split('/').pop() || p;
 
   async function loadSlots() {
     try {
@@ -107,7 +109,7 @@
 
     const hint = document.createElement('div');
     hint.className = 'hint';
-    hint.textContent = '4-finger click · keys 1–5 · right-click a folder to change it · esc';
+    hint.textContent = `${WIN ? 'Ctrl+K' : '4-finger click'} · keys 1–5 · right-click a folder to change it · esc`;
     pie.appendChild(hint);
     root.appendChild(pie);
     root.classList.add('on');
