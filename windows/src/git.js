@@ -62,6 +62,16 @@ function gitExecutable() {
   return executable;
 }
 
+// Whether there's a git to run, for Source Control to say so when there isn't. Missing, it's looked for again next
+// time: Git for Windows installed while the app runs is found in its usual place.
+function gitFound() {
+  if (!WIN) return true;
+  const exe = gitExecutable();
+  if (path.isAbsolute(exe) && fs.existsSync(exe)) return true;
+  executable = null;
+  return false;
+}
+
 // The environments git runs in: for changes, and for reads.
 function gitEnvironment(locks) {
   if (!environments) {
@@ -250,7 +260,8 @@ function repoRoot(dir) {
     if (!st || !st.isDirectory()) return null;
     const out = await read(dir, ['rev-parse', '--show-toplevel']);
     const r = out == null ? '' : out.trim();
-    return r || null;
+    // Git writes it with forward slashes on Windows too; the folder shows (and compares) as the system writes it.
+    return r ? path.normalize(r) : null;
   })();
   roots.set(dir, { root, at: now });
   return root;
@@ -594,7 +605,7 @@ function createGit({ folders = () => [], written = null, confirm = async () => -
   async function answer(body, src) {
     const type = str(body.type);
     const known = await repos(src);
-    if (type === 'repos') return { repos: known };
+    if (type === 'repos') return gitFound() ? { repos: known } : { repos: known, noGit: true };
     // Only today's repos: the page can't point git anywhere else.
     const root = typeof body.root === 'string' ? body.root : null;
     if (root == null || !known.some((r) => r.root === root)) return { error: 'unknown repo' };

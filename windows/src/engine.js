@@ -619,22 +619,27 @@ function alive(pid) {
   }
 }
 
-// Every process's parent, for telling the app's own chats from the rest. The Mac engine asks the kernel (Proc.swift);
-// Node has no such call, so this asks the system's process list, and only when a new Claude process shows up.
+// Every process's parent, for telling the app's own chats from the rest, and on Windows when each started (see
+// RadarEngine's `verified`). The Mac engine asks the kernel (Proc.swift); Node has no such call, so this asks the
+// system's process list, and only when a new Claude process shows up: { parents: pid -> ppid, starts: pid -> FILETIME }.
 function processTable() {
   return new Promise((resolve) => {
     const done = (err, out) => {
       if (err && !out) return resolve(null);
-      const table = new Map();
+      const parents = new Map();
+      const starts = new Map();
       for (const line of String(out).split(/\r?\n/)) {
-        const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-        if (m) table.set(Number(m[1]), Number(m[2]));
+        const m = /^\s*(\d+)\s+(\d+)(?:\s+(\d+))?\s*$/.exec(line);
+        if (!m) continue;
+        parents.set(Number(m[1]), Number(m[2]));
+        if (m[3]) starts.set(Number(m[1]), Number(m[3]));
       }
-      resolve(table.size ? table : null);
+      resolve(parents.size ? { parents, starts } : null);
     };
     if (WIN) {
       const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-      const script = "Get-CimInstance Win32_Process | ForEach-Object { [string]$_.ProcessId + ' ' + [string]$_.ParentProcessId }";
+      // The start as a FILETIME (100 ns since 1601, UTC), as Claude writes procStart; the system's own processes have none.
+      const script = "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $(if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { '' }) }";
       execFile(exe, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 20_000, maxBuffer: 8 << 20 }, done);
     } else {
       execFile('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 10_000, maxBuffer: 8 << 20 }, done);
@@ -644,11 +649,14 @@ function processTable() {
 
 // A process's parent, grandparent and so on, nearest first. Claude on Windows can sit a few levels under the shell
 // (claude.cmd -> cmd.exe -> node.exe).
-function ancestors(pid, table) {
+function ancestors(pid, parents) {
   const chain = [];
-  for (let p = table.get(pid); p > 0 && p !== pid && !chain.includes(p) && chain.length < 16; p = table.get(p)) chain.push(p);
+  for (let p = parents.get(pid); p > 0 && p !== pid && !chain.includes(p) && chain.length < 16; p = parents.get(p)) chain.push(p);
   return chain;
 }
+
+// Two process starts (FILETIMEs) are one when they're 2 ms apart at most: the process list has them to the microsecond.
+const sameStart = (a, b) => Math.abs(a - b) < 20_000;
 
 // ---------- model ----------
 // Shared counters for a session or one of its subagents (today only).
@@ -797,6 +805,11 @@ class RadarEngine {
     this.regCache = new Map();
     // Claude pid -> its parents, nearest first (see processTable).
     this.chains = new Map();
+    // Registry entry ("pid:procStart") -> whether the process under that pid is the Claude that wrote it. Windows gives
+    // a dead process's pid to a new one soon, so the file of a Claude that was killed would otherwise keep its session
+    // live for whatever runs under the pid now. `checking`: entries waiting for the next process list.
+    this.verified = new Map();
+    this.checking = new Set();
     this.procBusy = false;
     this.procRetryAt = 0;
     this.firstCwd = new Map();
@@ -1616,7 +1629,7 @@ class RadarEngine {
       }
       const cached = this.regCache.get(n);
       if (cached && cached.mtime === st.mtimeMs) {
-        if (!cached.chat || !alive(cached.pid)) continue;
+        if (!cached.chat || !this.running(cached.pid, cached.procStart)) continue;
         seen.add(cached.sid);
         const S = this.sessions.get(cached.sid);
         const owner = S ? S.pid : null;
@@ -1646,8 +1659,10 @@ class RadarEngine {
         const old = this.sessions.get(cached.sid);
         if (old) old.supersededBy = sid;
       }
-      this.regCache.set(n, { mtime: st.mtimeMs, sid, pid, chat });
-      if (!chat || !alive(pid)) continue;
+      // When this Claude's process started (a Windows FILETIME): see `verified`.
+      const procStart = WIN && typeof j.procStart === 'string' && /^\d+$/.test(j.procStart) ? j.procStart : null;
+      this.regCache.set(n, { mtime: st.mtimeMs, sid, pid, chat, procStart });
+      if (!chat || !this.running(pid, procStart)) continue;
       seen.add(sid);
       const S = this.session(sid);
       // A second live process on this conversation that was updated earlier doesn't take the card over.
@@ -1670,6 +1685,8 @@ class RadarEngine {
       if (!this.cursors.has(this.cursorKey(fp)) && fs.existsSync(fp)) this.pumpSoon(fp);
     }
     for (const n of this.regCache.keys()) if (!present.has(n)) this.regCache.delete(n);
+    const entries = new Set([...this.regCache.values()].map((c) => `${c.pid}:${c.procStart}`));
+    for (const key of this.verified.keys()) if (!entries.has(key)) this.verified.delete(key);
     for (const S of this.sessions.values()) {
       if (S.live && !seen.has(S.id)) {
         S.live = false;
@@ -1681,24 +1698,58 @@ class RadarEngine {
     }
   }
 
+  // A registry entry's Claude is running: its pid is alive and, where the entry says when that Claude started
+  // (procStart, on Windows), the process under the pid started then (see `verified`). An entry not matched to the
+  // process list yet waits for the next one (pollProcesses asks for it) instead of showing a session that may be a ghost.
+  running(pid, procStart) {
+    const key = `${pid}:${procStart}`;
+    if (!alive(pid)) {
+      this.verified.delete(key);
+      return false;
+    }
+    if (!procStart) return true;
+    const ok = this.verified.get(key);
+    if (ok !== undefined) return ok;
+    // No process list to be had for now (see pollProcesses): taken as it is.
+    if (Date.now() < this.procRetryAt) return true;
+    if (!this.checking.has(key)) {
+      this.checking.add(key);
+      // Asked for at once rather than at the next round, so a new chat shows within a moment.
+      setImmediate(() => !this.stopped && this.pollProcesses());
+    }
+    return false;
+  }
+
   // The Mac engine reads each live Claude's parent, terminal, CPU and memory from the kernel here. Node can't, so only
-  // the parents are looked up (once per Claude process, see processTable), for the app's own chats; cpu and mem stay 0
-  // and tty null, which the page shows as nothing.
+  // the parents are looked up (once per Claude process, see processTable), for the app's own chats, with when each
+  // started for the registry's new entries; cpu and mem stay 0 and tty null, which the page shows as nothing.
   pollProcesses() {
     const pids = new Set();
     for (const S of this.sessions.values()) if (S.live && S.pid != null) pids.add(S.pid);
     for (const pid of this.chains.keys()) if (!pids.has(pid)) this.chains.delete(pid);
-    const want = [...pids].filter((pid) => !this.chains.has(pid));
-    if (this.isAppPid && want.length && !this.procBusy && Date.now() >= this.procRetryAt) {
+    const want = this.isAppPid ? [...pids].filter((pid) => !this.chains.has(pid)) : [];
+    const check = [...this.checking];
+    if ((want.length || check.length) && !this.procBusy && Date.now() >= this.procRetryAt) {
       this.procBusy = true;
       processTable().then((table) => {
         this.procBusy = false;
         if (this.stopped) return;
+        // Without a process list the entries are taken as they are: better a ghost now and then than no sessions.
+        for (const key of check) {
+          const [pid, start] = key.split(':').map(Number);
+          const seen = table && table.starts.get(pid);
+          this.verified.set(key, !table || (seen !== undefined && sameStart(seen, start)));
+          this.checking.delete(key);
+        }
+        if (check.length) {
+          this.pollRegistry();
+          this.publishState();
+        }
         if (!table) {
           this.procRetryAt = Date.now() + 60_000;
           return;
         }
-        for (const pid of want) this.chains.set(pid, ancestors(pid, table));
+        for (const pid of want) this.chains.set(pid, ancestors(pid, table.parents));
         this.matchTabs();
       }, (e) => {
         this.procBusy = false;

@@ -40,20 +40,22 @@
   addEventListener('themechange', () => (term.options.theme = palette()));
   term.onResize(({ cols, rows }) => atl.send('term:resize', { cols, rows }));
   term.onData((data) => atl.send('term:input', data));
-  // Ctrl+C copies when something is selected (else it interrupts), Ctrl+V pastes: Windows Terminal's keys.
+  // Ctrl+C copies when something is selected (else it interrupts), Ctrl+V pastes: Windows Terminal's keys. The copy
+  // goes through the app, as the page's clipboard API refuses a window without focus. Ctrl+V only keeps xterm.js from
+  // sending ^V: the browser's own paste follows and xterm.js takes it (pasting here as well put everything in twice).
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown' || !e.ctrlKey || e.altKey) return true;
     const k = e.key.toLowerCase();
     if (k === 'c' && term.hasSelection()) {
-      navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      e.preventDefault();
+      atl.send('term:copy', term.getSelection());
       term.clearSelection();
       return false;
     }
-    if (k === 'v') {
-      navigator.clipboard.readText().then((t) => t && term.paste(t)).catch(() => {});
-      return false;
-    }
-    return true;
+    // Ctrl+N (a new terminal) and Ctrl+K (the shortcut wheel) are the app's, as ⌘N and ⌘K are on the Mac: left
+    // unhandled, they reach its menu instead of the shell.
+    if (!e.shiftKey && (k === 'n' || k === 'k')) return false;
+    return k !== 'v';
   });
   atl.on('term:data', (data) => term.write(data));
   atl.on('term:exit', () => term.write('\r\n\x1b[2m[ended]\x1b[0m\r\n'));

@@ -8,7 +8,15 @@
   const GLYPH = { home: '⌂', desktop: '▭', doc: '▤', down: '⇣', code: '⌥', recent: '✻' };
   // 4 above, 3 to the right, 4 below, 3 to the left; numbered along each side, left to right and top to bottom.
   const SIDES = [['top', 4], ['right', 3], ['bottom', 4], ['left', 3]];
-  const baseName = (p) => p.replace(/\/+$/, '').split('/').pop() || p;
+  // Windows paths (the Windows app sets __platform) have "\" between names, take "/" too, and start at a drive.
+  const WIN = window.__platform === 'win32';
+  const SEP = WIN ? '\\' : '/';
+  const baseName = WIN ? (p) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p : (p) => p.replace(/\/+$/, '').split('/').pop() || p;
+  // The folder a shown path is in, on Windows: `C:\Repos` for `C:\Repos\app`, a drive's root as `C:\`.
+  const winParent = (p) => {
+    const up = p.split(/[\\/]/).slice(0, -1).join(SEP);
+    return /^[A-Za-z]:$/.test(up) ? up + SEP : up;
+  };
   const note = (msg) => typeof toast === 'function' && toast(msg);
 
   const root = document.createElement('div');
@@ -37,7 +45,7 @@
         <div class="pk-border"></div>
         <div class="pk-title"><span class="lights"><i class="l-close" title="Cancel"></i><i class="l-min"></i><i class="l-max"></i></span><span class="hex">⬡</span><b>${esc(title)}</b><span class="for">${esc(forLabel)}</span></div>
         <div class="pk-bar">
-          <button class="pk-back" title="Back">‹</button><button class="pk-fwd" title="Forward">›</button><button class="pk-up" title="Enclosing folder (⌘↑)">↑</button>
+          <button class="pk-back" title="Back">‹</button><button class="pk-fwd" title="Forward">›</button><button class="pk-up" title="Enclosing folder (${WIN ? 'Ctrl+↑' : '⌘↑'})">↑</button>
           <div class="pk-crumbs"></div>
           <input class="pk-filter" placeholder="filter folders" spellcheck="false">
           <label class="pk-hid"><input type="checkbox"> hidden</label>
@@ -129,11 +137,13 @@
     if (!st?.cwd) return;
     const box = root.querySelector('.pk-crumbs');
     const shown = tild(st.cwd);
-    const parts = shown.split('/').filter((x, i) => x || i === 0);
+    // On Windows the first part is the drive ("C:"), whose crumb opens its root.
+    const parts = WIN ? shown.split(/[\\/]/).filter(Boolean) : shown.split('/').filter((x, i) => x || i === 0);
     let acc = shown.startsWith('~') ? st.home : '';
     box.innerHTML = '';
     parts.forEach((part, i) => {
       if (i === 0 && part === '~') acc = st.home;
+      else if (WIN) acc = i ? (acc.endsWith(SEP) ? acc : acc + SEP) + part : part + SEP;
       else acc = (acc === '/' ? '' : acc) + '/' + part;
       if (i) box.insertAdjacentHTML('beforeend', '<i>›</i>');
       const span = document.createElement('span');
@@ -154,7 +164,7 @@
     const row = (p, glyph, sub) => `<div class="pk-place${p.path === st.cwd ? ' on' : ''}" data-path="${esc(p.path)}" title="${esc(tild(p.path))}"><span class="gl">${glyph}</span><span>${esc(p.name)}${sub ? `<small>${esc(sub)}</small>` : ''}</span></div>`;
     side.innerHTML =
       '<div class="pk-h">FAVORITES</div>' + st.places.favorites.map((f) => row(f, GLYPH[f.icon] || '▸')).join('') +
-      (st.places.recents.length ? '<div class="pk-h">RECENT · CLAUDE</div>' + st.places.recents.map((r) => row(r, GLYPH.recent, `${tild(r.path).split('/').slice(0, -1).join('/') || '~'} · ${rel(r.t)}`)).join('') : '');
+      (st.places.recents.length ? '<div class="pk-h">RECENT · CLAUDE</div>' + st.places.recents.map((r) => row(r, GLYPH.recent, `${(WIN ? winParent(tild(r.path)) : tild(r.path).split('/').slice(0, -1).join('/')) || '~'} · ${rel(r.t)}`)).join('') : '');
     side.querySelectorAll('.pk-place').forEach((n) => (n.onclick = () => go(n.dataset.path, null)));
   }
 
@@ -227,7 +237,7 @@
     // Under the name, the folder it's in (the name is the path's end).
     const body = s
       ? `<svg class="fold" viewBox="0 0 24 24"><path class="fd-fill" d="${FOLDER}"/><path class="fd" d="${FOLDER}"/><text x="12" y="16.4">&gt;_</text></svg>
-         <span class="nm">${esc(s.name)}</span><span class="sub">${esc(shown.replace(/\/[^/]*$/, '') || '/')}</span>`
+         <span class="nm">${esc(s.name)}</span><span class="sub">${esc((WIN ? winParent(shown) || shown : shown.replace(/\/[^/]*$/, '')) || '/')}</span>`
       : `<svg class="plus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M7.5 12h9M12 7.5v9"/></svg>
          <span class="nm">${st.assign === i ? 'pick a folder' : 'add folder'}</span>`;
     return `<div class="${cls}${st.assign === i ? ' assigning' : ''}" data-i="${i}" data-side="${side}" title="${tip}"${anim}><span class="n">${i + 1}</span>${body}</div>`;

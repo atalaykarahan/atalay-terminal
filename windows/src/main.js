@@ -2,7 +2,7 @@
 // Atalay's Terminal for Windows: the Mac app's dashboard (app/Resources/web, unchanged) in Electron. This file is the
 // Mac app's MainWindowController and AppDelegate: the windows, the line between the pages and the parts that feed them
 // (engine.js, cloud.js, git.js, themes.js, terminals.js), the keys and the updates.
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen, powerMonitor, nativeTheme, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen, powerMonitor, nativeTheme, net, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -32,6 +32,9 @@ const PROBE = process.env.ATL_PROBE || '';
 if (process.platform !== 'win32') app.setPath('userData', path.join(app.getPath('appData'), 'atalay-terminal-windows-dev'));
 if (!app.requestSingleInstanceLock()) app.quit();
 nativeTheme.themeSource = 'dark';
+// The installer's shortcuts carry the app's id (build.appId in package.json) as their AppUserModelID; the windows must
+// too, or a pinned shortcut and the running app sit apart on the taskbar.
+if (process.platform === 'win32' && app.isPackaged) app.setAppUserModelId('com.atalaykarahan.atalay-terminal');
 
 // ---------- settings: a small JSON file in the app's data folder ----------
 const SETTINGS = path.join(app.getPath('userData'), 'settings.json');
@@ -73,14 +76,41 @@ const terminals = createTerminals({
   onData: (id, data) => send(chats.get(id)?.win, 'term:data', data),
   onExit(id) {
     const c = chats.get(id);
-    if (!c) return;
-    send(c.win, 'term:exit');
-    // A plain terminal closes with its shell; a chat's window stays to show how it ended until it's closed.
-    if (!c.claude && c.win && !c.win.isDestroyed()) c.win.destroy();
-    chats.delete(id);
-    toDash(`terminalGone(${JSON.stringify(id)})`);
+    if (c) {
+      send(c.win, 'term:exit');
+      // A plain terminal closes with its shell; a chat's window stays to show how it ended until it's closed.
+      if (!c.claude && c.win && !c.win.isDestroyed()) c.win.destroy();
+      chats.delete(id);
+      toDash(`terminalGone(${JSON.stringify(id)})`);
+    }
+    quitIfIdle();
   },
+  // The session host keeps chats and terminals going without the app, as screen does on the Mac. Each build has its
+  // own, as there (the installed app's, a development run's), and so does a profile of its own (npm run staging's): a
+  // launch only ever brings back its own app's chats.
+  host:
+    process.platform === 'win32' && !PROBE
+      ? {
+          name: `atalay-terminal-host-v1-${os.userInfo().username.replace(/[^\w.-]/g, '_')}${app.isPackaged ? '' : '-dev'}${profileSuffix()}`,
+          dir: path.join(process.env.LOCALAPPDATA || app.getPath('temp'), 'atalay-terminal-host'),
+          source: path.join(__dirname, 'host.cs'),
+        }
+      : null,
 });
+
+// "" for the app's usual profile, else a short mark of the one it was given (--user-data-dir).
+function profileSuffix() {
+  const own = app.getPath('userData').toLowerCase();
+  if (path.resolve(own) === path.resolve(path.join(app.getPath('appData'), app.getName())).toLowerCase()) return '';
+  return '-' + crypto.createHash('sha256').update(own).digest('hex').slice(0, 8);
+}
+
+// Closing the dashboard keeps the app and its chats going, as on the Mac, where the Dock brings it back (here, starting
+// the app again). With no chat or terminal left there's nothing to keep it for: it quits rather than stay on out of
+// sight (the hidden notices panel would keep it alive, and the uninstaller would find it running).
+function quitIfIdle() {
+  if (!quitting && !dash && !terminals.list().length) app.quit();
+}
 
 const engine = createEngine({
   claudeDir: path.join(os.homedir(), '.claude'),
@@ -92,6 +122,7 @@ const engine = createEngine({
     toDash(`state(${json})`);
     matchChats();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
+    badge();
   },
   onEvents: (json) => toDash(`events(${json})`),
 });
@@ -138,13 +169,18 @@ const cloud = createCloud({
   onSocial(text) {
     toDash(`social(${text})`);
     toNotices(`event(${text})`);
-    for (const p of panels.chats.values()) run(p, `window.__messages && __messages.event(${text})`);
+    for (const p of panels.chats.values()) runPanel(p, `window.__messages && __messages.event(${text})`);
   },
 });
 
-// The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed).
+// The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed). A run
+// from the sources against the local API (npm run staging) brings its own instead; a packaged app never reads one.
 function loadClientKey() {
   try {
+    if (!app.isPackaged && process.env.ATALAY_CLIENT_KEY_FILE) {
+      const [id, secret] = fs.readFileSync(process.env.ATALAY_CLIENT_KEY_FILE, 'utf8').trim().split(':');
+      return id && /^[0-9a-f]+$/i.test(secret || '') ? { id, secret } : null;
+    }
     const k = require('./clientkey');
     const a = Buffer.from(k.a, 'base64'), b = Buffer.from(k.b, 'base64');
     const secret = Buffer.from(a.map((x, i) => x ^ b[i])).toString('hex');
@@ -163,8 +199,16 @@ function run(win, js) {
 function send(win, channel, data) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, data);
 }
+// What a messages panel is told before its page reports "ready" waits for it, as on the Mac: a friend's chat opened
+// with a click would otherwise stay empty, and the notices would miss the XP and events of the app's first seconds.
+const panelWaiting = new WeakMap();
+function runPanel(win, js) {
+  const waiting = win && panelWaiting.get(win);
+  if (waiting) waiting.push(js);
+  else run(win, js);
+}
 const toDash = (call) => run(dash, `window.__radar && window.__radar.${call}`);
-const toNotices = (call) => run(panels.notices, `window.__messages && __messages.${call}`);
+const toNotices = (call) => runPanel(panels.notices, `window.__messages && __messages.${call}`);
 
 // The page's Cloud state, with the Windows app's own updates in it (they come from GitHub releases, not the API).
 function cloudState() {
@@ -202,7 +246,34 @@ function createDashboard() {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  dash.on('closed', () => (dash = null));
+  dash.on('closed', () => {
+    dash = null;
+    badged = 0;
+    quitIfIdle();
+  });
+}
+
+// The Mac's Dock badge: how many chats need the user (a question, a permission), here as a number on the dashboard's
+// taskbar button. Drawn by the dashboard's page: the main process has no canvas.
+let badged = 0;
+async function badge() {
+  if (process.platform !== 'win32' || !dash || dash.isDestroyed()) return;
+  const n = engine.live().filter((s) => s.status === 'waiting').length;
+  if (n === badged) return;
+  badged = n;
+  if (!n) return dash.setOverlayIcon(null, '');
+  const label = n > 9 ? '9+' : String(n);
+  const url = await dash.webContents
+    .executeJavaScript(
+      `(() => { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d');
+        g.fillStyle = '#e5484d'; g.beginPath(); g.arc(16, 16, 16, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#fff'; g.font = 'bold ${label.length > 1 ? 15 : 21}px "Segoe UI", sans-serif'; g.textAlign = 'center';
+        g.textBaseline = 'middle'; g.fillText(${JSON.stringify(label)}, 16, 17); return c.toDataURL(); })()`,
+    )
+    .catch(() => null);
+  // The page not ready yet (the app just started): the next state tries again.
+  if (!url) return void (badged = 0);
+  if (badged === n && dash && !dash.isDestroyed()) dash.setOverlayIcon(nativeImage.createFromDataURL(url), `${n} waiting for you`);
 }
 
 function showDashboard() {
@@ -240,25 +311,32 @@ function handleRadar(msg) {
 // ---------- terminal and chat windows ----------
 function chatInfo(id, c) {
   const s = c.sessionId && engine.live().find((x) => x.sessionId === c.sessionId);
-  const status = !terminals.has(id) ? 'ended' : s ? s.status : c.claude ? 'busy' : 'terminal';
+  // A chat with no live Claude after its first seconds is a terminal: Claude exited, or never started (not installed).
+  const starting = c.claude && Date.now() - c.startedAt < 15_000;
+  const status = !terminals.has(id) ? 'ended' : s ? s.status : starting ? 'busy' : 'terminal';
   return { title: (s && s.name) || c.title, status: status === 'shell' ? 'idle' : status, cwd: tildify(c.cwd) };
 }
 
 const tildify = (p) => (p && p.startsWith(os.homedir()) ? '~' + p.slice(os.homedir().length) : p || '');
 
 /**
- * A new chat started in a window has no session id yet: the engine finds its Claude under the window's shell (`tab`);
- * failing that, the first live session in its folder.
+ * Which conversation a chat window shows. The engine finds a chat's Claude under the window's shell (`tab`), and that
+ * always wins, also over a guess made before it came; until then a new chat takes the first live session in its folder.
+ * A chat that outlived the last launch waits for the engine: the guess could take another chat in the same folder.
  */
 function matchChats() {
-  for (const s of engine.live()) {
+  const live = engine.live();
+  for (const s of live) {
     const c = s.tab && chats.get(s.tab);
-    if (c && c.claude && !c.sessionId) c.sessionId = s.sessionId;
+    if (!c || !c.claude || c.sessionId === s.sessionId) continue;
+    // A session the engine places in this window too keeps it (a Claude started inside the chat's Claude doesn't take
+    // its window); a guess gives way.
+    if (!live.some((x) => x.sessionId === c.sessionId && x.tab === s.tab)) c.sessionId = s.sessionId;
   }
   const taken = new Set([...chats.values()].map((c) => c.sessionId).filter(Boolean));
   for (const c of chats.values()) {
-    if (!c.claude || c.sessionId) continue;
-    const s = engine.live().find((x) => !taken.has(x.sessionId) && samePath(x.cwd, c.cwd));
+    if (!c.claude || c.sessionId || !c.claudeArgs) continue;
+    const s = live.find((x) => !taken.has(x.sessionId) && samePath(x.cwd, c.cwd));
     if (s) {
       c.sessionId = s.sessionId;
       taken.add(s.sessionId);
@@ -267,8 +345,11 @@ function matchChats() {
 }
 const samePath = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 
-function openChatWindow({ cwd, claudeArgs, sessionId, title }) {
-  const id = crypto.randomUUID();
+/**
+ * A chat or terminal window. A new one starts its shell (Claude in it with `claudeArgs`); one given the `id` of a session
+ * that outlived the app attaches to it instead (`claude`: whether it was started as a chat), hidden unless `show`.
+ */
+function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!claudeArgs, sessionId, title, show = true }) {
   const area = screen.getPrimaryDisplay().workArea;
   const cascade = chats.size * 28;
   const win = new BrowserWindow({
@@ -278,15 +359,19 @@ function openChatWindow({ cwd, claudeArgs, sessionId, title }) {
     webPreferences: webPrefs(),
   });
   bootFor(win.webContents);
-  const c = { win, sessionId, cwd, claude: !!claudeArgs, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now() };
+  const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now() };
   chats.set(id, c);
   win.loadFile(path.join(__dirname, '..', 'pages', 'terminal.html'));
-  win.once('ready-to-show', () => (PROBE ? win.showInactive() : win.show()));
+  win.once('ready-to-show', () => show && (PROBE ? win.showInactive() : win.show()));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Once its first seconds are over a chat says what it is even if nothing else changes (chatInfo).
+  if (claude) setTimeout(() => chats.get(id) === c && send(win, 'term:info', chatInfo(id, c)), 15_500);
   // Closing a chat's window only hides it: Claude keeps going and the dashboard brings it back. Closing a terminal
-  // ends its shell, as a terminal app's window does.
+  // ends its shell, as a terminal app's window does. Quitting closes them all: their sessions were seen to just before
+  // (the host's go on).
   win.on('close', (e) => {
-    if (quitting || !c.claude || !terminals.has(id)) {
+    if (quitting) return;
+    if (!c.claude || !terminals.has(id)) {
       terminals.kill(id);
       return;
     }
@@ -310,10 +395,13 @@ function showChat(id) {
 
 function openSession(sid, fork) {
   if (!sid) return false;
+  const live = engine.live().find((s) => s.sessionId === sid);
   if (!fork) {
     for (const [id, c] of chats) if (c.sessionId === sid && terminals.has(id)) return showChat(id);
+    // Running in one of the app's windows that doesn't know it yet: a terminal Claude was started in, a chat back from
+    // the last launch.
+    if (live && live.tab && chats.has(live.tab) && terminals.has(live.tab)) return showChat(live.tab);
   }
-  const live = engine.live().find((s) => s.sessionId === sid);
   const cwd = engine.sessionCwd(sid) || (live && live.cwd);
   if (!cwd || !fs.existsSync(cwd)) {
     dialog.showMessageBox(dash || undefined, { type: 'warning', message: 'Project folder not found', detail: cwd || "Couldn't tell which folder this chat started in." });
@@ -326,8 +414,9 @@ function openSession(sid, fork) {
 }
 
 function endSession(sid) {
+  const live = engine.live().find((s) => s.sessionId === sid);
   for (const [id, c] of chats) {
-    if (c.sessionId === sid) {
+    if (c.sessionId === sid || (live && live.tab === id)) {
       terminals.kill(id);
       if (!c.win.isDestroyed()) c.win.destroy();
       chats.delete(id);
@@ -335,7 +424,6 @@ function endSession(sid) {
     }
   }
   // Running outside the app: its process ends.
-  const live = engine.live().find((s) => s.sessionId === sid);
   if (live && live.pid) {
     try {
       process.kill(live.pid);
@@ -351,12 +439,13 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
   const found = chatOf(e);
   if (!found) return;
   const [id, c] = found;
-  if (!terminals.has(id)) {
-    try {
-      terminals.spawn({ id, cwd: c.cwd, claudeArgs: c.claudeArgs, cols, rows });
-    } catch (err) {
-      send(c.win, 'term:data', `\r\n\x1b[31m${err.message}\x1b[0m\r\n`);
-    }
+  // A new window starts its shell; one for a session that's already running (it outlived the app, or the page
+  // reloaded) attaches to it.
+  if (terminals.has(id)) terminals.attach(id, cols, rows);
+  else {
+    terminals
+      .spawn({ id, cwd: c.cwd, claudeArgs: c.claudeArgs, cols, rows, title: c.title })
+      .catch((err) => send(c.win, 'term:data', `\r\n\x1b[31m${err.message}\x1b[0m\r\n`));
   }
   send(c.win, 'term:info', chatInfo(id, c));
 });
@@ -374,6 +463,9 @@ ipcMain.on('term:end', (e) => {
   terminals.kill(found[0]);
   found[1].win.destroy();
   chats.delete(found[0]);
+});
+ipcMain.on('term:copy', (e, text) => {
+  if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);
 });
 ipcMain.on('term:dashboard', () => showDashboard());
 ipcMain.on('term:open', (_e, uri) => {
@@ -419,9 +511,18 @@ function panelWindow(role, friend) {
     alwaysOnTop: role === 'notices', hasShadow: false, backgroundColor: '#00000000', webPreferences: webPrefs(),
   });
   bootFor(win.webContents, { role, friend });
+  panelWaiting.set(win, []);
   win.loadFile(path.join(WEB, 'messages.html'));
   return win;
 }
+
+// The level-up waits for the app to be in front (the notices' "focus"), as on the Mac.
+function tellFocus() {
+  toNotices(`focus(${!!BrowserWindow.getFocusedWindow()})`);
+}
+app.on('browser-window-focus', tellFocus);
+// Going from one of the app's windows to another blurs the first before the second has focus.
+app.on('browser-window-blur', () => setImmediate(tellFocus));
 
 function notices() {
   if (PROBE) return null;
@@ -435,13 +536,22 @@ function openFriendChat(friend) {
     win = panelWindow('chat', friend);
     panels.chats.set(friend, win);
     win.on('closed', () => panels.chats.delete(friend));
-  } else run(win, 'window.__messages && __messages.focus && __messages.focus(true)');
+  }
+  // The conversation, loaded and in front (a panel that's already open comes forward).
+  runPanel(win, `window.__messages && __messages.open(${JSON.stringify(friend)})`);
   return true;
 }
 
 function handleMessages(win, body) {
   const role = win === panels.notices ? 'notices' : 'chat';
   switch (body.type) {
+    case 'ready': {
+      const waiting = panelWaiting.get(win) || [];
+      panelWaiting.delete(win);
+      for (const js of waiting) run(win, js);
+      if (role === 'notices') tellFocus();
+      return true;
+    }
     case 'layout': {
       const w = Math.round(body.w || 0), h = Math.round(body.h || 0);
       if (w < 1 || h < 1) {
@@ -499,7 +609,7 @@ function handleMessages(win, body) {
     case 'openChat':
       return openFriendChat(body.id);
     case 'showing':
-      run(panels.notices, `window.__messages && __messages.showing && __messages.showing(${JSON.stringify(body.id ? [body.id] : [])})`);
+      toNotices(`showing && __messages.showing(${JSON.stringify(body.id ? [body.id] : [])})`);
       return true;
     case 'log':
       console.log(`${role} page:`, body.msg);
@@ -509,15 +619,16 @@ function handleMessages(win, body) {
   }
 }
 
-// ---------- updates: GitHub releases (electron-updater) ----------
-// A new version downloads by itself and goes in when nothing runs that a restart would stop: Windows has no `screen`,
-// so open chats end with the app — then it waits for the user's quit (or "update now").
+// ---------- updates: the releases repo's "windows" release (electron-updater; scripts/release.js) ----------
+// A new version downloads by itself and goes in, as on the Mac, when the user has stepped away for 10 minutes (or wants
+// updates right away) and the restart stops nothing: chats in the session host go on across it. One running in the app
+// itself (no host) would end, so then it waits for the user's quit (or "update now").
 const updates = (() => {
   let offer = null, ready = false, busy = null, checking = false, checkedAt = null;
   const usable = !!autoUpdater && app.isPackaged && !PROBE;
   const rightAway = () => !!settings.get('updateRightAway');
   const maybeRestart = () => {
-    if (!ready || terminals.list().length) return;
+    if (!ready || terminals.list().some((t) => terminals.local(t.id))) return;
     if (rightAway() || powerMonitor.getSystemIdleTime() >= 600) install();
   };
   const install = () => {
@@ -633,7 +744,9 @@ function buildMenu() {
       submenu: [
         { label: 'New Terminal…', accelerator: 'CmdOrCtrl+N', click: () => showOverlay('Overlay.newTerminal()') },
         { label: 'Shortcut Wheel', accelerator: 'CmdOrCtrl+K', click: () => showShortcuts() },
-        { label: 'Dashboard', accelerator: 'CmdOrCtrl+0', click: () => showDashboard() },
+        // No key of its own: Ctrl+0 is Actual Size's (the text size, ⌘0 on the Mac), and two items on one key leave only
+        // one of them working.
+        { label: 'Dashboard', click: () => showDashboard() },
         { type: 'separator' },
         {
           label: 'Close Window', accelerator: 'CmdOrCtrl+W',
@@ -680,12 +793,18 @@ app.whenReady().then(() => {
     toDash(`terminals(${JSON.stringify(cars)})`);
   }, 2000);
   powerMonitor.on('resume', () => cloud.kick());
+  // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
+  // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.
+  terminals.restore().then((found) => {
+    for (const s of found) openChatWindow({ id: s.id, cwd: s.cwd, claude: s.claude, title: s.title, show: false });
+  });
   if (PROBE) probe();
 });
 
 app.on('before-quit', (e) => {
   if (quitting) return;
-  const running = [...chats.values()].filter((c) => c.claude).length;
+  // Only chats running in the app itself stop: the session host's go on, and come back at the next launch.
+  const running = [...chats.entries()].filter(([id, c]) => c.claude && terminals.local(id)).length;
   if (running && !PROBE) {
     const r = dialog.showMessageBoxSync(dash || undefined, {
       type: 'warning', buttons: ['Quit', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
@@ -695,7 +814,7 @@ app.on('before-quit', (e) => {
     if (r !== 0) return e.preventDefault();
   }
   quitting = true;
-  terminals.killAll();
+  terminals.detachAll();
   engine.stop();
   cloud.stop();
 });

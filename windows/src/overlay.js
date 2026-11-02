@@ -6,6 +6,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
+const { execFile } = require('child_process');
 
 const HOME = os.homedir();
 const expand = (p) => (p === '~' ? HOME : /^~[\\/]/.test(p) ? path.join(HOME, p.slice(2)) : p);
@@ -18,6 +19,18 @@ async function isDir(p) {
   } catch {
     return false;
   }
+}
+
+// Windows hides its own folders with an attribute (AppData, ProgramData, the old profile's links like "Documents and
+// Settings") where a Mac starts their names with a dot; Node can't read it, `dir /a:h` can. Lower-case names, for a
+// case-blind file system. Run in the folder itself, so no path goes through cmd's parsing.
+function hiddenNames(dir) {
+  if (process.platform !== 'win32') return Promise.resolve(new Set());
+  return new Promise((resolve) => {
+    execFile('cmd.exe', ['/d', '/u', '/c', 'dir /a:h /b'], { cwd: dir, encoding: 'utf16le', windowsHide: true, timeout: 3000 }, (err, out) =>
+      resolve(new Set(String(out || '').split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter(Boolean))),
+    );
+  });
 }
 
 function createOverlay({ dataDir, claudeDir }) {
@@ -53,9 +66,11 @@ function createOverlay({ dataDir, claudeDir }) {
     return readSlots(s);
   }
 
-  // A folder's subfolders, with whether each is a git repo and whether Claude ran there.
+  // A folder's subfolders, with whether each is a git repo and whether Claude ran there. One that isn't on this PC (the
+  // picker starts in ~/Documents/Repos, the Mac author's folder) opens at the nearest folder above it that is.
   async function listDir(raw) {
-    const dir = path.resolve(expand(raw || '~'));
+    let dir = path.resolve(expand(raw || '~'));
+    while (!(await isDir(dir)) && path.dirname(dir) !== dir) dir = path.dirname(dir);
     const root = path.parse(dir).root === dir;
     let ents;
     try {
@@ -63,6 +78,7 @@ function createOverlay({ dataDir, claudeDir }) {
     } catch (e) {
       return { path: dir, display: tildify(dir), parent: root ? null : path.dirname(dir), error: e.code === 'EACCES' || e.code === 'EPERM' ? 'no permission' : 'cannot open', entries: [] };
     }
+    const hidden = await hiddenNames(dir);
     const entries = [];
     for (const e of ents) {
       if (entries.length >= 600) break;
@@ -71,7 +87,7 @@ function createOverlay({ dataDir, claudeDir }) {
       if (!folder || e.name.endsWith('.app') || /^\$|^System Volume Information$/i.test(e.name)) continue;
       const st = await fsp.stat(full).catch(() => null);
       entries.push({
-        name: e.name, path: full, hidden: e.name.startsWith('.'), modified: st ? st.mtimeMs : 0,
+        name: e.name, path: full, hidden: e.name.startsWith('.') || hidden.has(e.name.toLowerCase()), modified: st ? st.mtimeMs : 0,
         git: fs.existsSync(path.join(full, '.git')), claude: fs.existsSync(path.join(projects, encodeCwd(full))),
       });
     }
