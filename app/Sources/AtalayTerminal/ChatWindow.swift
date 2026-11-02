@@ -1539,7 +1539,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         }
         // A copy takes its original along: the Claude it was copied from stops in its iTerm2 tab, which closes.
         // Only while that Claude still runs there.
-        let original = origin.flatMap { o in Proc.info(o.claude)?.tty == o.tty && Proc.name(o.claude)?.hasPrefix("claude") == true ? o : nil }
+        let original = origin.flatMap { o in Proc.info(o.claude)?.tty == o.tty && Proc.isClaude(o.claude) ? o : nil }
         let shellOnly = hud.status == "terminal"
         // Like iTerm2: a terminal whose shell runs nothing closes without asking.
         let idle = shellOnly && shellPid > 0 && Proc.children(of: shellPid).isEmpty

@@ -133,19 +133,22 @@ final class ChatTerminalView: LocalProcessTerminalView {
     // ask for it with mode 2004, but that request never gets here: Apple's screen 4.0, which hosts every session,
     // drops it. So the program in front decides: Claude and shells that understand pastes get them bracketed,
     // anything else (vim, a REPL, a running job) gets plain text as before.
-    private static let bracketing: Set<String> = ["claude", "claude.exe", "zsh", "fish", "nvim"]
+    private static let bracketing: Set<String> = ["zsh", "fish", "nvim"]
 
-    private func foregroundProgram() -> String? {
+    /// The process group in front on the session's terminal: the shell's foreground job, or the shell itself.
+    private func foregroundGroup() -> Int32? {
         let shell = sessionShell()
-        guard shell > 0, let group = Proc.foregroundGroup(shell) else { return nil }
-        return Proc.name(group)
+        guard shell > 0 else { return nil }
+        return Proc.foregroundGroup(shell)
     }
+
+    private var claudeInFront: Bool { foregroundGroup().map(Proc.isClaude) ?? false }
 
     /// Sets the emulator's bracketed-paste mode to what the program in front takes (only for detached sessions; a
     /// direct shell sends its own mode 2004).
     private func matchPasteMode() {
-        guard let program = foregroundProgram() else { return }
-        feed(text: Self.bracketing.contains(program) ? "\u{1b}[?2004h" : "\u{1b}[?2004l")
+        guard let group = foregroundGroup(), let program = Proc.name(group) else { return }
+        feed(text: Self.bracketing.contains(program) || Proc.isClaude(group) ? "\u{1b}[?2004h" : "\u{1b}[?2004l")
     }
 
     override func paste(_ sender: Any) {
@@ -157,7 +160,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
         // A copied picture with no text (a screenshot, an image copied in a browser): Claude takes it from the
         // clipboard on Ctrl-V.
         if pb.string(forType: .string) == nil, pb.canReadItem(withDataConformingToTypes: [UTType.image.identifier]) {
-            if foregroundProgram()?.hasPrefix("claude") == true { send(txt: "\u{16}") }
+            if claudeInFront { send(txt: "\u{16}") }
             return
         }
         matchPasteMode()
@@ -170,7 +173,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
     /// pass on, so the reports went in an encoding it doesn't read; the emulator is switched to SGR first. If Claude
     /// isn't following the mouse, the wheel scrolls the scrollback as usual.
     func wheelGoesToProgram() -> Bool {
-        guard foregroundProgram()?.hasPrefix("claude") == true else { return false }
+        guard claudeInFront else { return false }
         feed(text: "\u{1b}[?1006h")
         return true
     }
@@ -334,8 +337,7 @@ enum TerminalFactory {
 
 /// The renderer the user picked in Claude Code (`/tui`, "tui" in its settings.json): "fullscreen", "default" or nil.
 nonisolated func claudeTUI() -> String? {
-    let dir = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] ?? (HOME as NSString).appendingPathComponent(".claude")
-    guard let data = FileManager.default.contents(atPath: dir + "/settings.json"),
+    guard let data = FileManager.default.contents(atPath: CLAUDE_DIR + "/settings.json"),
           let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
     return settings["tui"] as? String
 }

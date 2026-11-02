@@ -177,7 +177,7 @@ enum Detached {
     private static func claudeProcess(under daemon: Int32) -> Int32? {
         var level = Proc.children(of: daemon)
         for _ in 0..<4 {
-            if let pid = level.first(where: { Proc.name($0)?.hasPrefix("claude") == true }) { return pid } // p_comm is "claude.exe"
+            if let pid = level.first(where: Proc.isClaude) { return pid }
             level = level.flatMap { Proc.children(of: $0) }
         }
         return nil
@@ -203,12 +203,14 @@ enum Detached {
         var out: [RunningSession] = []
         for daemon in Proc.all() {
             guard let name = daemonName(daemon) else { continue }
-            if let claude = claudeProcess(under: daemon) {
-                let reg = (try? Data(contentsOf: URL(fileURLWithPath: "\(registry)/\(claude).json")))
-                    .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-                let cwd = reg?["cwd"] as? String ?? HOME
-                out.append(RunningSession(name: name, sessionId: reg?["sessionId"] as? String, claude: true, cwd: cwd,
-                                          title: reg?["name"] as? String ?? (cwd as NSString).lastPathComponent))
+            // Back as a chat only when the dashboard knows its Claude (its registry entry is here); one run with another
+            // CLAUDE_CONFIG_DIR comes back as a terminal, which still opens from the orbit.
+            if let claude = claudeProcess(under: daemon),
+               let reg = (try? Data(contentsOf: URL(fileURLWithPath: "\(registry)/\(claude).json")))
+                   .flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) {
+                let cwd = reg["cwd"] as? String ?? HOME
+                out.append(RunningSession(name: name, sessionId: reg["sessionId"] as? String, claude: true, cwd: cwd,
+                                          title: reg["name"] as? String ?? (cwd as NSString).lastPathComponent))
             } else if let shell = shellProcess(under: daemon) {
                 let cwd = Proc.cwd(shell) ?? HOME
                 out.append(RunningSession(name: name, sessionId: nil, claude: false, cwd: cwd, title: (cwd as NSString).lastPathComponent))
