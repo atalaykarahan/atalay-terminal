@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { fileURLToPath } = require('url');
 
 const { createEngine } = require('./engine');
 const { createGit } = require('./git');
@@ -220,6 +221,31 @@ const pushCloud = () => toDash(`cloud(${JSON.stringify(cloudState())})`);
 function webPrefs() {
   return { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false };
 }
+
+// A window shows the app's own pages and nothing else, as on the Mac (RadarView): a page from anywhere else, a file on
+// this PC included, would get their line to the app (preload.js), which reaches the shells. A link out of a page opens
+// where it belongs instead (a web page in the browser, a file in VS Code from Source Control); other kinds go nowhere,
+// since Windows has handlers for some that run things.
+const PAGES = [WEB, path.join(__dirname, '..', 'pages')];
+function ownPage(url) {
+  let file;
+  try {
+    file = fileURLToPath(url);
+  } catch {
+    return false;
+  }
+  return PAGES.some((dir) => {
+    const rel = path.relative(dir, file);
+    return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  });
+}
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-navigate', (e, url) => {
+    if (ownPage(url)) return;
+    e.preventDefault();
+    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url);
+  });
+});
 
 function bootFor(webContents, extra = {}) {
   const look = { font: 'Cascadia Mono', size: 13 };
