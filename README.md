@@ -5,12 +5,14 @@
 <h1 align="center">Atalay's Terminal</h1>
 
 <p align="center">
-  A HUD for running many Claude Code sessions on a Mac: every session on a live orbit map, each chat in its own
-  window that keeps running in the background, terminals as flying cars, and friends with messages and levels.
+  A HUD for running many Claude Code sessions on a Mac or on Windows: every session on a live orbit map, each chat in
+  its own window that keeps running in the background, terminals as flying cars, and friends with messages and levels.
 </p>
 
 <p align="center">
   <a href="https://github.com/atalaykarahan/atalay-terminal-releases/releases/latest/download/Atalays-Terminal.dmg"><b>⬇&nbsp; Download for macOS</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/atalaykarahan/atalay-terminal-releases/releases/download/windows/Atalays-Terminal-Setup.exe"><b>⬇&nbsp; Download for Windows</b></a>
   &nbsp;·&nbsp;
   <a href="https://github.com/atalaykarahan/atalay-terminal-releases">Install notes and screenshots</a>
 </p>
@@ -32,8 +34,8 @@
 - **Levels**: the time you actively work earns XP, ranks go from Academy Student to Kage, and a leaderboard shows the
   week.
 
-macOS 13 or later, Apple Silicon and Intel. A Windows version is being built in [`windows/`](windows/) (not released
-yet). Works with Claude Code; not affiliated with Anthropic.
+macOS 13 or later, Apple Silicon and Intel; Windows 10 or 11, 64-bit (the Windows app is in [`windows/`](windows/)).
+Works with Claude Code; not affiliated with Anthropic.
 
 ## Privacy
 
@@ -44,10 +46,13 @@ yet). Works with Claude Code; not affiliated with Anthropic.
   status, the leaderboard, and the feedback you send (kept with your name#tag and the time, no e-mail).
 - Your Mac is known to the server by a salted hash of its hardware UUID (never the UUID itself) and a random token
   kept on the Mac.
+- On Windows the same goes for your PC: Claude Code's files are in `%USERPROFILE%\.claude`, the server gets the
+  Windows version, and the PC is known by a salted hash of Windows' MachineGuid.
 - Messages are stored on the server so they reach your friends; they aren't end-to-end encrypted.
 - Settings can hide your active time from friends and your name on the leaderboard.
-- No analytics or tracking libraries. Updates come from this project's GitHub releases and are signed; the app checks
-  the signature before installing.
+- No analytics or tracking libraries. Updates come from this project's GitHub releases; on the Mac they're signed and
+  the app checks the signature before installing, on Windows (not code-signed yet) it checks each download against
+  the checksum published with it.
 
 ## How it works
 

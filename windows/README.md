@@ -1,7 +1,8 @@
 # Atalay's Terminal for Windows
 
-**Work in progress, not released yet.** It's built in the open, like the rest of the app, but its installers are built
-and published on the Windows PC, not on GitHub's machines, since they carry the app's API key (below).
+**Out as a pre-release**: [the releases repo's windows release](https://github.com/atalaykarahan/atalay-terminal-releases/releases/tag/windows).
+It's built in the open, like the rest of the app, but its installers are built and published on the Windows PC, not on
+GitHub's machines, since they carry the app's API key (below).
 
 The Windows app: Electron around the same dashboard the Mac app shows (`app/Resources/web`, used as it is), with
 terminals from xterm.js and node-pty (ConPTY), the way VS Code runs its terminal on Windows. It talks to the same API
