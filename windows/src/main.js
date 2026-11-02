@@ -2,7 +2,7 @@
 // Atalay's Terminal for Windows: the Mac app's dashboard (app/Resources/web, unchanged) in Electron. This file is the
 // Mac app's MainWindowController and AppDelegate: the windows, the line between the pages and the parts that feed them
 // (engine.js, cloud.js, git.js, themes.js, terminals.js), the keys and the updates.
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen, powerMonitor, nativeTheme, net, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen, powerMonitor, nativeTheme, net, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -122,6 +122,7 @@ const engine = createEngine({
     toDash(`state(${json})`);
     matchChats();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
+    badge();
   },
   onEvents: (json) => toDash(`events(${json})`),
 });
@@ -247,8 +248,32 @@ function createDashboard() {
   });
   dash.on('closed', () => {
     dash = null;
+    badged = 0;
     quitIfIdle();
   });
+}
+
+// The Mac's Dock badge: how many chats need the user (a question, a permission), here as a number on the dashboard's
+// taskbar button. Drawn by the dashboard's page: the main process has no canvas.
+let badged = 0;
+async function badge() {
+  if (process.platform !== 'win32' || !dash || dash.isDestroyed()) return;
+  const n = engine.live().filter((s) => s.status === 'waiting').length;
+  if (n === badged) return;
+  badged = n;
+  if (!n) return dash.setOverlayIcon(null, '');
+  const label = n > 9 ? '9+' : String(n);
+  const url = await dash.webContents
+    .executeJavaScript(
+      `(() => { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d');
+        g.fillStyle = '#e5484d'; g.beginPath(); g.arc(16, 16, 16, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#fff'; g.font = 'bold ${label.length > 1 ? 15 : 21}px "Segoe UI", sans-serif'; g.textAlign = 'center';
+        g.textBaseline = 'middle'; g.fillText(${JSON.stringify(label)}, 16, 17); return c.toDataURL(); })()`,
+    )
+    .catch(() => null);
+  // The page not ready yet (the app just started): the next state tries again.
+  if (!url) return void (badged = 0);
+  if (badged === n && dash && !dash.isDestroyed()) dash.setOverlayIcon(nativeImage.createFromDataURL(url), `${n} waiting for you`);
 }
 
 function showDashboard() {

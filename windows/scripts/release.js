@@ -152,7 +152,9 @@ let auth = '';
   const title = "Atalay's Terminal for Windows";
   const body =
     `**${version}**\n\n${notes ? notes.split('\n').map((n) => `- ${n}`).join('\n') + '\n\n' : ''}` +
-    `Download **${STABLE}** below. Installed copies update themselves.`;
+    `Download **${STABLE}** below. Installed copies update themselves.\n\n` +
+    // Until the installer is code-signed, Windows doesn't know its publisher.
+    'Windows may say it protected your PC: click **More info**, then **Run anyway** (the installer isn\'t code-signed yet).';
   const release =
     current ||
     (await api('POST', '/releases', { tag_name: tag, name: title, body, prerelease: true, make_latest: 'false' }));
