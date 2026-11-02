@@ -45,7 +45,8 @@ function fail(msg) {
   if (!r.ok) fail(`the local API refused the key: ${r.status} ${await r.text()}`);
   console.log(`staging: key ${id} registered with ${API}`);
 
-  const env = { ...process.env, ATALAY_API_URL: API, ATALAY_CLIENT_KEY_FILE: keyFile };
+  // ATALAY_STAGING: what only staging does (the DANGER alarm's demo a few seconds after it opens).
+  const env = { ...process.env, ATALAY_API_URL: API, ATALAY_CLIENT_KEY_FILE: keyFile, ATALAY_STAGING: '1' };
   const profile = path.join(process.env.APPDATA || os.homedir(), "Atalay's Terminal (staging)");
   const app = cp.spawn(require('electron'), ['.', `--user-data-dir=${profile}`], { cwd: root, env, stdio: 'inherit' });
   app.on('exit', (code) => process.exit(code ?? 0));

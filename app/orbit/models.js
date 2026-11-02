@@ -48,6 +48,48 @@ export function buildStation(col) {
   return { group, core, coreMat, ring, ring2 };
 }
 
+// A runaway process (index.js): a blue box shaped like an old police telephone box, with no sign or emblem on it, that
+// index.js sends tumbling out of control and on fire. Corner posts, a plain band under a stepped roof, a lamp on top,
+// and on each side two doors with lit windows over raised panels. Centred on its middle, +Y up, 40 units tall.
+export function buildBlueBox() {
+  const group = new THREE.Group();
+  const blue = new THREE.MeshStandardMaterial({ color: 0x163a7a, metalness: 0.15, roughness: 0.55, emissive: 0x0a1a40, emissiveIntensity: 1 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x0d2350, metalness: 0.15, roughness: 0.6 });
+  const pane = new THREE.MeshBasicMaterial({ color: 0xfff0c8 });
+  const light = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const geos = [];
+  const add = (parent, w, h, d, mat, x, y, z) => {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    geos.push(geo);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  };
+  const H = 34, W = 16;
+  add(group, W - 1.6, H - 4, W - 1.6, blue, 0, -2, 0);
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) add(group, 2, H, 2, dark, x * (W / 2 - 1), 0, z * (W / 2 - 1));
+  add(group, W + 1, 1.6, W + 1, dark, 0, -H / 2 - 0.8, 0);
+  add(group, W, 2.6, W, dark, 0, H / 2 - 2.3, 0);
+  add(group, W + 0.6, 1.2, W + 0.6, blue, 0, H / 2 - 0.4, 0);
+  add(group, W - 3, 1.4, W - 3, blue, 0, H / 2 + 0.9, 0);
+  const lamp = add(group, 2, 2.6, 2, light, 0, H / 2 + 3, 0);
+  add(group, 2.8, 0.6, 2.8, dark, 0, H / 2 + 4.6, 0);
+  for (let f = 0; f < 4; f++) {
+    const side = new THREE.Group();
+    side.rotation.y = (f * Math.PI) / 2;
+    group.add(side);
+    const z = W / 2 - 0.72;
+    add(side, 0.5, H - 6, 0.4, dark, 0, -2.5, z + 0.1);
+    for (const door of [-1, 1]) {
+      const cx = door * 3.4;
+      for (const [px, py] of [[-1.15, 0], [1.15, 0], [-1.15, -2], [1.15, -2]]) add(side, 1.9, 1.6, 0.3, pane, cx + px, H / 2 - 6 + py, z);
+      for (const py of [4, -3.5, -11]) add(side, 4.8, 6, 0.5, dark, cx, py - 2, z);
+    }
+  }
+  return { group, blue, lamp, own: [blue, dark, pane, light, ...geos] };
+}
+
 // Terminal car: a plain terminal (a shell, maybe running `npm run dev`) is a flying roadster, so it never reads as a
 // Claude session (hexagon). Modelled on the 2026 flying Roadster's look, in a real car's proportions: a long, low body
 // with fenders rising over the wheels, a fastback cabin (windshield, side windows and rear window in gold-tinted

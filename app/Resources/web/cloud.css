@@ -5,7 +5,7 @@
 
 .pk.hk { width: min(460px, 92vw); height: auto; }
 .hk-body { padding: 16px 18px 14px; }
-.pk-title .hk-logo { height: 16px; filter: drop-shadow(0 0 6px rgba(var(--glow), 0.8)); }
+.pk-title .hk-logo { height: 16px; filter: drop-shadow(0 0 6px rgba(var(--logo-rgb), 0.8)); }
 
 .hk-line { margin: 0 0 3px; color: var(--accent-soft); white-space: nowrap; }
 .hk-line span { display: inline-block; width: 0; overflow: hidden; vertical-align: bottom; animation: hk-type 0.7s steps(var(--n)) var(--d) forwards; }
@@ -120,10 +120,9 @@
 .mn-empty b { color: var(--accent-soft); }
 .pk-foot .pk-ok[hidden] { display: none; }
 
-/* the logo: a count of what waits for you, and your status */
+/* the logo: your status (what waits for you is counted on the left edge's icons) */
 .brand { position: relative; }
-.brand .bdg { position: absolute; left: 13px; top: -7px; z-index: 2; height: 15px; min-width: 15px; font-size: 0.62em; }
-.brand .bdg[hidden], .brand .bme[hidden] { display: none; }
+.brand .bme[hidden] { display: none; }
 .brand .bme { position: absolute; left: 19px; top: 15px; z-index: 2; width: 8px; height: 8px; --dot-bg: rgb(var(--panel-rgb)); outline: 2px solid rgb(var(--panel-rgb)); }
 
 /* friend right-click menu and the "remove?" question */

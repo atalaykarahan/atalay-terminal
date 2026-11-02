@@ -32,6 +32,9 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     static var onOpenProfile: (() -> Void)?
     /// A notification from the developer was clicked.
     static var onOpenNotifications: (() -> Void)?
+    /// The danger alarm (a runaway process): Details, and END IT (its pid and start, as the page had them).
+    static var onOpenDanger: (() -> Void)?
+    static var onEndRunaway: ((Int32, Double) -> Void)?
     /// Until when keys do nothing (the level-up takeover; AppDelegate drops them).
     private static var keysLockedUntil: TimeInterval = 0
     static var keysLocked: Bool { ProcessInfo.processInfo.systemUptime < keysLockedUntil }
@@ -171,6 +174,11 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     /// The app updated itself since it last ran: a note in the corner, so a restart while the user was away isn't a mystery.
     func announce(updated version: String) {
         run("window.__messages && __messages.updated && __messages.updated(\(Self.literal(version)))")
+    }
+
+    /// Processes left burning a core where nobody sees them (Runaways): the alarm in the middle of the screen.
+    func runaways(_ json: String) {
+        run("window.__messages && __messages.runaways && __messages.runaways(\(json))")
     }
 
     /// Your XP as the last heartbeat or live event had it: a new level plays the fanfare (once, the page keeps count).
@@ -333,6 +341,10 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             Self.onOpenProfile?()
         case "openNotifications":
             Self.onOpenNotifications?()
+        case "openDanger":
+            Self.onOpenDanger?()
+        case "endRunaway":
+            Self.onEndRunaway?(Int32(number("pid")), number("started"))
         case "lock":
             // Never longer than 4 s, whatever the page asks.
             Self.keysLockedUntil = ProcessInfo.processInfo.systemUptime + min(max(number("ms"), 0), 4000) / 1000
@@ -374,6 +386,11 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         } else if place == "fire" {
             endTakeover()
             panel.setFrame(s.visibleFrame, display: true)
+        } else if place == "center" {
+            // The danger alarm: the middle of the screen, clicks going to it alone.
+            endTakeover()
+            let v = s.visibleFrame
+            panel.setFrame(NSRect(x: v.midX - size.width / 2, y: v.midY - size.height / 2, width: size.width, height: size.height), display: true)
         } else {
             endTakeover()
             let v = s.visibleFrame

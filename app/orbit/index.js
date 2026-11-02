@@ -15,7 +15,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { GlowPoints, LineBatch, QUAD, ringMaterial, setRing } from './batch.js';
 import { droneTextures, hexGlowTexture, ICON, SessionIcon } from './icons.js';
 import { buildCore } from './core.js';
-import { buildRoadster, buildStation, CAR_LENGTH, carStudio } from './models.js';
+import { buildBlueBox, buildRoadster, buildStation, CAR_LENGTH, carStudio } from './models.js';
 import { buildBackdrop } from './space.js';
 import { glowTexture } from './textures.js';
 import { clamp, damp, easeInOut, easeOut, el, lerp, setText, TAU } from './util.js';
@@ -138,6 +138,14 @@ function fitDistance() {
   return clamp(Math.max(dH, dV), 320, 2200);
 }
 const viewAt = (dist, polar = K.POLAR, az = 0) => new THREE.Vector3().setFromSphericalCoords(dist, polar, az);
+
+// A jolt (a box blowing up): the camera shakes for a moment around where it is.
+const SHAKE = { until: 0, amp: 0, ms: 1, off: new THREE.Vector3() };
+function shakeCamera(amp, ms) {
+  SHAKE.amp = amp;
+  SHAKE.ms = ms;
+  SHAKE.until = performance.now() + ms;
+}
 
 let camAnim = null;
 function flyCamera(target, pos, ms) {
@@ -916,6 +924,147 @@ function drawShips() {
   }
 }
 
+// ---------- runaway processes: blue boxes ----------
+// A process of yours left burning a CPU core where nobody sees it (the app's Runaways, danger.js) is a blue box gone out
+// of control: it tumbles round a wide orbit of its own beyond the stations, on fire, its tail and flames growing with
+// what it burns. Hover names it; a click opens the dashboard's engine-failure panel, where it can be ended.
+const BOXES = new Map(); // 'pid:start' -> box
+const HOT = colorOf('#ff3b1f'), EMBER = colorOf('#ffb057');
+const BOX_R = K.STATION_R * 1.12;
+const BOX_ENTER_MS = 2600, BOX_FOLLOW_MS = 8000;
+const _flame = new THREE.Vector3();
+// Boxes blown up from the Details card: the list may name their process a moment longer (it ends after it).
+const killed = new Map(); // 'pid:start' -> until when
+function syncBoxes(list) {
+  const seen = new Set(), now = performance.now();
+  for (const [k, until] of killed) if (now > until) killed.delete(k);
+  for (const r of list || []) {
+    const k = `${r.pid}:${r.started}`;
+    seen.add(k);
+    if (killed.has(k)) continue;
+    let b = BOXES.get(k);
+    if (!b) {
+      const model = buildBlueBox();
+      model.group.scale.setScalar(0.01);
+      scene.add(model.group);
+      const e = el('div', 'mtl', '<b></b><span></span>');
+      const obj = new CSS2DObject(e);
+      obj.center.set(0.5, 1.6);
+      scene.add(obj);
+      // It comes in from deep space and swings into its orbit; the camera flies over and follows it in.
+      const from = new THREE.Vector3().setFromSphericalCoords(BOX_R * 3.2, 0.9 + Math.random() * 0.6, Math.random() * TAU);
+      const trail = Array.from({ length: 24 }, () => new THREE.Vector3());
+      b = { k, r, model, el: e, obj, theta: Math.random() * TAU, tilt: 0.35 + Math.random() * 0.3, spin: Math.random() * TAU, pos: from.clone(), grow: 0, dying: 0,
+        enter: { t0: now, from }, trail, trailN: 0, trailAt: 0 };
+      BOXES.set(k, b);
+      // The camera follows it in; with the dashboard out of sight, as soon as it's back in sight.
+      if (ACT.visible && !document.hidden) followBox(b);
+      else pendingFollow = b;
+    }
+    b.r = r;
+    setText(b.el.querySelector('b'), `⚠ ${r.name}`);
+    setText(b.el.querySelector('span'), `${Math.round(r.cpu)}% cpu`);
+  }
+  // Ended: it bursts where it is.
+  for (const b of BOXES.values()) {
+    if (seen.has(b.k) || b.dying) continue;
+    b.dying = now;
+    sparks(b.pos, HOT, 40, 220);
+    sparks(b.pos, EMBER, 24, 140);
+    sparks(b.pos, colorOf('#6f9cff'), 18, 160);
+  }
+  if (hover?.kind === 'box') refreshTip();
+  poke();
+}
+// END IT on the Details card: the box blows up at once, a big blast with a shockwave, and the camera shakes.
+function blowUp(pid) {
+  const now = performance.now();
+  for (const b of BOXES.values()) {
+    if (b.dying || b.r.pid !== pid) continue;
+    killed.set(b.k, now + 15000);
+    b.dying = now;
+    sparks(b.pos, HOT, 90, 320);
+    sparks(b.pos, EMBER, 60, 220);
+    sparks(b.pos, colorOf('#6f9cff'), 36, 260);
+    sparks(b.pos, WHITE, 30, 140);
+    ripple({ pos: b.pos.clone(), scale: 1.6 }, '#ff5a3c', 140, 700);
+    ripple({ pos: b.pos.clone(), scale: 1.6 }, '#ffffff', 90, 420);
+    shakeCamera(14, 520);
+  }
+  poke(1500);
+}
+
+// Its orbit: a circle in a plane of its own, tilted about the X axis.
+function boxAt(b, theta, out) {
+  const s = Math.sin(theta) * BOX_R;
+  return out.set(Math.cos(theta) * BOX_R, s * Math.sin(b.tilt), s * Math.cos(b.tilt));
+}
+function disposeBox(b) {
+  scene.remove(b.model.group, b.obj);
+  b.el.remove();
+  for (const o of b.model.own) o.dispose();
+  BOXES.delete(b.k);
+  if (hover?.b === b) setHover(null);
+}
+function updateBoxes(dt, now) {
+  for (const b of [...BOXES.values()]) {
+    b.grow += ((b.dying ? 0 : 1) - b.grow) * damp(b.dying ? 10 : 2, dt);
+    if (b.dying && b.grow < 0.03) {
+      disposeBox(b);
+      continue;
+    }
+    const heat = Math.min(1, b.r.cpu / 100);
+    b.theta += (0.05 + heat * 0.07) * dt;
+    boxAt(b, b.theta, b.pos);
+    if (b.enter) {
+      const u = clamp((now - b.enter.t0) / BOX_ENTER_MS, 0, 1);
+      if (u >= 1) b.enter = null;
+      else b.pos.lerpVectors(b.enter.from, b.pos, easeOut(u));
+    }
+    // Where it has been, for its tail: a point every 90 ms, about two seconds of its way.
+    if (now - b.trailAt > 90) {
+      b.trailAt = now;
+      const v = b.trail.pop();
+      b.trail.unshift(v.copy(b.pos));
+      b.trailN = Math.min(b.trail.length, b.trailN + 1);
+    }
+    // Tumbling out of control, faster the more it burns.
+    const g = b.model.group;
+    g.position.copy(b.pos);
+    g.rotation.x += dt * (0.9 + heat);
+    g.rotation.y += dt * 0.45;
+    g.rotation.z += dt * (0.55 + heat * 0.6);
+    g.scale.setScalar(Math.max(0.01, b.grow * 1.4));
+    // Still blue under the flames, a red flicker on its paint; the lamp on top blinks.
+    const flick = 0.75 + 0.25 * Math.sin(now / 55 + b.spin) * Math.sin(now / 23 + b.spin * 2);
+    b.model.blue.emissive.setRGB(0.05 + 0.2 * heat * flick, 0.14, 0.55);
+    b.model.lamp.visible = Math.sin(now / 260 + b.spin) > -0.3;
+    b.obj.visible = !b.dying;
+    b.obj.position.copy(b.pos);
+  }
+}
+function drawBoxes(now) {
+  for (const b of BOXES.values()) {
+    const v = Math.min(1.5, b.r.cpu / 100) * b.grow;
+    const flick = 0.85 + 0.15 * Math.sin(now / 45 + b.spin);
+    // Flames licking round it, and its fiery tail along the path behind it.
+    glow.add(b.pos, HOT, 1.2 * v * flick, 44 + 14 * v);
+    for (let k = 0; k < 7; k++) {
+      const a = now / 140 + k * 0.9 + b.spin, r = 9 + 4 * Math.sin(now / 90 + k);
+      _flame.set(Math.cos(a) * r, Math.sin(a * 1.3) * r, Math.sin(a) * r).add(b.pos);
+      glow.add(_flame, k % 2 ? EMBER : HOT, 1.1 * v * (0.6 + 0.4 * Math.sin(now / 37 + k * 2)), 11 + 5 * v);
+    }
+    for (let k = 0; k < b.trailN; k++) {
+      const u = (k + 1) / (b.trail.length + 1);
+      glow.add(b.trail[k], k < 5 ? EMBER : HOT, 1.3 * (1 - u) * v, (16 + 10 * v) * (1 - u * 0.75));
+    }
+  }
+}
+const boxTip = (r) =>
+  `<div class="h" style="color:#ff5a3c">⚠ ${R.esc(r.name)} · ${Math.round(r.cpu)}% cpu</div>` +
+  `<div class="r">${R.esc(R.clipT(r.cmd, 70))}</div>` +
+  '<div class="d">burning a core with nobody to see it · click to end it</div>';
+
 // ---------- cinematic camera ----------
 // Like a game's idle camera (GTA's): after five minutes away from the keyboard, the camera goes from shot to shot on
 // its own, following or circling whatever moves (sessions on their orbits, terminal cars) and now and then circling
@@ -934,9 +1083,11 @@ const cineTag = el('div', 'cine-tag', '◉ cinematic · move the mouse to take o
 host.parentElement.appendChild(cineTag);
 const _cam = new THREE.Vector3(), _dir = new THREE.Vector3(), _side = new THREE.Vector3();
 
-function noteInput() {
+function noteInput(e) {
   lastInput = performance.now();
   if (!cine) return;
+  // The alarm's shot isn't given up for a mouse going by (on its way to the alarm in the middle of the screen).
+  if (cine.alarm && e && e.type === 'pointermove') return;
   cine = null;
   cineTag.classList.remove('on');
   resetView();
@@ -946,7 +1097,7 @@ for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) addEventL
 function systemIdle(sec) {
   const at = performance.now() - sec * 1000;
   if (at > lastInput) lastInput = at;
-  if (cine && sec < 3) noteInput();
+  if (cine && !cine.alarm && sec < 3) noteInput();
 }
 function setCinematic(on) {
   cineOn = on;
@@ -961,10 +1112,24 @@ function setCinematic(on) {
   if (!on && cine) noteInput();
 }
 
+// A box just turned up: the camera flies over and follows it in for a few seconds, then goes home. Any input on the
+// dashboard takes the camera back at once, as with the idle camera; work elsewhere on the Mac doesn't.
+let pendingFollow = null;
+function followBox(b) {
+  pendingFollow = null;
+  if (press || !viewReady || b.dying) return;
+  const now = performance.now();
+  cine = { kind: 'box', key: b.k, b, style: 'chase', t0: now, until: now + BOX_FOLLOW_MS, ang: Math.random() * TAU, prev: null, alarm: true };
+  camAnim = null;
+  R.hideTip();
+  poke(BOX_FOLLOW_MS);
+}
+
 function subjects() {
   const out = [{ kind: 'core', key: 'core' }];
   for (const n of NODES.values()) if (!n.dying && n.root.visible && n.homeKind === 'orbit') out.push({ kind: 'session', key: n.sid, n });
   for (const s of SHIPS.values()) if (onLane(s) && !s.fly) out.push({ kind: 'car', key: s.id, s });
+  for (const b of BOXES.values()) if (!b.dying) out.push({ kind: 'box', key: b.k, b });
   return out;
 }
 function nextShot(now) {
@@ -978,6 +1143,7 @@ function nextShot(now) {
 function subjectPos(c) {
   if (c.kind === 'core') return tmp.p.set(0, 0, 0);
   if (c.kind === 'session') return NODES.get(c.key) === c.n && !c.n.dying ? c.n.pos : null;
+  if (c.kind === 'box') return BOXES.get(c.key) === c.b && !c.b.dying ? c.b.pos : null;
   return SHIPS.get(c.key) === c.s && onLane(c.s) ? c.s.pos : null;
 }
 function startCinematic() {
@@ -993,7 +1159,15 @@ function stepCinematic(dt, now) {
     if (now - lastInput > CINE.IDLE_MS) startCinematic();
     return;
   }
-  if (now > cine.until) cine = nextShot(now);
+  if (now > cine.until || (cine.alarm && !subjectPos(cine))) {
+    // The alarm's shot is over: home, unless you're away and the idle camera goes on.
+    if (cine.alarm && now - lastInput < CINE.IDLE_MS) {
+      cine = null;
+      resetView();
+      return;
+    }
+    cine = nextShot(now);
+  }
   let p = subjectPos(cine);
   if (!p) {
     cine = nextShot(now);
@@ -1002,7 +1176,7 @@ function stepCinematic(dt, now) {
   }
   // Framing: far enough that the subject stays well inside the picture (it was so close a hexagon overflowed it), and
   // from outside its orbit, so the other sessions pass behind it rather than between it and the camera.
-  const far = cine.kind === 'core' ? 620 : cine.kind === 'car' ? 260 : 360;
+  const far = cine.kind === 'core' ? 620 : cine.kind === 'car' ? 260 : cine.kind === 'box' ? 220 : 360;
   if (cine.style === 'chase') {
     // behind it along the way it moves, out from the core and above
     if (cine.prev) _dir.subVectors(p, cine.prev);
@@ -1313,6 +1487,7 @@ function pick(mx, my, target) {
   }
   for (const c of CATS) consider({ kind: 'station', cat: c }, STATIONS[c].pos, 20, 1.2);
   for (const s of SHIPS.values()) if (!s.dying) consider({ kind: 'ship', ship: s }, s.pos, 12 * s.size, 0.9);
+  for (const b of BOXES.values()) if (!b.dying) consider({ kind: 'box', b }, b.pos, 22, 0.8);
   return best;
 }
 function setHover(h) {
@@ -1325,6 +1500,7 @@ function refreshTip() {
   if (hover.kind === 'session') R.showTip(R.sessionTip(hover.owner.s), mouse.x, mouse.y);
   else if (hover.kind === 'drone') R.showTip(R.agentTip(hover.drone.ag, hover.owner.s), mouse.x, mouse.y);
   else if (hover.kind === 'ship') R.showTip(R.terminalTip(hover.ship.t), mouse.x, mouse.y);
+  else if (hover.kind === 'box') R.showTip(boxTip(hover.b.r), mouse.x, mouse.y);
   else R.showTip(R.stationTip(hover.cat), mouse.x, mouse.y);
 }
 function localXY(e) {
@@ -1383,6 +1559,9 @@ function endPress(e, cancel) {
   else if (h.kind === 'ship') {
     sparks(h.ship.pos, ICE, 12, 55);
     R.openTerminal(h.ship.id);
+  } else if (h.kind === 'box') {
+    sparks(h.b.pos, HOT, 14, 60);
+    window.Danger?.open(h.b.r.pid);
   }
 }
 host.addEventListener('pointerup', (e) => endPress(e, false), true);
@@ -1585,10 +1764,18 @@ function frame(now) {
   const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
   lastFrame = now;
   if (!SIZE.w) return;
+  // Last frame's shake comes off before anything moves the camera.
+  camera.position.sub(SHAKE.off);
+  SHAKE.off.set(0, 0, 0);
   stepCamera(now);
   stepCinematic(dt, now);
   controls.update();
   clampPan();
+  if (now < SHAKE.until) {
+    const u = (SHAKE.until - now) / SHAKE.ms;
+    SHAKE.off.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2 * SHAKE.amp * u);
+    camera.position.add(SHAKE.off);
+  }
   updateCamBasis();
   host.classList.toggle('far', CAM.dist > CAM.fit * 1.5);
   glow.material.uniforms.focal.value = CAM.focal * SIZE.dpr;
@@ -1612,6 +1799,7 @@ function frame(now) {
   }
   updateStations(dt, now);
   updateShips(dt, now);
+  updateBoxes(dt, now);
   coreObj.position.set(0, 0, 0).addScaledVector(CAM.up, -K.CORE_R * 1.7);
 
   glow.begin();
@@ -1623,6 +1811,7 @@ function frame(now) {
   drawStatusFx(now);
   drawSparks(dt, now);
   drawShips();
+  drawBoxes(now);
   glow.end();
   lines.end();
 
@@ -1647,8 +1836,14 @@ wake();
 function activity(visible, focused) {
   ACT.visible = visible;
   ACT.focused = focused;
+  if (visible && pendingFollow) followBox(pendingFollow);
   wake();
 }
+// The Details card (danger.js) opened on one: the camera goes to its box.
+function focusRunaway(pid) {
+  const b = [...BOXES.values()].find((x) => !x.dying && x.r.pid === pid);
+  if (b) followBox(b);
+}
 setCinematic(cineOn);
-window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle };
+window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);

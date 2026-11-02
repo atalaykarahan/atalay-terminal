@@ -10,6 +10,10 @@ enum Proc {
         /// User + system CPU time in nanoseconds.
         let cpuTime: UInt64
         let rss: UInt64
+        let uid: UInt32
+        /// When it started, in microseconds since 1970: with the pid, what tells it apart from a later process that got
+        /// the same number.
+        let started: UInt64
     }
 
     private static let timebase: (numer: UInt64, denom: UInt64) = {
@@ -27,7 +31,8 @@ enum Proc {
         // Task times are in Mach absolute time units (not nanoseconds) on Apple silicon.
         let ticks = all.ptinfo.pti_total_user &+ all.ptinfo.pti_total_system
         return Info(ppid: Int32(bitPattern: all.pbsd.pbi_ppid), tty: tty,
-                    cpuTime: ticks &* timebase.numer / timebase.denom, rss: all.ptinfo.pti_resident_size)
+                    cpuTime: ticks &* timebase.numer / timebase.denom, rss: all.ptinfo.pti_resident_size,
+                    uid: all.pbsd.pbi_uid, started: all.pbsd.pbi_start_tvsec &* 1_000_000 &+ all.pbsd.pbi_start_tvusec)
     }
 
     /// devname() stats /dev entries on every call; terminals keep their device number, so remember them.

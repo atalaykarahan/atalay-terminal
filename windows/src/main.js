@@ -15,6 +15,7 @@ const { createCloud } = require('./cloud');
 const { createThemes } = require('./themes');
 const { createTerminals } = require('./terminals');
 const { createOverlay } = require('./overlay');
+const { createRunaways } = require('./runaways');
 
 let autoUpdater = null;
 try {
@@ -192,6 +193,16 @@ function loadClientKey() {
 }
 
 const overlay = createOverlay({ dataDir: app.getPath('userData'), claudeDir: path.join(os.homedir(), '.claude') });
+// Processes left burning a core where nobody sees them: the dashboard sounds the alarm (DANGER). A staging run
+// (npm run staging) starts a demo one a few seconds after it opens.
+const runaways = createRunaways({
+  onChange: (json) => {
+    toDash(`runaways(${json})`);
+    // The alarm, in the middle of the screen (the notices panel can play its sound).
+    toNotices(`runaways && __messages.runaways(${json})`);
+  },
+  staging: process.env.ATALAY_STAGING === '1',
+});
 
 // ---------- pushing to the pages ----------
 function run(win, js) {
@@ -315,6 +326,7 @@ function handleRadar(msg) {
     case 'ready':
       engine.requestInit();
       pushCloud();
+      toDash(`runaways(${runaways.json()})`);
       return true;
     case 'open':
       return openSession(msg.sid, false);
@@ -326,6 +338,8 @@ function handleRadar(msg) {
       return chats.get(msg.id) && showChat(msg.id);
     case 'endSession':
       return endSession(msg.sid);
+    case 'endRunaway':
+      return runaways.end(msg.pid, msg.started);
     case 'log':
       console.log('dashboard page:', msg.msg);
       return true;
@@ -596,7 +610,8 @@ function handleMessages(win, body) {
         } else {
           win.setAlwaysOnTop(true, 'floating');
           const a = d.workArea;
-          win.setBounds(body.place === 'fire' ? a : { x: a.x + a.width - w - 12, y: a.y + a.height - h - 12, width: w, height: h });
+          const at = body.place === 'center' ? { x: a.x + Math.round((a.width - w) / 2), y: a.y + Math.round((a.height - h) / 2) } : { x: a.x + a.width - w - 12, y: a.y + a.height - h - 12 };
+          win.setBounds(body.place === 'fire' ? a : { ...at, width: w, height: h });
           if (!win.isVisible()) win.showInactive();
         }
       } else {
@@ -632,6 +647,12 @@ function handleMessages(win, body) {
       showDashboard();
       toDash('openView("notifications")');
       return true;
+    case 'openDanger':
+      showDashboard();
+      toDash('openDanger()');
+      return true;
+    case 'endRunaway':
+      return runaways.end(body.pid, body.started);
     case 'openChat':
       return openFriendChat(body.id);
     case 'showing':
@@ -809,6 +830,7 @@ app.whenReady().then(() => {
   createDashboard();
   engine.start();
   cloud.start();
+  runaways.start();
   // The corner's notices can cover the screen (a level-up): never during a development check.
   if (!PROBE) notices();
   // The orbit's cinematic camera waits for minutes without input; the terminals ride the orbit as cars.
@@ -842,6 +864,7 @@ app.on('before-quit', (e) => {
   quitting = true;
   terminals.detachAll();
   engine.stop();
+  runaways.stop();
   cloud.stop();
 });
 

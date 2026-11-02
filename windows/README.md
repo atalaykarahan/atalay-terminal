@@ -45,7 +45,8 @@ A release, on the Windows PC:
 1. On the Mac, `windows/scripts/new-key.sh`: a fresh key for this release (the old one stops working a month later, by
    when every running copy has updated). Copy it, then here, without it ever showing:
    `$env:ATALAY_CLIENT_KEY = (Get-Clipboard -Raw).Trim(); node scripts/clientkey.js --save; Remove-Item Env:ATALAY_CLIENT_KEY`
-2. Raise `version` in package.json.
+2. Raise `version` in package.json to the next version, the one the Mac's next release takes too: the two apps are one
+   product with one version number (0.13.0 is the first they share), so the admin page compares them alike.
 3. `npm run release -- "what changed" "what else"`: writes the key in, builds, and replaces the release's files
    (`latest.yml`, the installer and its blockmap; `--dry-run` only shows them). It signs in to GitHub as git does on
    this PC (or with `$env:GH_TOKEN`).
@@ -66,6 +67,7 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/git.js` | Source Control's requests: the repos, diffs, history, commit, push | Git.swift |
 | `src/cloud.js` | the API: hacker name, heartbeat (XP), friends and messages, the live socket, notifications | Cloud, Social, ClientKey |
 | `src/themes.js` | the themes: every colour token from a palette, into each page | Themes.swift |
+| `src/runaways.js` | processes left burning a core where nobody sees them: the dashboard's DANGER alarm | Runaways |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
 | `pages/terminal.*` | a chat or terminal window: xterm.js and its header | ChatWindow |
 

@@ -50,6 +50,9 @@ window.Messages = (() => {
   const notes = NOTICES ? mount('msgbox') : null;
   let peek = null;
   let peekTimer = 0;
+  // The danger alarm (below): a runaway process, in the middle of the screen while it's up.
+  const alertBox = NOTICES ? mount('dangerbox') : null;
+  let alertOn = null;
   const queue = []; // notices waiting for the one on screen (an update, the daily bonus)
 
   function sizeNotes() {
@@ -60,6 +63,9 @@ window.Messages = (() => {
     if (takeover) return post({ type: 'layout', w: 1, h: 1, place: 'screen' });
     // The flames have the screen's edges, every click passing through (the notice sits in its corner meanwhile).
     if (fire) return post({ type: 'layout', w: 1, h: 1, place: 'fire' });
+    // The danger alarm has the middle of the screen (the corner's notices wait under it).
+    const alarm = alertOn && alertBox.firstElementChild;
+    if (alarm) return post({ type: 'layout', w: alarm.offsetWidth + 16, h: alarm.offsetHeight + 16, place: 'center' });
     post(box ? { type: 'layout', w: box.offsetWidth + 16, h: box.offsetHeight + 16, place: 'corner' } : { type: 'layout', w: 0, h: 0 });
   }
 
@@ -72,7 +78,7 @@ window.Messages = (() => {
   const autoHide = () => (replying() ? (peekTimer = setTimeout(autoHide, 3000)) : hidePeek());
 
   function showPeek(p) {
-    if (peek && p !== peek && replying()) return void queue.push(p);
+    if ((peek && p !== peek && replying()) || alertOn) return void queue.push(p);
     clearTimeout(peekTimer);
     const again = !!peek;
     peek = p;
@@ -870,6 +876,59 @@ window.Messages = (() => {
     getSelection().addRange(r);
   }
 
+  // ======================= danger: a runaway process =======================
+  // A process left burning a CPU core where nobody sees it (the app's Runaways): a big DANGER in the middle of the
+  // screen, over whatever is in front, with the alarm sounding and a shake. One line says how much it burns; Details
+  // opens the dashboard's card (what it is, END IT) and flies the camera to it, Ignore puts it away until another one
+  // starts. It stays until one is pressed or the processes are gone; the corner's notices wait under it.
+  let runaways = [];
+  const alarmed = new Set(), quiet = new Set();
+  const rkey = (r) => `${r.pid}:${r.started}`;
+  const loud = () => runaways.filter((r) => !quiet.has(rkey(r)));
+
+  function setRunaways(list) {
+    if (!NOTICES) return;
+    runaways = Array.isArray(list) ? list : [];
+    const now = new Set(runaways.map(rkey));
+    for (const k of [...alarmed]) if (!now.has(k)) alarmed.delete(k);
+    const fresh = loud().filter((r) => !alarmed.has(rkey(r)));
+    for (const r of runaways) alarmed.add(rkey(r));
+    if (fresh.length) return showAlert(true);
+    if (alertOn) return loud().length ? showAlert(false) : hideAlert();
+  }
+
+  function showAlert(sound) {
+    const list = loud();
+    alertOn = list[0];
+    const top = Math.round(Math.max(...list.map((r) => r.cpu)));
+    const line = list.length === 1 ? `1 process is using ${top}% CPU` : `${list.length} processes are burning the CPU, up to ${top}%`;
+    alertBox.innerHTML =
+      `<div class="dg${sound ? ' in' : ''}"><b class="dg-big"><i>⚠</i> DANGER</b><div class="dg-line">${esc(line)}</div>` +
+      '<div class="dg-acts"><button data-act="dg-ignore">Ignore</button><button class="go" data-act="dg-show">Details</button></div></div>';
+    document.body.classList.add('danger-on');
+    sizeNotes();
+    if (sound) Sfx.play('alarm');
+  }
+
+  function hideAlert() {
+    alertOn = null;
+    alertBox.innerHTML = '';
+    document.body.classList.remove('danger-on');
+    sizeNotes();
+    if (queue.length && !takeover && !peek) showPeek(queue.shift());
+  }
+
+  if (NOTICES) {
+    alertBox.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-act]');
+      if (!el || !alertOn) return;
+      if (el.dataset.act === 'dg-ignore') for (const r of runaways) quiet.add(rkey(r));
+      else if (el.dataset.act === 'dg-show') post({ type: 'openDanger' });
+      else return;
+      hideAlert();
+    });
+  }
+
   // ======================= the app's panels =======================
   window.__messages = {
     event: (ev) => Social.event(ev),
@@ -884,6 +943,7 @@ window.Messages = (() => {
     xp: (x) => progress({ xp: x }),
     focus: (on) => setFocus(on),
     skip: () => skip(),
+    runaways: (list) => setRunaways(list),
   };
   Social.load();
   post({ type: 'ready' });

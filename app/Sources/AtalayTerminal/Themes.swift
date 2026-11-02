@@ -164,7 +164,6 @@ final class ThemeStore: ObservableObject {
         t["accent"] = A
         t["accent-soft"] = A.mix(white, 0.35)
         t["accent-pale"] = A.mix(white, 0.65)
-        t["logo"] = A
         t["txt"] = F
         t["hi"] = F.mix(white, 0.5)
         t["title"] = F.mix(white, 0.25)

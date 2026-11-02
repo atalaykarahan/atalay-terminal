@@ -1,0 +1,25 @@
+/* Runaway processes (danger.js): the engine-failure Details card, at the map's right. Red whatever the theme. */
+#danger-panel { position: fixed; inset: 0; z-index: 3000; pointer-events: none; }
+#danger-panel .dp { position: absolute; top: 84px; right: 24px; width: min(420px, 90vw); max-height: calc(100vh - 120px); overflow: auto; padding: 14px 16px 10px; border: 1px solid #ff2e2e; border-radius: 10px; background: rgba(24, 6, 6, 0.94); box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6), 0 0 28px rgba(255, 40, 40, 0.3); color: #f5e0e0; font: 12px/1.5 var(--font); pointer-events: auto; }
+#danger-panel .dp.in { animation: ask-in 0.15s ease-out; }
+/* END IT landing: the card jolts, sparks fly off the button and a ring goes out from it (danger.js). */
+#danger-panel.hit .dp { animation: dp-hit 0.35s ease-out; }
+@keyframes dp-hit { 15% { transform: translate(-7px, 3px) rotate(-0.6deg); } 35% { transform: translate(6px, -3px) rotate(0.5deg); } 55% { transform: translate(-4px, 2px); } 75% { transform: translate(2px, -1px); } }
+.dp-burst { position: fixed; inset: 0; z-index: 3100; pointer-events: none; }
+.dp-burst i { position: absolute; border-radius: 1px; }
+.dp-burst b { position: absolute; width: 40px; height: 40px; border: 2px solid #fff; border-radius: 50%; }
+.dp-head { display: flex; align-items: center; }
+.dp-head b { color: #ff4d4d; font-size: 14px; letter-spacing: 0.16em; }
+.dp-x { margin-left: auto; padding: 0 4px; border: 0; background: transparent; color: #c99; font: 14px var(--font); cursor: pointer; }
+.dp-x:hover { color: #fff; }
+.dp-sub { margin: 4px 0 2px; color: #c9a5a5; }
+.dp-row { padding: 10px 0 4px; }
+.dp-row + .dp-row { border-top: 1px solid rgba(255, 80, 80, 0.18); }
+.dp-l1 { display: flex; align-items: center; gap: 10px; }
+.dp-l1 b { color: #fff; font-size: 15px; }
+.dp-cpu { margin-left: auto; color: #ff4d4d; font-size: 16px; font-weight: 700; }
+.dp-end { height: 26px; padding: 0 12px; border: 1px solid #ff2e2e; border-radius: 5px; background: #ff2e2e; color: #1a0000; font: 700 12px var(--font); letter-spacing: 0.06em; cursor: pointer; }
+.dp-end.sure { border-color: #fff; background: #fff; color: #b00000; }
+.dp-end:disabled { opacity: 0.6; cursor: default; }
+.dp-l2 { margin-top: 2px; overflow: hidden; color: #c9a5a5; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.dp-l2 em { color: #ffb057; font-style: normal; }

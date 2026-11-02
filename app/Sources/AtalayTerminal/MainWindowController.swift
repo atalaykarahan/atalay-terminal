@@ -9,6 +9,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let sidebar = SidebarModel()
     let radar = RadarView()
     let overlay = OverlayController()
+    /// Processes left burning a core where nobody sees them; the dashboard sounds the alarm.
+    let runaways = Runaways()
 
     private var chats: [String: ChatWindowController] = [:]
     private var briefs: [String: SessionBrief] = [:]
@@ -48,6 +50,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         overlay.manager = self
         buildLayout()
         wireEngine()
+        runaways.onChange = { [weak self] json in
+            self?.radar.push("runaways", json)
+            MessagePanel.notices.runaways(json)
+        }
+        runaways.start()
         observeVisibility()
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: ThemeStore.changed, object: nil)
         let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
@@ -132,6 +139,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.showDashboard()
             self?.radar.push("openView", "\"notifications\"")
         }
+        // The danger alarm's Details: the dashboard in front, its engine-failure panel open.
+        MessagePanel.onOpenDanger = { [weak self] in
+            self?.showDashboard()
+            self?.radar.push("openDanger", "null")
+        }
+        MessagePanel.onEndRunaway = { [weak self] pid, started in self?.runaways.end(pid: pid, started: started) }
         if UserDefaults.standard.bool(forKey: "sidebarHidden") { side.isHidden = true }
     }
 
@@ -164,11 +177,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             pushCloud()
             terminalsJSON = ""
             pushTerminals()
+            radar.push("runaways", runaways.json)
         case "open": if let sid = msg["sid"] as? String { openSession(sid) }
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
         case "openTerminal": if let id = msg["id"] as? String { chats[id]?.show() }
         case "endSession": if let sid = msg["sid"] as? String { endSession(sid) }
+        case "endRunaway":
+            if let pid = (msg["pid"] as? NSNumber)?.int32Value, let started = (msg["started"] as? NSNumber)?.doubleValue {
+                runaways.end(pid: pid, started: started)
+            }
         // A menu (friends, settings, an update) opened or closed on the dashboard.
         case "modal":
             let open = msg["open"] as? Bool == true

@@ -41,7 +41,8 @@ func contextLimit(_ model: String?, cwd: String) -> Double {
 /// The files are read at most every 5 s.
 func autoCompactWindow(cwd: String) -> Double? {
     if let env = ProcessInfo.processInfo.environment["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], let n = tokenCount(env) { return n }
-    for file in [cwd + "/.claude/settings.local.json", cwd + "/.claude/settings.json", HOME + "/.claude/settings.json"] where !cwd.isEmpty || file.hasPrefix(HOME) {
+    // /autocompact saves it in the user's settings, in Claude's folder (CLAUDE_CONFIG_DIR when set).
+    for file in [cwd + "/.claude/settings.local.json", cwd + "/.claude/settings.json", CLAUDE_DIR + "/settings.json"] where !cwd.isEmpty || file.hasPrefix(CLAUDE_DIR) {
         if let n = compactSetting(file) { return n }
     }
     return nil

@@ -104,7 +104,6 @@ function derive(s) {
   t.accent = A;
   t['accent-soft'] = mix(A, white, 0.35);
   t['accent-pale'] = mix(A, white, 0.65);
-  t.logo = A;
   t.txt = F;
   t.hi = mix(F, white, 0.5);
   t.title = mix(F, white, 0.25);

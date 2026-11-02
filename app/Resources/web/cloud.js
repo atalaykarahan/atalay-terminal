@@ -42,8 +42,8 @@ window.Cloud = (() => {
   const q = (sel) => root.querySelector(sel);
   const brand = document.querySelector('.brand');
   const stack = brand.querySelector('.stack');
-  // The logo shows what waits for you (unread messages, friend requests) and your status.
-  brand.insertAdjacentHTML('afterbegin', '<i class="cnt hot bdg" hidden></i><i class="pdot bme" hidden></i>');
+  // The logo shows your status. Unread messages and friend requests count on the friends icon on the left edge.
+  brand.insertAdjacentHTML('afterbegin', '<i class="pdot bme" hidden></i>');
 
   function render(s) {
     if (!s) return;
@@ -57,7 +57,7 @@ window.Cloud = (() => {
     setHTML(stack, s.hackerName ? `${title}<b${long}>${esc(s.hackerName)}<i class="htag">${tagText(s.tag)}</i></b>${bar}` : "<small>ATALAY'S</small><b>TERMINAL</b>");
     brand.title = r
       ? `Level ${x.level} · ${r.name} · ${x.to ? `${Xp.num(x.xp - x.from)} / ${Xp.num(x.to - x.from)} XP` : `${Xp.num(x.xp)} XP`} · today ${Xp.dur(x.today)}`
-      : 'Profile, friends and settings';
+      : 'Profile and settings';
     if (waitFor && (Date.now() > waitFor.until || waitFor.test(s))) {
       const w = waitFor;
       waitFor = null;
@@ -860,7 +860,6 @@ window.Cloud = (() => {
       b.textContent = k > 99 ? '99+' : k;
       b.hidden = !k;
     };
-    show(brand.querySelector('.bdg'), n);
     show(document.querySelector('#activity [data-view=friends] .vs-badge'), n);
     show(document.querySelector('#activity [data-view=notifications] .vs-badge'), notes);
     const me = brand.querySelector('.bme');

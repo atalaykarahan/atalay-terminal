@@ -117,7 +117,7 @@ window.Sfx = (() => {
   }
 
   // How long the longer sounds ring, so the audio doesn't rest before they end.
-  const LENGTH = { levelup: 3000, rankup: 4200, glitch: 1200, fire: 3200 };
+  const LENGTH = { levelup: 3000, rankup: 4200, glitch: 1200, fire: 3200, alarm: 2800, hit: 800, boom: 2000 };
 
   const SOUNDS = {
     // Incoming message: two quick rising notes, like a HUD ping.
@@ -228,6 +228,120 @@ window.Sfx = (() => {
       [[196, 0.22], [293.66, 0.3], [392, 0.38]].forEach(([fr, at]) => horn(fr, at, 0.12, 0.045));
       [392, 493.88, 587.33].forEach((fr) => horn(fr, 0.5, 1.1, 0.03));
     },
+    // Engine failure, for a runaway process: a starship's warning. Two bursts of three urgent beeps (a hard fifth, square
+    // and triangle through a soft filter), each burst over a low thump, the echo ringing after them. About two seconds.
+    alarm() {
+      const t = ctx.currentTime;
+      const beep = (at, dur) => {
+        const f = ctx.createBiquadFilter();
+        const g = ctx.createGain();
+        f.type = 'lowpass';
+        f.frequency.value = 2600;
+        f.Q.value = 0.7;
+        g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(0.1, at + 0.008);
+        g.gain.setValueAtTime(0.1, at + dur - 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+        f.connect(g).connect(out);
+        for (const [freq, type] of [[880, 'square'], [1318.5, 'triangle']]) {
+          const o = ctx.createOscillator();
+          o.type = type;
+          o.frequency.value = freq;
+          o.connect(f);
+          o.start(at);
+          o.stop(at + dur + 0.02);
+        }
+      };
+      const thump = (at) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(120, at);
+        o.frequency.exponentialRampToValueAtTime(46, at + 0.35);
+        g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(0.32, at + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + 0.4);
+        o.connect(g).connect(out);
+        o.start(at);
+        o.stop(at + 0.45);
+      };
+      for (const burst of [0, 0.95]) {
+        thump(t + burst);
+        for (let i = 0; i < 3; i++) beep(t + burst + i * 0.21, 0.15);
+      }
+    },
+    // END IT pressed: a punch that lands. A low thump, a crack of noise and a short metallic ring, all at once.
+    hit() {
+      const t = ctx.currentTime;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(160, t);
+      o.frequency.exponentialRampToValueAtTime(42, t + 0.22);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.55, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+      o.connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 0.3);
+      const n = Math.floor(ctx.sampleRate * 0.14);
+      const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 2;
+      const crack = ctx.createBufferSource();
+      const bp = ctx.createBiquadFilter();
+      const cg = ctx.createGain();
+      crack.buffer = buf;
+      bp.type = 'bandpass';
+      bp.frequency.value = 1700;
+      bp.Q.value = 0.8;
+      cg.gain.value = 0.5;
+      crack.connect(bp).connect(cg).connect(out);
+      crack.start(t);
+      for (const [fr, vol] of [[1240, 0.05], [1870, 0.03]]) {
+        const r = ctx.createOscillator();
+        const rg = ctx.createGain();
+        r.type = 'triangle';
+        r.frequency.value = fr;
+        rg.gain.setValueAtTime(vol, t);
+        rg.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+        r.connect(rg).connect(out);
+        r.start(t);
+        r.stop(t + 0.36);
+      }
+    },
+    // The runaway's box blowing up on the orbit: a deep rumbling blast with a sub drop under it, crackling as it fades.
+    boom() {
+      const t = ctx.currentTime;
+      const n = Math.floor(ctx.sampleRate * 1.2);
+      const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.28));
+      const blast = ctx.createBufferSource();
+      const lp = ctx.createBiquadFilter();
+      const bg = ctx.createGain();
+      blast.buffer = buf;
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(2400, t);
+      lp.frequency.exponentialRampToValueAtTime(180, t + 0.9);
+      bg.gain.value = 0.7;
+      blast.connect(lp).connect(bg).connect(out);
+      blast.start(t);
+      swell(90, 28, 0, 0.7, 0.5);
+      for (let i = 0; i < 18; i++) {
+        const at = t + 0.15 + Math.random() * 0.8;
+        const c = ctx.createBufferSource();
+        const hp = ctx.createBiquadFilter();
+        const g = ctx.createGain();
+        c.buffer = buf;
+        hp.type = 'highpass';
+        hp.frequency.value = 1500 + Math.random() * 2500;
+        g.gain.setValueAtTime(0.05 + Math.random() * 0.1, at);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + 0.012);
+        c.connect(hp).connect(g).connect(out);
+        c.start(at, Math.random() * 0.3, 0.02);
+      }
+    },
     // Message sent: a short, low-key blip.
     send() {
       const t = ctx.currentTime;
@@ -257,7 +371,7 @@ window.Sfx = (() => {
 
   return {
     play(name) {
-      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire'].includes(name);
+      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom'].includes(name);
       if (!SOUNDS[name] || (window.Social && window.Social.dnd() && !yours)) return;
       try {
         audio(LENGTH[name] || 2500);
