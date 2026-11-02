@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased (on the next branch, out with the next version)
+
+- Friends and the leaderboard: the flames burn on 5 hours of work today, counted from midnight as a daily stat, no longer on 5 in the last 24 hours
+
 ## 0.12.1
 
 - Chats: Claude Code from its native installer is recognised: the mouse wheel scrolls its history, a paste goes in whole (a picture too) and a running chat comes back as a chat after a restart or an update

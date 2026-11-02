@@ -485,7 +485,8 @@ window.Cloud = (() => {
               // Their last 24 hours, not their today: that ends at their own midnight, wherever they live.
               const last24 = f.xp && f.xp.last24;
               const today = last24 ? `<span class="mn-today" title="Active in the last 24 hours">24h ${Xp.dur(last24)}</span>` : '';
-              const fire = last24 >= 5 * 3600;
+              // The flames, though, are a daily stat as in games: five hours of work in their today, from their own midnight.
+              const fire = (f.xp && f.xp.today) >= 5 * 3600;
               return `<div class="mn-row${fire ? ' fire' : ''}" data-id="${esc(f.id)}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
                 `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" data-act="chat"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
                 `${today}${f.unread ? `<i class="cnt hot">${f.unread}</i>` : ''}<button class="mn-btn" type="button" data-act="profile" title="Profile: level and hours">◎</button>` +
@@ -720,8 +721,9 @@ window.Cloud = (() => {
       );
     }
     const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
-    // Five hours of work in the last 24 hours (not their today, which ends at their own midnight): the card burns.
-    const fire = u.last24 >= 5 * 3600;
+    // Five hours of work today, from their own midnight (a daily stat, as in games): the card burns. Their today is the
+    // last of their 7 days (null while they're invisible).
+    const fire = (u.days ? u.days[u.days.length - 1] : 0) >= 5 * 3600;
     const spark = u.days
       ? `<span class="lb-spark">${u.days.map((s) => `<i style="height:${s ? Math.max(12, Math.min(100, (s / 28_800) * 100)).toFixed(0) : 0}%"></i>`).join('')}</span>`
       : '<span class="lb-spark off" title="keeps their active time to themselves"></span>';
