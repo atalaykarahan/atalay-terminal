@@ -3,7 +3,7 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
-## Unreleased (on the next branch, out with the next version)
+## Unreleased (on the develop branch, out with the next version)
 
 - Friends and the leaderboard: the flames burn on 5 hours of work today, counted from midnight as a daily stat, no longer on 5 in the last 24 hours
 
