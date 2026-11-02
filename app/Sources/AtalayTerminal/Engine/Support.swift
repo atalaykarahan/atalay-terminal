@@ -183,6 +183,9 @@ func redact(_ s: String?) -> String {
 
 let HOME = NSHomeDirectory()
 
+/// Claude Code's folder: CLAUDE_CONFIG_DIR, else ~/.claude.
+let CLAUDE_DIR = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] ?? (HOME as NSString).appendingPathComponent(".claude")
+
 func hostPath(_ u: String?) -> String {
     guard let u, let url = URL(string: u), let host = url.host else { return clip(redact(u), 70) }
     let h = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
@@ -304,3 +307,18 @@ func dayStart() -> Double {
 
 /// JSONSerialization cannot take Optional values; nil becomes JSON null.
 func orNull(_ v: Any?) -> Any { v ?? NSNull() }
+
+// MARK: - Claude processes
+
+extension Proc {
+    /// Whether `pid` is a running Claude Code. npm and Homebrew installs run as "claude" or "claude.exe"; the native
+    /// installer's binary is named after its version (~/.local/share/claude/versions/2.1.316), whatever CLAUDE_CONFIG_DIR
+    /// it runs with; any other install is known by its `sessions/<pid>.json` in Claude's folder (the engine's registry).
+    /// Claude's helpers (its ripgrep, its built-in MCP servers) run the native binary too: callers ask about Claude
+    /// itself, the job in front or the first match below the shell.
+    static func isClaude(_ pid: Int32) -> Bool {
+        name(pid)?.hasPrefix("claude") == true
+            || path(pid)?.contains("/claude/versions/") == true
+            || FileManager.default.fileExists(atPath: (CLAUDE_DIR as NSString).appendingPathComponent("sessions/\(pid).json"))
+    }
+}

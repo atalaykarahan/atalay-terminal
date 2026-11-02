@@ -72,7 +72,6 @@ enum Proc {
         return path.isEmpty ? nil : path
     }
 
-    /// Short executable name (p_comm), e.g. "screen".
     /// The process group in front on `pid`'s terminal: the shell's foreground job, or the shell itself.
     static func foregroundGroup(_ pid: Int32) -> Int32? {
         var bsd = proc_bsdinfo()
@@ -81,9 +80,17 @@ enum Proc {
         return Int32(bsd.e_tpgid)
     }
 
+    /// Short executable name (p_comm), e.g. "screen"; native Claude runs as its version ("2.1.316"), see isClaude.
     static func name(_ pid: Int32) -> String? {
         var buf = [CChar](repeating: 0, count: 64)
         guard proc_name(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
+        return String(cString: buf)
+    }
+
+    /// Full path of the file the process runs, e.g. "/Users/me/.local/share/claude/versions/2.1.316".
+    static func path(_ pid: Int32) -> String? {
+        var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN)) // PROC_PIDPATHINFO_MAXSIZE, a macro Swift can't import
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
         return String(cString: buf)
     }
 
