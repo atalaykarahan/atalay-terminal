@@ -308,6 +308,9 @@ private struct HUDButton: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(active ? Theme.cInk : (hover ? Theme.cHi : Theme.cDim))
                 .frame(width: 24, height: 20)
+                // The whole square takes the click, not only the symbol's own pixels (a plain button's default):
+                // the power symbol is a thin ring, and most clicks on it missed.
+                .contentShape(Rectangle())
                 .background(active ? color : Color.clear)
                 .overlay(Rectangle().stroke(color.opacity(hover || active ? 1 : 0.4), lineWidth: 1))
                 .shadow(color: hover ? color.opacity(0.6) : .clear, radius: 6)
@@ -578,6 +581,9 @@ final class BeamView: NSView {
 /// The header is the window's title bar, so a double-click on its title row does what a double-click on any title
 /// bar does (System Settings → Desktop & Dock): fill the screen and back, minimize, or nothing.
 private final class HeaderHostingView<Content: View>: NSHostingView<Content> {
+    /// Like a title bar's buttons, the header's work on the first click, while another window is in front too.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         let fromTop = isFlipped ? p.y : bounds.height - p.y
