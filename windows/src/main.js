@@ -193,15 +193,13 @@ function loadClientKey() {
 }
 
 const overlay = createOverlay({ dataDir: app.getPath('userData'), claudeDir: path.join(os.homedir(), '.claude') });
-// Processes left burning a core where nobody sees them: the dashboard sounds the alarm (DANGER). A staging run
-// (npm run staging) starts a demo one a few seconds after it opens.
+// Processes left burning a core where nobody sees them: the dashboard sounds the alarm (DANGER).
 const runaways = createRunaways({
   onChange: (json) => {
     toDash(`runaways(${json})`);
     // The alarm, in the middle of the screen (the notices panel can play its sound).
     toNotices(`runaways && __messages.runaways(${json})`);
   },
-  staging: process.env.ATALAY_STAGING === '1',
 });
 
 // ---------- pushing to the pages ----------

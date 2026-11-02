@@ -9,23 +9,15 @@ const { spawn, execFile } = require('child_process');
 
 const WIN = process.platform === 'win32';
 const SHELLS = '^(pwsh|powershell|cmd|bash|sh|zsh|fish|node|python[0-9.]*|ruby|perl|php|java|deno|bun|claude)(\\.exe)?$';
-// The staging demo's PowerShell says so in its command line, so the panel can tell it apart.
-const DEMO_MARK = 'atalay-terminal staging demo';
 
-function createRunaways({ onChange, staging }) {
-  const LINE = 50, SUSTAIN = staging ? 3000 : 120_000, EVERY = staging ? 1500 : 5000;
+function createRunaways({ onChange }) {
+  const LINE = 50, SUSTAIN = 120_000, EVERY = 5000;
   const last = new Map(); // pid -> { started, cpu (ms of CPU in all), at }
   const over = new Map(); // pid -> since when it has been over the line
-  let json = '[]', demoPid = 0, timer = null, sampler = null, stopped = false, demoChecked = !staging;
+  let json = '[]', timer = null, sampler = null, stopped = false;
 
   // One reading: [{ pid, name, cmd, started (ms since 1970), cpu (ms of CPU in all) }], the candidates only.
   function consider(list, at) {
-    // Staging's demo starts after the first reading, unless the last launch's still spins (one at a time; its command
-    // line says so).
-    if (!demoChecked) {
-      demoChecked = true;
-      if (!list.some((p) => String(p.cmd || '').includes(DEMO_MARK))) startDemo();
-    }
     const items = [], seen = new Set();
     for (const p of list) {
       seen.add(p.pid);
@@ -41,7 +33,7 @@ function createRunaways({ onChange, staging }) {
       over.set(p.pid, since);
       if (Date.now() - since < SUSTAIN) continue;
       const cmd = String(p.cmd || p.name).slice(0, 300);
-      items.push({ pid: p.pid, name: p.name, cmd, cpu: Math.round(pct * 10) / 10, since, started: p.started, cpuTime: p.cpu / 1000, demo: p.pid === demoPid || cmd.includes(DEMO_MARK) });
+      items.push({ pid: p.pid, name: p.name, cmd, cpu: Math.round(pct * 10) / 10, since, started: p.started, cpuTime: p.cpu / 1000 });
     }
     for (const k of [...last.keys()]) if (!seen.has(k)) last.delete(k);
     for (const k of [...over.keys()]) if (!seen.has(k)) over.delete(k);
@@ -108,18 +100,6 @@ function createRunaways({ onChange, staging }) {
       }
       consider(list, Date.now());
     });
-  }
-
-  // ---------- staging: a demo runaway a few seconds after the app opens ----------
-  function startDemo() {
-    if (WIN) {
-      // cmd starts it and exits at once, so it's left without a parent as a runaway is; it ends by itself in 3 minutes.
-      const loop = `$e = (Get-Date).AddMinutes(3); while ((Get-Date) -lt $e) {} # ${DEMO_MARK}`;
-      spawn('cmd.exe', ['/d', '/c', 'start', '""', '/b', 'powershell.exe', '-NoProfile', '-Command', loop], { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
-      return;
-    }
-    const sh = spawn('/bin/sh', ['-c', `/bin/zsh -fc 'end=$((SECONDS + 180)); while (( SECONDS < end )); do :; done; : ${DEMO_MARK}' </dev/null >/dev/null 2>&1 & echo $!`]);
-    sh.stdout.on('data', (d) => (demoPid = Number(String(d).trim()) || 0));
   }
 
   return {

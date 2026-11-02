@@ -68,7 +68,7 @@ window.Danger = (() => {
           : `<button type="button" class="dp-end${sure === k ? ' sure' : ''}">${sure === k ? 'SURE?' : 'END IT'}</button>`;
         return (
           `<div class="dp-row" data-key="${esc(k)}"><div class="dp-l1"><b>${esc(r.name)}</b><span class="dp-cpu">${Math.round(r.cpu)}%</span>${btn}</div>` +
-          `<div class="dp-l2" title="${esc(r.cmd)}">PID ${r.pid} · for ${dur(now - r.since)} · ${esc(r.cmd)}${r.demo ? ' · <em>staging demo</em>' : ''}</div></div>`
+          `<div class="dp-l2" title="${esc(r.cmd)}">PID ${r.pid} · for ${dur(now - r.since)} · ${esc(r.cmd)}</div></div>`
         );
       }).join('') +
       '</div>';

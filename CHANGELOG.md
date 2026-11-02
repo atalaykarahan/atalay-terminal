@@ -5,6 +5,8 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Unreleased (on the develop branch, out with the next version)
 
+- Shortcuts: change any of the app's keyboard shortcuts in the main menu's new SHORTCUTS tab: click one and press the new keys (↺ brings it back)
+- Chats: a copy button at the top right (and ⇧⌘C) copies Claude's last reply, all of it, even what doesn't fit the window: Claude's full-screen view only lets the terminal select what's on screen
 - Friends and the leaderboard: the flames burn on 5 hours of work today, counted from midnight as a daily stat, no longer on 5 in the last 24 hours
 - Logo: it shows again at the top left and on the loading screen (it had vanished with the themes), always in its own orange whatever the theme
 - Top left: no red count on the logo any more, unread messages and friend requests count on the friends icon on the left edge
@@ -54,7 +56,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 ### From user feedback (2026-11-02; the messages: feedback/2026-11-02.md, kept off git)
 
 - Limits: one user on the 20 € plan saw 21% of the limit go on a 500k-context session (Opus 5.5, xhigh), more than in plain iTerm2, they say: check whether the app adds anything to Claude's usage, and tell users what drives it
-- Shortcuts: a screen that lists them all; one for the friends chat (⌘C is free on the dashboard, they say). Switching between the sessions on the dashboard's left is on hold: ⌘1, ⌘2 … already switch a terminal's tabs, so it needs other keys
+- Shortcuts: one for the friends chat (to think about). Switching between the sessions on the dashboard's left is on hold: ⌘1, ⌘2 … already switch a terminal's tabs, so it needs other keys
 - While Claude works: a small game to play in the background, shakes and the like
 - Context: with /autocompact at 500k the gauge still shows 1M (as if fixed), reported again after 0.11.0 said it follows the auto-compact window: check
 - Terminals (Mac): scrolling with Claude's full-screen TUI goes wrong for some (one tried `/tui default`, which garbled the screen until Esc); their Claude pointed at AppDelegate's scrollWheel monitor, ChatTerminal's wheelGoesToProgram() and SwiftTerm issue #583 (scrollback in the alternate screen)

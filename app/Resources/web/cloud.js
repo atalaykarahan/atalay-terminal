@@ -278,6 +278,7 @@ window.Cloud = (() => {
         <div class="mn-tabs">
           <button type="button" data-tab="profile">PROFILE</button>
           <button type="button" data-tab="settings">SETTINGS</button>
+          ${KEYS ? '<button type="button" data-tab="keys">SHORTCUTS</button>' : ''}
         </div>
         <div class="mn-body">
           <section class="mn-page mn-profile" data-page="profile"></section>
@@ -293,6 +294,7 @@ window.Cloud = (() => {
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
+          ${KEYS ? '<section class="mn-page mn-keys" data-page="keys"></section>' : ''}
         </div>
         <div class="pk-foot"><span class="pk-sel note">esc to close</span><button class="pk-cancel">close</button><button class="pk-ok mn-save" disabled>save name</button></div>
       </div></div>`;
@@ -417,6 +419,43 @@ window.Cloud = (() => {
     if (save) save.hidden = which !== 'settings';
     const focus = which === 'settings' ? q('.mn-settings .hk-input') : null;
     if (focus) setTimeout(() => focus.focus(), 60);
+    if (which === 'keys') renderKeys();
+  }
+
+  // ---------- shortcuts ----------
+  // The keys of the app's actions, as the user wants them (the Mac app's Shortcuts.swift keeps them and sets the menus):
+  // click one, press the new keys. Esc cancels, Delete takes them off; ↺ brings one back to how it came.
+  const KEYS = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.keys);
+  const keysCall = (msg) => window.webkit.messageHandlers.keys.postMessage(msg);
+  let keysMsg = '';
+  async function renderKeys(list) {
+    const page = q('.mn-keys');
+    if (!page) return;
+    if (!list) list = (await keysCall({ type: 'list' }).catch(() => null))?.shortcuts || [];
+    const groups = [];
+    for (const k of list) (groups.find((g) => g.name === k.group) || (groups.push({ name: k.group, items: [] }), groups[groups.length - 1])).items.push(k);
+    page.innerHTML =
+      '<p class="ks-note">Click a shortcut, then press the new keys. Esc cancels, Delete takes them off.</p>' +
+      `<p class="ks-msg${keysMsg ? ' on' : ''}">${esc(keysMsg)}</p>` +
+      groups.map((g) => `<div class="hk-h">${esc(g.name.toUpperCase())}</div>` + g.items.map((k) =>
+        `<div class="ks-row"><span>${esc(k.title)}</span>` +
+        (k.changed ? `<button type="button" class="ks-undo" data-id="${esc(k.id)}" title="Back to how it came">↺</button>` : '') +
+        `<button type="button" class="ks-key${k.label ? '' : ' none'}" data-id="${esc(k.id)}">${k.label ? esc(k.label) : '—'}</button></div>`).join('')).join('') +
+      (list.some((k) => k.changed) ? '<div class="ks-foot"><button type="button" class="ks-all">reset all</button></div>' : '');
+    page.onclick = onKeysClick;
+  }
+  async function onKeysClick(e) {
+    const undo = e.target.closest('.ks-undo'), all = e.target.closest('.ks-all'), key = e.target.closest('.ks-key');
+    keysMsg = '';
+    if (undo || all) return renderKeys((await keysCall({ type: 'reset', id: undo ? undo.dataset.id : '' })).shortcuts);
+    if (!key || key.classList.contains('rec')) return;
+    key.classList.add('rec');
+    key.textContent = 'press keys…';
+    const r = await keysCall({ type: 'record' }).catch(() => ({ cancel: true }));
+    if (r.cancel) return renderKeys();
+    const done = await keysCall({ type: 'set', id: key.dataset.id, combo: r.combo });
+    if (done.error) keysMsg = done.error;
+    renderKeys(done.shortcuts);
   }
 
   async function copyHandle() {

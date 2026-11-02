@@ -88,6 +88,7 @@ struct ChatHeaderView: View {
     let onTogglePin: () -> Void
     let onDashboard: () -> Void
     let onEnd: () -> Void
+    let onCopyReply: () -> Void
 
     var body: some View {
         // Clocks tick once a second. Per-frame effects here kept the main thread busy and froze the
@@ -100,7 +101,7 @@ struct ChatHeaderView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     TitleRow(hud: hud, now: tl.date, status: status, hex: hex)
                         .frame(height: 32)
-                    HUDRow(hud: hud, now: tl.date, hex: hex, onTogglePin: onTogglePin, onDashboard: onDashboard, onEnd: onEnd)
+                    HUDRow(hud: hud, now: tl.date, hex: hex, onTogglePin: onTogglePin, onDashboard: onDashboard, onEnd: onEnd, onCopyReply: onCopyReply)
                         .frame(height: 30)
                 }
             }
@@ -179,6 +180,7 @@ private struct HUDRow: View {
     let onTogglePin: () -> Void
     let onDashboard: () -> Void
     let onEnd: () -> Void
+    let onCopyReply: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -200,6 +202,10 @@ private struct HUDRow: View {
             Spacer(minLength: 6)
             if let b = hud.brief, !b.spark.isEmpty, hud.status != "terminal" {
                 SparkView(values: b.spark, hex: hex).frame(width: 96, height: 18)
+            }
+            if hud.status != "terminal" {
+                HUDButton(symbol: "doc.on.doc", active: false,
+                          help: "Copy Claude's last reply, all of it, even past what fits the window (⇧⌘C)", hex: hex, action: onCopyReply)
             }
             HUDButton(symbol: hud.onTop ? "pin.fill" : "pin", active: hud.onTop,
                       help: hud.onTop ? "Pinned on top of every app, on any desktop. Click to put it back above the dashboard."
@@ -775,7 +781,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             hud: hud,
             onTogglePin: { [weak self] in self?.togglePin() },
             onDashboard: { [weak self] in self?.manager?.showDashboard() },
-            onEnd: { [weak self] in self?.endChat() }))
+            onEnd: { [weak self] in self?.endChat() },
+            onCopyReply: { [weak self] in self?.copyLastReply() }))
         let ticker = NSHostingView(rootView: ChatTickerView(hud: hud))
 
         for v in [container, beam] as [NSView] {
@@ -838,6 +845,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         let n = Self.lineCount(text)
         selectionBadge.stringValue = n == 1 ? " 1 line selected · \(text.count) chars " : " \(n) lines selected "
         selectionBadge.isHidden = false
+    }
+
+    /// Claude's last reply onto the clipboard, the whole of it, from the conversation's transcript (LastReply): on the
+    /// terminal, Claude's full-screen view only lets a reply be selected as far as it fits the window.
+    func copyLastReply() {
+        guard let sid = sessionId, let text = LastReply.text(sessionId: sid) else { return NSSound.beep() }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        showCopied(text)
     }
 
     private func showCopied(_ text: String) {

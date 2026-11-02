@@ -20,28 +20,22 @@ final class Runaways {
         let started: Double
         /// Seconds of CPU it has used in all.
         let cpuTime: Double
-        let demo: Bool
     }
 
-    /// The staging build sounds the alarm a few seconds after it opens: it starts a demo runaway (a zsh that spins for
-    /// three minutes and then ends by itself) and needs only a few seconds of it.
-    static let staging = Bundle.main.bundleIdentifier?.hasSuffix(".staging") == true
     private static let line = 50.0
-    private static let sustain: Double = staging ? 3 : 120
-    private static let every: TimeInterval = staging ? 1.5 : 5
+    private static let sustain: Double = 120
+    private static let every: TimeInterval = 5
 
     var onChange: ((String) -> Void)?
     private(set) var json = "[]"
     private var last: [Int32: (started: UInt64, cpu: UInt64, at: Double)] = [:]
     private var over: [Int32: Double] = [:]
-    private var demoPid: Int32 = 0
     private var timer: Timer?
 
     func start() {
         timer = Timer.scheduledTimer(withTimeInterval: Self.every, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.sample() }
         }
-        if Self.staging { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.startDemo() } }
     }
 
     private func sample() {
@@ -66,7 +60,7 @@ final class Runaways {
             let name = Proc.name(pid) ?? (path as NSString).lastPathComponent
             let cmd = Proc.arguments(pid)?.joined(separator: " ") ?? path
             items.append(Item(pid: pid, name: name, cmd: String(cmd.prefix(300)), cpu: (cpu * 10).rounded() / 10, since: since,
-                              started: Double(p.started / 1000), cpuTime: Double(p.cpuTime) / 1e9, demo: pid == demoPid))
+                              started: Double(p.started / 1000), cpuTime: Double(p.cpuTime) / 1e9))
         }
         last = last.filter { seen.contains($0.key) }
         over = over.filter { seen.contains($0.key) }
@@ -91,23 +85,5 @@ final class Runaways {
             if same() { kill(pid, SIGKILL) }
             self?.sample()
         }
-    }
-
-    /// Staging: a zsh that spins for three minutes and ends by itself, left without a parent or a terminal, as a
-    /// runaway is (its sh exits at once). One at a time: a launch while the last one's demo still spins takes that one.
-    private static let demoMark = "atalay-terminal staging demo"
-    private func startDemo() {
-        if let running = Proc.all().first(where: { Proc.arguments($0)?.joined(separator: " ").contains(Self.demoMark) == true }) {
-            demoPid = running
-            return
-        }
-        let p = Process(), out = Pipe()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "/bin/zsh -fc 'end=$((SECONDS + 180)); while (( SECONDS < end )); do :; done; : \(Self.demoMark)' </dev/null >/dev/null 2>&1 & echo $!"]
-        p.standardOutput = out
-        guard (try? p.run()) != nil else { return }
-        p.waitUntilExit()
-        let pid = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        demoPid = Int32(pid) ?? 0
     }
 }

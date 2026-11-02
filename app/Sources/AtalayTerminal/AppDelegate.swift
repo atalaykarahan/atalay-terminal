@@ -173,6 +173,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
             return item
         }
+        // An action whose keys the user can change (Shortcuts, the dashboard's main menu → SHORTCUTS).
+        func keyed(_ menu: NSMenu, _ id: String, _ title: String, _ action: Selector, target: AnyObject? = nil) {
+            menu.addItem(Shortcuts.item(id, title: title, action: action, target: target))
+        }
 
         let app = submenu("Atalay's Terminal")
         add(app, "About Atalay's Terminal", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "")
@@ -184,54 +188,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // iTerm2's keys (its Shell and Window menus, read from iTerm2 3.7): tabs and split panes in the chat or terminal
         // window in front (Panes.swift).
-        let arrow = { (key: Int) in String(Character(UnicodeScalar(UInt32(key))!)) }
         let file = submenu("Chat")
-        add(file, "New Terminal…", #selector(newTerminal), "n", target: self)
-        add(file, "New Tab", #selector(newTab), "t", target: self)
-        add(file, "New Tab Next to Current Tab", #selector(newTab), "t", [.command, .option], target: self)
-        add(file, "Split Vertically", #selector(splitVertically), "d", target: self)
-        add(file, "Split Horizontally", #selector(splitHorizontally), "d", [.command, .shift], target: self)
-        add(file, "Shortcuts", #selector(showShortcuts), "k", target: self)
+        keyed(file, "newTerminal", "New Terminal…", #selector(newTerminal), target: self)
+        keyed(file, "newTab", "New Tab", #selector(newTab), target: self)
+        keyed(file, "newTabNext", "New Tab Next to Current Tab", #selector(newTab), target: self)
+        keyed(file, "splitVertically", "Split Vertically", #selector(splitVertically), target: self)
+        keyed(file, "splitHorizontally", "Split Horizontally", #selector(splitHorizontally), target: self)
+        keyed(file, "shortcutsWheel", "Shortcuts", #selector(showShortcuts), target: self)
         file.addItem(.separator())
-        add(file, "Close", #selector(closePane), "w", target: self)
-        add(file, "Close Terminal Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift])
-        add(file, "Undo Close", #selector(undoClose), "t", [.command, .shift], target: self)
+        keyed(file, "closePane", "Close", #selector(closePane), target: self)
+        keyed(file, "closeWindow", "Close Terminal Window", #selector(NSWindow.performClose(_:)))
+        keyed(file, "undoClose", "Undo Close", #selector(undoClose), target: self)
 
         let edit = submenu("Edit")
         add(edit, "Copy", #selector(NSText.copy(_:)), "c")
+        keyed(edit, "copyReply", "Copy Claude's Last Reply", #selector(copyReply), target: self)
         add(edit, "Paste", #selector(NSText.paste(_:)), "v")
         add(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
 
         let view = submenu("View")
         add(view, "Dashboard", #selector(showDashboard), "", target: self)
-        add(view, "Reload Dashboard", #selector(reloadDashboard), "r", target: self)
-        add(view, "Chats List", #selector(toggleSidebar), "b", target: self)
+        keyed(view, "reloadDashboard", "Reload Dashboard", #selector(reloadDashboard), target: self)
+        keyed(view, "chatsList", "Chats List", #selector(toggleSidebar), target: self)
         view.addItem(.separator())
-        add(view, "Bigger Text", #selector(fontBigger), "=", target: self)
-        add(view, "Smaller Text", #selector(fontSmaller), "-", target: self)
-        add(view, "Default Text Size", #selector(fontReset), "0", target: self)
+        keyed(view, "biggerText", "Bigger Text", #selector(fontBigger), target: self)
+        keyed(view, "smallerText", "Smaller Text", #selector(fontSmaller), target: self)
+        keyed(view, "defaultText", "Default Text Size", #selector(fontReset), target: self)
         view.addItem(.separator())
-        add(view, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
+        keyed(view, "fullScreen", "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)))
 
         let window = submenu("Window")
         add(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         add(window, "Zoom", #selector(NSWindow.performZoom(_:)), "")
         window.addItem(.separator())
-        add(window, "Select Next Tab", #selector(nextTab), "]", [.command, .shift], target: self)
-        add(window, "Select Previous Tab", #selector(previousTab), "[", [.command, .shift], target: self)
-        add(window, "Move Tab Left", #selector(moveTabLeft), "[", [.command, .option, .shift], target: self)
-        add(window, "Move Tab Right", #selector(moveTabRight), "]", [.command, .option, .shift], target: self)
-        add(window, "Next Pane", #selector(nextPane), "]", target: self)
-        add(window, "Previous Pane", #selector(previousPane), "[", target: self)
-        add(window, "Select Pane Above", #selector(paneAbove), arrow(NSUpArrowFunctionKey), [.command, .option], target: self)
-        add(window, "Select Pane Below", #selector(paneBelow), arrow(NSDownArrowFunctionKey), [.command, .option], target: self)
-        add(window, "Select Pane Left", #selector(paneLeft), arrow(NSLeftArrowFunctionKey), [.command, .option], target: self)
-        add(window, "Select Pane Right", #selector(paneRight), arrow(NSRightArrowFunctionKey), [.command, .option], target: self)
-        add(window, "Move Divider Up", #selector(dividerUp), arrow(NSUpArrowFunctionKey), [.command, .control], target: self)
-        add(window, "Move Divider Down", #selector(dividerDown), arrow(NSDownArrowFunctionKey), [.command, .control], target: self)
-        add(window, "Move Divider Left", #selector(dividerLeft), arrow(NSLeftArrowFunctionKey), [.command, .control], target: self)
-        add(window, "Move Divider Right", #selector(dividerRight), arrow(NSRightArrowFunctionKey), [.command, .control], target: self)
-        add(window, "Maximize Active Pane", #selector(maximizePane), "\r", [.command, .shift], target: self)
+        keyed(window, "nextTab", "Select Next Tab", #selector(nextTab), target: self)
+        keyed(window, "previousTab", "Select Previous Tab", #selector(previousTab), target: self)
+        keyed(window, "moveTabLeft", "Move Tab Left", #selector(moveTabLeft), target: self)
+        keyed(window, "moveTabRight", "Move Tab Right", #selector(moveTabRight), target: self)
+        keyed(window, "nextPane", "Next Pane", #selector(nextPane), target: self)
+        keyed(window, "previousPane", "Previous Pane", #selector(previousPane), target: self)
+        keyed(window, "paneAbove", "Select Pane Above", #selector(paneAbove), target: self)
+        keyed(window, "paneBelow", "Select Pane Below", #selector(paneBelow), target: self)
+        keyed(window, "paneLeft", "Select Pane Left", #selector(paneLeft), target: self)
+        keyed(window, "paneRight", "Select Pane Right", #selector(paneRight), target: self)
+        keyed(window, "dividerUp", "Move Divider Up", #selector(dividerUp), target: self)
+        keyed(window, "dividerDown", "Move Divider Down", #selector(dividerDown), target: self)
+        keyed(window, "dividerLeft", "Move Divider Left", #selector(dividerLeft), target: self)
+        keyed(window, "dividerRight", "Move Divider Right", #selector(dividerRight), target: self)
+        keyed(window, "maximizePane", "Maximize Active Pane", #selector(maximizePane), target: self)
         // ⌘1–⌘9: that tab of the window in front, as in iTerm2.
         for n in 1...9 { add(window, "Select Tab \(n)", #selector(selectTabNumber(_:)), "\(n)", target: self).tag = n }
         window.addItem(.separator())
@@ -263,6 +267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func dividerRight() { controller.moveDivider(dx: 1, dy: 0) }
     @objc private func maximizePane() { controller.toggleMaximize() }
     @objc private func selectTabNumber(_ sender: NSMenuItem) { controller.selectTab(number: sender.tag) }
+    /// The chat window in front: Claude's last reply onto the clipboard, all of it.
+    @objc private func copyReply() { (NSApp.keyWindow?.delegate as? ChatWindowController)?.copyLastReply() }
     @objc private func showShortcuts() { controller.overlay.showShortcuts(at: NSEvent.mouseLocation) }
     @objc private func showDashboard() { controller.showDashboard() }
     @objc private func reloadDashboard() { controller.radar.reload() }
