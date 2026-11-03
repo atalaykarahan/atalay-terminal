@@ -881,7 +881,29 @@ function notices() {
   return panels.notices;
 }
 
+// A friend's chat, all of it on one display: the one it's mostly on, moved in from the edges (cut to fit only where the
+// display is smaller). With several displays a chat opened where it was left on one since unplugged or moved, or grew
+// past the bottom, out of sight.
+function wholeOnDisplay(r) {
+  const a = screen.getDisplayMatching(r).workArea;
+  const width = Math.min(r.width, a.width), height = Math.min(r.height, a.height);
+  return { x: Math.min(Math.max(r.x, a.x), a.x + a.width - width), y: Math.min(Math.max(r.y, a.y), a.y + a.height - height), width, height };
+}
+
+// A display unplugged or changed: the chats on screen come back into view, whole.
+let watchingDisplays = false;
+function watchDisplays() {
+  if (watchingDisplays) return;
+  watchingDisplays = true;
+  for (const event of ['display-removed', 'display-metrics-changed']) {
+    screen.on(event, () => {
+      for (const w of panels.chats.values()) if (!w.isDestroyed() && w.isVisible()) w.setBounds(wholeOnDisplay(w.getBounds()));
+    });
+  }
+}
+
 function openFriendChat(friend) {
+  watchDisplays();
   let win = panels.chats.get(friend);
   if (!win || win.isDestroyed()) {
     win = panelWindow('chat', friend);
@@ -928,12 +950,15 @@ function handleMessages(win, body) {
       } else {
         const b = win.getBounds();
         if (!win.isVisible()) {
+          // Where it was left while that's on a display, else the middle of the dashboard's display (or the main one).
           const saved = settings.get('chatWindowTopLeft');
-          const a = d.workArea;
-          const [x, y] = saved || [a.x + Math.round((a.width - w) / 2), a.y + Math.round((a.height - h) / 2)];
-          win.setBounds({ x, y, width: w, height: h });
+          const left = Array.isArray(saved) && screen.getAllDisplays().some(({ workArea: a }) =>
+            saved[0] + 40 >= a.x && saved[0] + 40 < a.x + a.width && saved[1] + 20 >= a.y && saved[1] + 20 < a.y + a.height);
+          const a = (dash && !dash.isDestroyed() && dash.isVisible() ? screen.getDisplayMatching(dash.getBounds()) : d).workArea;
+          const [x, y] = left ? saved : [a.x + Math.round((a.width - w) / 2), a.y + Math.round((a.height - h) / 2)];
+          win.setBounds(wholeOnDisplay({ x, y, width: w, height: h }));
           win.show();
-        } else win.setBounds({ x: b.x, y: b.y, width: w, height: h });
+        } else win.setBounds(wholeOnDisplay({ x: b.x, y: b.y, width: w, height: h }));
         if (body.focus) win.focus();
       }
       return true;
@@ -944,6 +969,7 @@ function handleMessages(win, body) {
       return true;
     }
     case 'dragEnd':
+      win.setBounds(wholeOnDisplay(win.getBounds()));
       settings.set('chatWindowTopLeft', win.getPosition());
       return true;
     case 'openUpdate':

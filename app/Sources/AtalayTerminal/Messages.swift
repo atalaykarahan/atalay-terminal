@@ -105,6 +105,7 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             panel.level = .normal
             panel.collectionBehavior = [.fullScreenAuxiliary]
             panel.delegate = self
+            Self.watchScreens()
         }
         let root = NSView(frame: webView.frame)
         glass.material = .hudWindow
@@ -235,7 +236,45 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     /// last is on top; without a visible dashboard it's a window of its own.
     private func pin() {
         guard role == .chat, let d = Self.dashboard, d.isVisible, panel.parent !== d else { return }
+        panel.setFrame(Self.whole(panel.frame), display: true)
         d.addChildWindow(panel, ordered: .above)
+    }
+
+    /// The display chats belong on: the dashboard's while it's on screen (they're pinned to it, and a full-screen
+    /// dashboard's space shows nothing of a chat sitting on another display), else the one in use.
+    private static func home() -> NSScreen {
+        if let d = dashboard, d.isVisible, let s = d.screen { return s }
+        return NSScreen.main ?? NSScreen.screens[0]
+    }
+
+    /// A chat's frame moved onto that display, all of it (cut to fit only where the display is smaller).
+    private static func whole(_ frame: NSRect) -> NSRect {
+        let v = home().visibleFrame
+        var r = frame
+        r.size.width = min(r.width, v.width)
+        r.size.height = min(r.height, v.height)
+        r.origin.x = min(max(r.minX, v.minX), v.maxX - r.width)
+        r.origin.y = min(max(r.minY, v.minY), v.maxY - r.height)
+        return r
+    }
+
+    /// A display plugged in, out or moved, the dashboard onto another display or in or out of full screen: the chats
+    /// on screen follow, whole.
+    private static var watchingScreens = false
+    private static func watchScreens() {
+        guard !watchingScreens else { return }
+        watchingScreens = true
+        for name in [NSApplication.didChangeScreenParametersNotification, NSWindow.didChangeScreenNotification,
+                     NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                let displays = note.name == NSApplication.didChangeScreenParametersNotification
+                let window = note.object as? NSWindow
+                MainActor.assumeIsolated {
+                    guard displays || (window != nil && window === dashboard) else { return }
+                    for p in chats.values where p.panel.isVisible { p.panel.setFrame(whole(p.panel.frame), display: true) }
+                }
+            }
+        }
     }
 
     /// The dashboard came to the front: chats opened while it was away pin above it too, so a click on it doesn't bury
@@ -334,6 +373,7 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             panel.setFrameOrigin(origin)
         case "dragEnd":
             guard role == .chat else { return }
+            panel.setFrame(Self.whole(panel.frame), display: true)
             UserDefaults.standard.set([panel.frame.minX, panel.frame.maxY], forKey: Self.originKey)
         case "openUpdate":
             Self.onOpenUpdate?()
@@ -408,8 +448,10 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         Self.takeoverOn = false
     }
 
-    /// Where it was left (if that's still on a screen), else mid-screen; a chat opened while others are on screen
-    /// cascades from the frontmost one. Resizing keeps the top-left corner.
+    /// Where it was left (if that's on the display it belongs on), else the middle of that display; a chat opened while
+    /// others are on screen cascades from the frontmost one. Resizing keeps the top-left corner. All of it always on
+    /// that display: with several displays it opened where it was left on another one, out of sight behind a
+    /// full-screen dashboard, or grew past the bottom of the screen.
     private func placeChat(_ size: CGSize, focus: Bool) {
         var topLeft: NSPoint
         let others = Self.chats.values.filter { $0 !== self && $0.panel.isVisible }.map(\.panel)
@@ -418,13 +460,13 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         } else if let front = NSApp.orderedWindows.first(where: { w in others.contains { $0 === w } }) {
             topLeft = NSPoint(x: front.frame.minX + 34, y: front.frame.maxY - 34)
         } else if let saved = UserDefaults.standard.array(forKey: Self.originKey) as? [Double], saved.count == 2,
-                  NSScreen.screens.contains(where: { $0.visibleFrame.insetBy(dx: -40, dy: -40).contains(NSPoint(x: saved[0] + 40, y: saved[1] - 20)) }) {
+                  Self.home().visibleFrame.insetBy(dx: -40, dy: -40).contains(NSPoint(x: saved[0] + 40, y: saved[1] - 20)) {
             topLeft = NSPoint(x: saved[0], y: saved[1])
         } else {
-            let v = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
+            let v = Self.home().visibleFrame
             topLeft = NSPoint(x: v.midX - size.width / 2, y: v.midY + size.height / 2)
         }
-        panel.setFrame(NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height), display: true)
+        panel.setFrame(Self.whole(NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)), display: true)
         // While the dashboard has a menu open, a chat opened from elsewhere waits for it to close.
         if Self.chats.values.contains(where: { $0.steppedAside }) {
             steppedAside = true

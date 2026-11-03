@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.15.2
+
+- Friends: a chat opens whole on the screen you're using (the dashboard's), not out of sight: with more than one display it could open where it was left on another one, behind a full-screen dashboard, or grow past the bottom of the screen; dragged off the edge, or a display unplugged, it comes back into view
+
 ## 0.15.1 (Windows only)
 
 - Updates: a new version shows within a minute of going out (it was looked for every 30 minutes, so one could wait half an hour unseen), also right after the PC wakes or unlocks; a look that hangs on the network no longer holds up the ones after it
@@ -74,6 +78,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines
 - Tabs: End Session in a window with tabs ends only the session of the tab in front, not the whole window
 - Big update · accounts: sign in, and a user's Macs and Windows PCs join one account: their hours and XP add up there, and their settings sync between them by default (as VS Code's Settings Sync), which Settings can turn off
 - Big update · extensions: users write extensions for the app as for VS Code, and add or remove them in Settings; first, research how VS Code does it (the extension API, the manifest, activation, the marketplace, how extensions are kept apart from the app)
