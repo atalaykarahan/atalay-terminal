@@ -14,7 +14,7 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         config.userContentController = ucc
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800), configuration: config)
         super.init()
-        ThemeStore.shared.attach(webView)
+        ThemeStore.shared.attach(webView, zooms: true)
         ucc.add(WeakMessageHandler(self), name: "radar")
         ucc.addScriptMessageHandler(CloudBridge(), contentWorld: .page, name: "cloud")
         ucc.addScriptMessageHandler(ThemeBridge(), contentWorld: .page, name: "theme")

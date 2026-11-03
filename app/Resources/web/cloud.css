@@ -145,6 +145,10 @@
 .up-notes { margin: 0; padding: 0; list-style: none; max-height: 42vh; overflow-y: auto; }
 .up-notes li { position: relative; margin: 0 0 7px; padding-left: 16px; color: var(--hi); line-height: 1.45; }
 .up-notes li::before { content: "›"; position: absolute; left: 2px; color: var(--green); font-weight: 700; }
+/* the download, as a bar (cloud.js renderUpdateModal) */
+.up-bar { height: 6px; margin: 12px 0 4px; overflow: hidden; border-radius: 3px; background: rgba(var(--accent-rgb), 0.15); }
+.up-bar[hidden] { display: none; }
+.up-bar i { display: block; width: 0; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--amber)); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.6); transition: width 0.3s ease; }
 
 /* ===== levels (xp.js): the top bar's rank and XP bar, your profile, a friend's card ===== */
 .brand .stack small.rk { color: rgb(var(--rc)); letter-spacing: 0.3em; text-shadow: 0 0 8px rgba(var(--rc), 0.6); }
@@ -225,6 +229,9 @@
 .lb-seg button { height: 26px; padding: 0 12px; border: 0; background: transparent; color: var(--dim); font: inherit; font-weight: 700; letter-spacing: 0.12em; cursor: pointer; }
 .lb-seg button:hover { color: var(--hi); }
 .lb-seg button.on { background: var(--accent); color: var(--ink); }
+/* Settings' interface font and text size, as the leaderboard's tabs. */
+.ui-seg { --glow: var(--accent-rgb); }
+.ui-seg button { height: 24px; padding: 0 10px; letter-spacing: 0.06em; }
 .lb-note { overflow: hidden; color: var(--dim); font-size: 0.9em; white-space: nowrap; text-overflow: ellipsis; }
 .lb-list { display: flex; flex-direction: column; gap: 2px; }
 .lb-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 62px 96px 92px; align-items: center; gap: 10px; min-height: 44px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }

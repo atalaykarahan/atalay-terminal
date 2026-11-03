@@ -3,6 +3,18 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased
+
+- Tabs: End Session in a window with tabs ends only the tab in front (its chat, its terminal or its panes), the other tabs keep running; the last one ends the window as before, and asks first when something still runs in it
+- Chat list: right-click a chat to rename it (↩ keeps the new name, Esc leaves it, an empty name brings back the original); its star and archive are in the same menu
+- Themes: Cyberpunk (neon yellow, cyan and magenta on black) and SynthWave '84 (Robb Owen's VS Code theme, its neon text glowing everywhere as its "Neon Dreams" did: the terminals, the dashboard, the chats list)
+- Updates: a bar shows how far the download has come, in the update window, on its button and in Settings ("updating 42%"), on the Mac and Windows
+- Settings · INTERFACE: the font (mono, system, rounded) and the text size (100% to 140%), for text that's hard to read
+- Orbit: a terminal's car ended with End Session stays gone (it blew up, then came back)
+- Context: the gauge follows /autocompact within seconds (it kept the model's 1M until Claude's next reply)
+- Token savers: the switches work for an rtk or caveman you set up yourself too (off takes it out of Claude Code's and Codex's settings, on puts it back as it was), and the app keeps them current: an rtk older than the app's is replaced by the app's where it lies (not one Homebrew keeps), and Claude Code updates the caveman plugin by itself (auto-update on for its marketplace)
+- Leaderboard: THIS WEEK counts from Monday (each player's own), as the weekly goal does, not the last 7 days; the time beside a name too
+
 ## 0.15.3
 
 - Orbit: Codex, Antigravity (agy), Gemini, OpenCode, Aider, Cursor's agent, Copilot and the other AI coding tools are planets of their own when they run in a terminal, as Claude Code is: on their orbit while they work, parked while they wait for you; a click opens the tab they run in
@@ -84,24 +96,24 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
-- Tabs: End Session in a window with tabs ends only the session of the tab in front, not the whole window
+- Themes of your own: make a theme and keep up to 4 in slots; watching someone on the leaderboard, copy their theme into one of your 4 slots, as CS2 copies a crosshair: a copy of its own, so it stays as it was when its owner changes or deletes theirs
 - Big update · accounts: sign in, and a user's Macs and Windows PCs join one account: their hours and XP add up there, and their settings sync between them by default (as VS Code's Settings Sync), which Settings can turn off
 - Big update · extensions: users write extensions for the app as for VS Code, and add or remove them in Settings; first, research how VS Code does it (the extension API, the manifest, activation, the marketplace, how extensions are kept apart from the app)
-- Themes: Cyberpunk, and SynthWave '84 (Robb Owen's VS Code theme, neon text with its glow), Atalay's favourite
-- Chat list: right-click a chat to rename it, with its other actions there too
-- Updates (must be in the next version): a progress bar while an update downloads and installs, on Windows and the Mac; on Windows one looked frozen and with nothing moving there was no telling whether it was
 - Chats: group chats, several friends in one conversation (users asked for it)
 - Anime mode: a funny mode for the whole app, with anime girls and the like, and sound effects where they shout "uwu"
 - Skins: sexy skins (requested)
 - Token savers built in: rtk (Rust Token Killer: shortens command output before Claude reads it; 36% saved on Atalay's Mac) and caveman (terse replies), set up by the app for every user's Claude Code
 - Remote control: a chat started with Claude's remote control on another of your computers (the Windows PC) shows here too; needs your devices linked into one account first (a pairing code, or the Claude account they share)
 
+### From user feedback (2026-11-04; the messages: feedback/2026-11-04.md, kept off git)
+
+- Fonts: one user loves the animations but can't read the UI's fonts (Settings · INTERFACE now; see whether it's enough)
+
 ### From user feedback (2026-11-02; the messages: feedback/2026-11-02.md, kept off git)
 
 - Limits: one user on the 20 € plan saw 21% of the limit go on a 500k-context session (Opus 5.5, xhigh), more than in plain iTerm2, they say: check whether the app adds anything to Claude's usage, and tell users what drives it
 - Shortcuts: one for the friends chat (to think about). Switching between the sessions on the dashboard's left is on hold: ⌘1, ⌘2 … already switch a terminal's tabs, so it needs other keys
 - While Claude works: a small game to play in the background, shakes and the like
-- Context: with /autocompact at 500k the gauge still shows 1M (as if fixed), reported again after 0.11.0 said it follows the auto-compact window: check
 - Terminals (Mac): scrolling with Claude's full-screen TUI goes wrong for some (one tried `/tui default`, which garbled the screen until Esc); their Claude pointed at AppDelegate's scrollWheel monitor, ChatTerminal's wheelGoesToProgram() and SwiftTerm issue #583 (scrollback in the alternate screen)
 - Terminals (Windows): copying output selects only a small area, and selecting everything copies only the beginning
 

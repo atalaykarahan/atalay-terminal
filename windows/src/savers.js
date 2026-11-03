@@ -7,16 +7,21 @@
 // - caveman (github.com/JuliusBrussee/caveman, MIT) makes Claude Code and Codex answer tersely: its rules at the start of
 //   every session and a one-line reminder with every prompt (two hooks in Claude Code's settings that print the app's
 //   copies), and the rules in Codex's AGENTS.md. Off: the hooks and the rules go.
-// One the user set up themselves (their own rtk hook, the caveman plugin) is theirs: the app leaves it alone and only
-// shows it.
+// One the user set up themselves (their own rtk hook, the caveman plugin or the hooks its installer wires) takes the app's
+// place and switches the same way: off takes it out of the tools' settings and keeps it, on puts it back as it was. The
+// app keeps it current too: an rtk older than the app's is replaced by it where it lies (rtk has no updater; one a
+// package manager keeps, winget's or Scoop's, is theirs), and Claude Code updates the caveman plugin by itself
+// (auto-update on for its marketplace, as /plugin's "Enable auto-update" does).
 const { execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const KINDS = ['rtk', 'caveman'];
-// On or off as the user left it; missing: not decided yet (the first launch that has it turns it on).
+// On or off as the user left it before the switches could take the user's own (missing: not decided yet).
 const KEY = { rtk: 'tokenSavers', caveman: 'tokenSaverCaveman' };
+// Now: what the user decided for each, and what of their own the app took out when they turned it off.
+const STATE_KEY = 'tokenSaversState';
 
 /**
  * `ownDir`: the app's folder for them; `bundled`: { rtk, caveman }, what the app ships (rtk.exe, the caveman folder);
@@ -43,7 +48,10 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
   const CODEX_START = '<!-- atalay-terminal: caveman -->', CODEX_END = '<!-- /atalay-terminal: caveman -->';
 
   const shipped = (kind) => usable && (kind === 'rtk' ? exists(bundled.rtk) : exists(bundled.caveman && path.join(bundled.caveman, 'rules.md')));
-  const available = (kind) => shipped(kind) || !!theirs(kind);
+  const record = (kind) => ({ ...((settings.get(STATE_KEY) || {})[kind] || {}) });
+  const saveRecord = (kind, rec) => settings.set(STATE_KEY, { ...(settings.get(STATE_KEY) || {}), [kind]: rec });
+  const decided = (kind) => (typeof record(kind).on === 'boolean' ? record(kind).on : settings.get(KEY[kind]));
+  const available = (kind) => shipped(kind) || !!theirs(kind) || !!record(kind).kept;
 
   // ---------- Claude Code's settings ----------
   // Unreadable settings (a stray comma while the user edits them) are left as they are: writing them back would lose
@@ -80,20 +88,179 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     if (JSON.stringify(json) !== was) writeJSON(settingsFile, json);
   }
 
-  /** What one the user set up themselves runs: their rtk hook's program, or the caveman plugin. */
-  function theirs(kind) {
-    const json = readJSON(settingsFile) || {};
-    if (kind === 'rtk') {
-      for (const entry of (json.hooks && json.hooks.PreToolUse) || []) {
-        for (const hook of (entry && entry.hooks) || []) {
-          const cmd = hook && typeof hook.command === 'string' ? hook.command : '';
-          if (cmd.includes('rtk') && cmd.includes(' hook ') && !cmd.includes(GUARD_MARK)) return cmd.split(' ')[0] || 'rtk';
-        }
+  /** Every hook (its command and where it is) in a settings file: Claude Code's, or Codex's hooks.json. */
+  function hooksOf(file) {
+    const json = readJSON(file) || {};
+    const out = [];
+    for (const [event, list] of Object.entries(json.hooks && typeof json.hooks === 'object' ? json.hooks : {})) {
+      for (const entry of Array.isArray(list) ? list : []) {
+        for (const h of (entry && entry.hooks) || []) if (h && typeof h.command === 'string') out.push({ event, entry, hook: h });
       }
-      return null;
     }
-    const plugins = json.enabledPlugins || {};
-    return Object.keys(plugins).find((k) => k.startsWith('caveman@') && plugins[k] === true) || null;
+    return out;
+  }
+  // `rtk hook claude` (with or without its path, quoted or not) or the rewrite script older rtks set up; not the app's.
+  const words = (cmd) => [...cmd.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+  function isRtkHook(h) {
+    const cmd = h.command;
+    if (cmd.includes(GUARD_MARK) || h.commandWindows === CODEX_GUARD) return false;
+    if (cmd.includes('rtk-rewrite')) return true;
+    const w = words(cmd);
+    return w.length >= 2 && path.basename(w[0].replace(/\\/g, '/')).replace(/\.exe$/i, '').toLowerCase() === 'rtk' && w[1] === 'hook';
+  }
+  const isTheirCaveman = (h) => h.command.includes('caveman') && !h.command.includes(MARK);
+
+  /** What one the user set up themselves runs: their rtk hook's program, the caveman plugin, or "hooks" for the hooks
+   *  caveman's installer wires into Claude Code's settings where its plugin wouldn't install. */
+  function theirs(kind) {
+    if (kind === 'rtk') {
+      const own = hooksOf(settingsFile).find((x) => isRtkHook(x.hook));
+      return own ? words(own.hook.command)[0] || 'rtk' : null;
+    }
+    const plugins = (readJSON(settingsFile) || {}).enabledPlugins || {};
+    const plugin = Object.keys(plugins).find((k) => k.startsWith('caveman@') && plugins[k] === true);
+    if (plugin) return plugin;
+    return hooksOf(settingsFile).some((x) => isTheirCaveman(x.hook)) ? 'hooks' : null;
+  }
+
+  /** Whether the app's own is set up: its hook in Claude Code's settings. */
+  const installed = (kind) => hooksOf(settingsFile).some((x) => x.hook.command.includes(kind === 'rtk' ? GUARD_MARK : MARK));
+
+  /** Takes the hooks `match` picks out of a settings file (an entry left with none goes too), and returns them with
+   *  where they were, to put back later. */
+  function takeOutHooks(file, match) {
+    const json = exists(file) ? readJSON(file) : null;
+    if (!json || !json.hooks || typeof json.hooks !== 'object') return [];
+    const taken = [];
+    for (const [event, list] of Object.entries(json.hooks)) {
+      if (!Array.isArray(list)) continue;
+      json.hooks[event] = list
+        .map((entry) => {
+          if (!entry || !Array.isArray(entry.hooks)) return entry;
+          const picked = entry.hooks.filter((h) => h && typeof h.command === 'string' && match(h));
+          if (!picked.length) return entry;
+          for (const hook of picked) taken.push({ file, event, matcher: entry.matcher ?? null, hook });
+          const rest = entry.hooks.filter((h) => !picked.includes(h));
+          return rest.length ? { ...entry, hooks: rest } : null;
+        })
+        .filter(Boolean);
+      if (!json.hooks[event].length) delete json.hooks[event];
+    }
+    if (!Object.keys(json.hooks).length) delete json.hooks;
+    if (taken.length) writeJSON(file, json);
+    return taken;
+  }
+
+  /** The user's own out of the tools' settings, and what it takes to put it back: their rtk hooks (Claude Code's and
+   *  Codex's), the caveman plugin turned off as `claude plugin disable` leaves it, or its installer's hooks. */
+  function takeOut(kind) {
+    if (kind === 'rtk') {
+      return { hooks: [...takeOutHooks(settingsFile, isRtkHook), ...takeOutHooks(path.join(codexDir, 'hooks.json'), isRtkHook)] };
+    }
+    const json = readJSON(settingsFile);
+    const plugins = [];
+    if (json && json.enabledPlugins) {
+      for (const k of Object.keys(json.enabledPlugins)) if (k.startsWith('caveman@') && json.enabledPlugins[k] === true) plugins.push(k);
+      for (const k of plugins) json.enabledPlugins[k] = false;
+      if (plugins.length) writeJSON(settingsFile, json);
+    }
+    return { plugins, hooks: takeOutHooks(settingsFile, isTheirCaveman) };
+  }
+
+  function putBack(kept) {
+    if (Array.isArray(kept.plugins) && kept.plugins.length) {
+      const json = readJSON(settingsFile);
+      if (json) {
+        json.enabledPlugins = { ...(json.enabledPlugins || {}) };
+        for (const k of kept.plugins) json.enabledPlugins[k] = true;
+        writeJSON(settingsFile, json);
+      }
+    }
+    const byFile = new Map();
+    for (const r of Array.isArray(kept.hooks) ? kept.hooks : []) {
+      if (!r || !r.file || !r.hook) continue;
+      if (!byFile.has(r.file)) byFile.set(r.file, []);
+      byFile.get(r.file).push(r);
+    }
+    for (const [file, taken] of byFile) {
+      const json = exists(file) ? readJSON(file) : {};
+      if (!json) continue;
+      json.hooks = json.hooks && typeof json.hooks === 'object' ? json.hooks : {};
+      for (const r of taken) {
+        const entries = Array.isArray(json.hooks[r.event]) ? json.hooks[r.event] : [];
+        // Set up again by the user meanwhile: not twice.
+        if (entries.some((e) => e && Array.isArray(e.hooks) && e.hooks.some((h) => h && h.command === r.hook.command))) continue;
+        entries.push({ ...(r.matcher != null && { matcher: r.matcher }), hooks: [r.hook] });
+        json.hooks[r.event] = entries;
+      }
+      writeJSON(file, json);
+    }
+  }
+
+  /** The app's own, beside the user's: only what is the app's goes (rtk's own uninstall would take the user's RTK.md
+   *  along). */
+  function removeOurs(kind) {
+    if (kind === 'caveman') return uninstallCaveman();
+    takeOutHooks(settingsFile, (h) => h.command.includes(GUARD_MARK));
+    takeOutHooks(path.join(codexDir, 'hooks.json'), (h) => h.commandWindows === CODEX_GUARD);
+  }
+
+  /** `rtk --version`'s numbers ("rtk 1.1.0"). */
+  async function rtkVersion(bin) {
+    const m = /^rtk (\d+(?:\.\d+)*)/.exec((await run(['--version'], bin)).trim());
+    return m ? m[1].split('.').map(Number) : null;
+  }
+  const older = (a, b) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+    return false;
+  };
+
+  /** The user's own, current: their rtk replaced by the app's newer one where it lies, as rtk's installer updates it
+   *  (not one a package manager keeps, nor the app's own); Claude Code updating their caveman plugin. */
+  async function keepCurrent(kind, own) {
+    if (kind === 'caveman') {
+      const at = own.indexOf('@');
+      if (at > 0) autoUpdate(own.slice(at + 1));
+      return;
+    }
+    const named = own && own !== 'rtk' && path.isAbsolute(own) ? own : which('rtk');
+    if (!named || !exists(bundled.rtk) || path.resolve(named) === path.resolve(ourRtk)) return;
+    if (/[\\/](WinGet|scoop|chocolatey)[\\/]/i.test(named) || !/^rtk(\.exe)?$/i.test(path.basename(named))) return;
+    const [theirsV, oursV] = [await rtkVersion(named), await rtkVersion(bundled.rtk)];
+    if (!theirsV || !oursV || !older(theirsV, oursV)) return;
+    try {
+      // A running one (a hook at work) can't be written over, but it can be moved aside.
+      try {
+        fs.copyFileSync(bundled.rtk, named);
+      } catch {
+        fs.renameSync(named, `${named}.old-${Date.now()}`);
+        fs.copyFileSync(bundled.rtk, named);
+      }
+    } catch (e) {
+      console.error('savers: rtk update:', e.message);
+    }
+  }
+
+  /** Claude Code updates a plugin by itself only from a marketplace with auto-update on: Anthropic's own by default,
+   *  the rest once /plugin's "Enable auto-update" is chosen. This turns it on for the caveman plugin's, in the user's
+   *  settings, where that switch writes it too. One the user turned off stays off. */
+  function autoUpdate(name) {
+    const known = (readJSON(path.join(claudeDir, 'plugins', 'known_marketplaces.json')) || {})[name];
+    if (known && known.autoUpdate !== undefined) return;
+    const json = readJSON(settingsFile);
+    if (!json || (json.extraKnownMarketplaces !== undefined && (typeof json.extraKnownMarketplaces !== 'object' || Array.isArray(json.extraKnownMarketplaces)))) return;
+    const all = { ...(json.extraKnownMarketplaces || {}) };
+    const entry = { ...(all[name] || {}) };
+    if (entry.source === undefined) {
+      // Recorded only by Claude Code (an older install): declared here too, from the same source.
+      if (!known || known.source === undefined) return;
+      entry.source = known.source;
+    }
+    if (entry.autoUpdate !== undefined) return;
+    entry.autoUpdate = true;
+    all[name] = entry;
+    json.extraKnownMarketplaces = all;
+    writeJSON(settingsFile, json);
   }
 
   // ---------- rtk ----------
@@ -181,7 +348,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
   }
 
   async function uninstallRtk() {
-    if (!exists(ourRtk)) return;
+    if (!exists(ourRtk)) return removeOurs('rtk');
     // rtk takes out the hooks it knows, the plain ones.
     rewriteRtkHooks(false);
     await run(['init', '-g', '--uninstall']);
@@ -266,18 +433,34 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     return next;
   };
 
+  async function turn(kind, on) {
+    const rec = record(kind);
+    rec.on = !!on;
+    try {
+      if (on) {
+        // The user's own goes back as it was; without one, the app's.
+        if (rec.kept) {
+          putBack(rec.kept);
+          delete rec.kept;
+        }
+        const own = theirs(kind);
+        if (own) await keepCurrent(kind, own);
+        else if (!installed(kind)) await (kind === 'rtk' ? installRtk() : installCaveman());
+      } else if (theirs(kind)) {
+        rec.kept = takeOut(kind);
+        if (installed(kind)) removeOurs(kind);
+      } else if (installed(kind)) {
+        await (kind === 'rtk' ? uninstallRtk() : uninstallCaveman());
+      }
+    } catch (e) {
+      console.error(`savers: ${kind} ${on ? 'on' : 'off'}:`, e.message);
+    }
+    saveRecord(kind, rec);
+  }
+
   /** Settings' switches: the choice is kept, then the tools' settings follow. */
   function set(kind, on) {
-    settings.set(KEY[kind], !!on);
-    return serial(async () => {
-      if (theirs(kind)) return;
-      try {
-        if (kind === 'rtk') await (on ? installRtk() : uninstallRtk());
-        else on ? installCaveman() : uninstallCaveman();
-      } catch (e) {
-        console.error(`savers: ${kind} ${on ? 'on' : 'off'}:`, e.message);
-      }
-    });
+    return serial(() => turn(kind, on));
   }
 
   /** For Settings: each saver's state, and what rtk saved so far (its `gain`). */
@@ -286,8 +469,8 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
       const out = {};
       for (const kind of KINDS) {
         const own = theirs(kind);
-        const on = !!own || settings.get(KEY[kind]) === true;
-        const s = { available: available(kind), on, theirs: !!own };
+        const on = !!own || installed(kind);
+        const s = { available: available(kind), on };
         if (kind === 'rtk' && on) {
           const bin = own ? (exists(own) ? own : which('rtk')) : exists(ourRtk) ? ourRtk : null;
           try {
@@ -305,10 +488,25 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     binDir,
     state,
     set,
-    /** Turns on, at a launch, the savers this build has that were never decided: off only when the user turns it off. */
+    /** At a launch: each saver on unless the user turned it off. The user's own is kept current, and the app's goes out
+     *  of its way (both would run). */
     autoStart() {
-      // One of the user's own stays undecided: if it goes one day, the app's comes on at the next launch.
-      for (const kind of KINDS) if (settings.get(KEY[kind]) === undefined && available(kind) && !theirs(kind)) set(kind, true);
+      return serial(async () => {
+        for (const kind of KINDS) {
+          if (!available(kind)) continue;
+          const own = theirs(kind);
+          if (own) {
+            try {
+              await keepCurrent(kind, own);
+              if (installed(kind)) removeOurs(kind);
+            } catch (e) {
+              console.error(`savers: ${kind}:`, e.message);
+            }
+          } else if (decided(kind) !== false && !installed(kind)) {
+            await turn(kind, true);
+          }
+        }
+      });
     },
     known: (kind) => KINDS.includes(kind),
   };

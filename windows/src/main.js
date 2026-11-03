@@ -82,6 +82,10 @@ const themes = createThemes({
     }
     if (dash) for (const w of [dash, dashView, chatsView]) w.setBackgroundColor(themes.color('--bg'));
   },
+  // Settings' text size: the dashboard zooms, as a browser does.
+  onScale(factor) {
+    if (dashView && !dashView.webContents.isDestroyed()) dashView.webContents.setZoomFactor(factor);
+  },
 });
 
 // The token savers (rtk, caveman), shipped next to the dashboard's files; run from the sources, rtk is the one
@@ -350,6 +354,8 @@ function createDashboard() {
   layout();
   for (const ev of ['resize', 'maximize', 'unmaximize', 'restore', 'enter-full-screen', 'leave-full-screen']) win.on(ev, layout);
   dashView.webContents.loadFile(path.join(WEB, 'index.html'));
+  // The text size Settings keeps, on every load (a reload starts at 100% otherwise).
+  dashView.webContents.on('did-finish-load', () => dashView.webContents.setZoomFactor(themes.uiScale()));
   chatsView.webContents.loadFile(path.join(__dirname, '..', 'pages', 'chats.html'));
   // Shown once the dashboard's page is there (no empty window first), or a few seconds on whatever happens.
   let shown = false;
@@ -480,6 +486,9 @@ function handleChats(msg) {
       break;
     case 'archive':
       chatlist.toggleArchived(String(msg.id || ''));
+      break;
+    case 'rename':
+      chatlist.rename(String(msg.id || ''), String(msg.name ?? ''));
       break;
     case 'folders':
       for (const k of Array.isArray(msg.keys) ? msg.keys : []) chatlist.setFolder(String(k || ''), msg.on === true);
@@ -941,7 +950,10 @@ function handleMessages(win, body) {
       return true;
     }
     case 'layout': {
-      const w = Math.round(body.w || 0), h = Math.round(body.h || 0);
+      // The page measures in its own pixels: at a zoom other than 100% (the dashboard's text size, which Chromium gives
+      // every page of the app's), the window is that many times larger.
+      const z = win.webContents.getZoomFactor() || 1;
+      const w = Math.round((body.w || 0) * z), h = Math.round((body.h || 0) * z);
       if (w < 1 || h < 1) {
         win.hide();
         if (role === 'chat') win.close();
@@ -979,8 +991,8 @@ function handleMessages(win, body) {
       return true;
     }
     case 'drag': {
-      const [x, y] = win.getPosition();
-      win.setPosition(Math.round(x + (body.dx || 0)), Math.round(y + (body.dy || 0)));
+      const [x, y] = win.getPosition(), z = win.webContents.getZoomFactor() || 1;
+      win.setPosition(Math.round(x + (body.dx || 0) * z), Math.round(y + (body.dy || 0) * z));
       return true;
     }
     case 'dragEnd':
@@ -1024,6 +1036,9 @@ function handleMessages(win, body) {
 // itself (no host) would end, so then it waits for the user's quit (or "update now").
 const updates = (() => {
   let offer = null, ready = false, busy = null, checking = false, checkedAt = null, error = null;
+  // How far the download has come (0…1, whole percents), as on the Mac: the page's bar and "updating 42%", so a long
+  // download never looks frozen.
+  let progress = null;
   // "Update now" pressed while the update was still downloading (the notice of a new version comes as its download
   // starts): it goes in the moment the download is done, as on the Mac, rather than waiting for the user to step away
   // while the page says "downloading…" with no way out.
@@ -1050,14 +1065,22 @@ const updates = (() => {
       pushCloud();
       toNotices(`update(${JSON.stringify({ version: i.version, build: 0 })})`);
     });
+    autoUpdater.on('download-progress', (p) => {
+      const f = Math.min(1, Math.floor(Number(p && p.percent) || 0) / 100);
+      if (f === progress) return;
+      progress = f;
+      pushCloud();
+    });
     autoUpdater.on('update-downloaded', () => {
       ready = true;
+      progress = null;
       pushCloud();
       if (whenReady) install();
       else maybeRestart();
     });
     autoUpdater.on('error', (e) => {
       console.error('updates:', e.message);
+      progress = null;
       // The installer didn't start: this version stays, the page says the update failed, and "update now" can be
       // pressed again.
       if (busy === 'restarting…') {
@@ -1126,7 +1149,7 @@ const updates = (() => {
   }
 
   return {
-    state: () => ({ update: offer, updateReady: ready, updating: busy, updateError: error, updateRightAway: rightAway(), checking, checkedAt, xpPaused: false }),
+    state: () => ({ update: offer, updateReady: ready, updating: busy, updateProgress: progress, updateError: error, updateRightAway: rightAway(), checking, checkedAt, xpPaused: false }),
     // Settings' "check for updates": answered within the feed's time limit, even with the network hanging.
     async check() {
       if (!usable) return;
@@ -1154,6 +1177,7 @@ const updates = (() => {
         if (busy !== 'downloading…') return;
         whenReady = false;
         busy = null;
+        progress = null;
         error = 'failed';
         pushCloud();
       });

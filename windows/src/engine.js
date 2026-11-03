@@ -1909,6 +1909,15 @@ class RadarEngine {
   pollProcesses() {
     const pids = new Set();
     for (const S of this.sessions.values()) if (S.live && S.pid != null) pids.add(S.pid);
+    // /autocompact changed the window mid-session: the gauge follows within seconds, not at Claude's next reply.
+    for (const S of this.sessions.values()) {
+      if (!S.live || !S.model) continue;
+      const limit = contextLimit(S.model, S.cwd, this.userSettings);
+      if (limit !== S.ctxMax) {
+        S.ctxMax = limit;
+        this.stateDirty = true;
+      }
+    }
     for (const pid of this.chains.keys()) if (!pids.has(pid)) this.chains.delete(pid);
     const want = this.isAppPid ? [...pids].filter((pid) => !this.chains.has(pid)) : [];
     const check = [...this.checking];

@@ -91,7 +91,12 @@ if [ -x vendor/rtk/rtk ]; then
 else
   echo "build-app: no rtk to put in (scripts/fetch-rtk.sh failed), rtk will be off" >&2
 fi
-codesign --force --deep --sign - "$APP" >/dev/null
+# Signed with the app's own certificate (scripts/signing-identity.sh puts it in the keychain) the signature stays the same
+# from build to build, so macOS keeps the permissions given to the app (screen recording, accessibility) across its
+# updates; without it, an ad-hoc signature, which every build changes, and the permissions go with each update.
+SIGN_ID=${ATALAY_SIGN_ID:-"Atalay's Terminal"}
+if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$SIGN_ID\""; then SIGN="$SIGN_ID"; else SIGN=-; fi
+codesign --force --deep --sign "$SIGN" "$APP" >/dev/null
 echo "built $APP"
 
 if [[ " $* " == *" --install "* ]] && [ "$APP" != "$HOME/Applications/$NAME.app" ]; then

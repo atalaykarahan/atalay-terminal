@@ -631,6 +631,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     /// The window's see-through background (windowOpacity), a view of its own under everything: the CRT effect squeezes
     /// the container's sublayers, not its own background, which stayed full size while the window powered off.
     private let backdrop = NSView()
+    /// What glows with a neon theme: the header, the footer and the terminals' area (ThemeStore.glow).
+    private var glowing: [NSView] = []
     private var themeWatch: NSObjectProtocol?
     private var copiedUntil = Date.distantPast
     /// Out of the way while the dashboard shows a menu (see stepAside).
@@ -724,6 +726,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     static let windowOpacity: CGFloat = 0.9
 
     private func paintTheme() {
+        for v in glowing { ThemeStore.glow(v, on: ThemeStore.shared.glows) }
         let bg = Theme.terminalBg
         backdrop.wantsLayer = true
         backdrop.layer?.backgroundColor = bg.withAlphaComponent(Self.windowOpacity).cgColor
@@ -785,6 +788,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             onEnd: { [weak self] in self?.endChat() },
             onCopyReply: { [weak self] in self?.copyLastReply() }))
         let ticker = NSHostingView(rootView: ChatTickerView(hud: hud))
+        glowing = [header, ticker, paneArea, tabBar]
 
         for v in [container, beam] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -1596,6 +1600,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     /// `confirm` false: asked already (a dashboard card's red button).
     func endChat(confirm: Bool = true) {
+        // With tabs, End Session ends the tab in front only: another tab's panes, or the window's own chat or terminal
+        // (its tab goes, the others run on).
+        if tabs.count > 1, !hud.mirror {
+            if !terminals(in: activeTab).contains(where: { $0 === terminal }) { return endTab(activeTab, confirm: confirm) }
+            return endOwnTab(confirm: confirm && !hud.exited)
+        }
         // A mirror only closes: the chat runs on in the app that owns it.
         if hud.mirror {
             let finish = { [weak self] in
@@ -1612,6 +1622,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         let shellOnly = hud.status == "terminal"
         // Like iTerm2: a terminal whose shell runs nothing closes without asking.
         let idle = shellOnly && shellPid > 0 && Proc.children(of: shellPid).isEmpty
+        // Its own chat over, what's left are panes: asks when something runs in them.
+        if confirm, hud.exited, original == nil, busy(extras), !ask("End this tab?", "What runs in it stops.", "End Tab") { return }
         if confirm, (!hud.exited && !idle) || original != nil {
             let a = NSAlert()
             a.messageText = shellOnly ? "Close this terminal?" : "End this chat?"
@@ -1648,6 +1660,66 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         }
         // Without the power-off animation (window hidden, or still powering on) the chat ends all the same.
         if !hide(then: finish) { finish() }
+    }
+
+    /// End Session on a tab of extra panes: they end (their shells and what runs in them), the window stays.
+    private func endTab(_ i: Int, confirm: Bool) {
+        let panes = terminals(in: i).compactMap { extra(of: $0) }
+        if confirm, busy(panes), !ask("End this tab?", "What runs in it stops.", "End Tab") { return }
+        if zoomed { _ = toggleZoom() }
+        for pane in panes {
+            if let name = pane.link?.name { manager?.terminalEnding("s:" + name) }
+            removePaneView(pane.terminal)
+            extras.removeAll { $0 === pane }
+            pane.end()
+        }
+        refreshPanes()
+        focus(focusTarget(in: activeTab))
+    }
+
+    /// End Session on the window's own tab while others are open: its chat or terminal ends and its tab goes; the
+    /// window lives on with the other tabs (closed, they keep running as cars).
+    private func endOwnTab(confirm: Bool) {
+        let shellOnly = hud.status == "terminal"
+        if confirm, !ask(shellOnly ? "End this terminal?" : "End this chat?",
+                         shellOnly ? "The shell in this tab stops; the other tabs keep running." : "Claude in this tab stops; the other tabs keep running. The conversation stays saved.",
+                         shellOnly ? "End Terminal" : "End Chat") { return }
+        manager?.dismiss(sessionId: sessionId, pid: hud.brief?.live == true ? hud.brief?.pid : nil)
+        manager?.terminalEnding(carId)
+        if let detached { Detached.quit(detached.name) }
+        // Its tab goes (or its place in a split, which closes up).
+        if zoomed { _ = toggleZoom() }
+        removePaneView(terminal)
+        refreshPanes()
+        focus(focusTarget(in: activeTab))
+    }
+
+    private func busy(_ panes: [ExtraPane]) -> Bool {
+        panes.contains { $0.shellPid > 0 && !Proc.children(of: $0.shellPid).isEmpty }
+    }
+
+    private func ask(_ title: String, _ text: String, _ ok: String) -> Bool {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.alertStyle = .warning
+        a.addButton(withTitle: ok)
+        a.addButton(withTitle: "Cancel")
+        return a.runModal() == .alertFirstButtonReturn
+    }
+
+    /// The window goes after its own chat or terminal ended: its other tabs and panes keep running, as cars.
+    func parkPanes() {
+        for pane in extras {
+            let folder = pane.currentFolder
+            guard let name = pane.link?.name else {
+                pane.end()
+                continue
+            }
+            pane.detach()
+            manager?.closedPane(of: self, session: name, kind: pane.kind, cwd: folder)
+        }
+        extras.removeAll()
     }
 
     private var attached = false
@@ -1736,6 +1808,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         if hud.mirror {
             endChat()
         } else if hud.exited {
+            // Its other tabs, still running, become cars instead of ending with it.
+            parkPanes()
             hide { [weak self] in
                 guard let self else { return }
                 self.manager?.removeChat(self.id)

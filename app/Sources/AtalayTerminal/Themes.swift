@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import SwiftUI
 import WebKit
 
@@ -15,6 +16,8 @@ struct ThemeSpec: Decodable {
     let accent: String
     let ansi: [String]
     let ui: [String: String]?
+    /// Neon text, as SynthWave '84's "glow" does in VS Code: every text on the pages shines in the accent.
+    let glow: Bool?
 }
 
 /// The theme the app shows and its colours as named tokens: the CSS variables of web/style.css, plus the terminals'
@@ -34,6 +37,8 @@ final class ThemeStore: ObservableObject {
     private var values: [String: UInt32] = [:]
     private var made: [String: [String: String]] = [:]
     private let pages = NSHashTable<WKWebView>.weakObjects()
+    /// The pages the interface's size applies to (the dashboard).
+    private let zoomed = NSHashTable<WKWebView>.weakObjects()
 
     private init() {
         let url = RadarView.webDirectory().appendingPathComponent("themes/themes.json")
@@ -41,7 +46,7 @@ final class ThemeStore: ObservableObject {
         if list.isEmpty {
             NSLog("themes: %@ unreadable, default colours only", url.path)
             list = [ThemeSpec(id: "atalay", name: "Atalay", bg: "#251200", fg: "#f5ebe0", cursor: "#f88008", selection: "#f88008",
-                              accent: "#f88008", ansi: Self.fallbackAnsi, ui: nil)]
+                              accent: "#f88008", ansi: Self.fallbackAnsi, ui: nil, glow: nil)]
         }
         themes = list
         let saved = UserDefaults.standard.string(forKey: Self.key)
@@ -64,12 +69,63 @@ final class ThemeStore: ObservableObject {
         guard let spec = themes.first(where: { $0.id == id }), spec.id != current.id else { return }
         current = spec
         load()
+        repaint()
+        NotificationCenter.default.post(name: Self.changed, object: self)
+    }
+
+    /// Every page takes the style sheet again (and keeps it for its next load).
+    private func repaint() {
         let css = Self.jsString(self.css)
         for page in pages.allObjects {
             Self.install(script, in: page.configuration.userContentController)
             page.evaluateJavaScript("window.__theme && window.__theme(\(css)); true", completionHandler: nil)
         }
-        NotificationCenter.default.post(name: Self.changed, object: self)
+    }
+
+    // MARK: a neon theme's glow on the native views
+
+    var glows: Bool { current.glow == true }
+
+    /// The glow on a native view (the terminals, a chat window's header, the chats list): everything drawn in it blooms
+    /// in its own colours, as the pages' text glows with its shadow. Off takes it away. `soft`: a faint one, for small
+    /// text on a lit background (the chats list), which the full bloom washed out.
+    static func glow(_ view: NSView, on: Bool, soft: Bool = false) {
+        view.wantsLayer = true
+        view.layerUsesCoreImageFilters = true
+        guard on, let bloom = CIFilter(name: "CIBloom") else {
+            view.layer?.filters = nil
+            return
+        }
+        bloom.setDefaults()
+        bloom.setValue(soft ? 1.5 : 4, forKey: kCIInputRadiusKey)
+        bloom.setValue(soft ? 0.35 : 1.1, forKey: kCIInputIntensityKey)
+        view.layer?.filters = [bloom]
+    }
+
+    // MARK: the interface's font and size (Settings)
+
+    /// The fonts the interface can take: its own monospace, or one some read more easily.
+    static let uiFonts: [(id: String, name: String, css: String?)] = [
+        ("mono", "mono", nil),
+        ("system", "system", "-apple-system, BlinkMacSystemFont, \"Segoe UI\", system-ui, sans-serif"),
+        ("rounded", "rounded", "ui-rounded, \"SF Pro Rounded\", -apple-system, \"Segoe UI\", sans-serif"),
+    ]
+    /// How large the dashboard draws (its zoom, as a browser's), for text too small to read.
+    static let uiScales: [Double] = [1, 1.1, 1.25, 1.4]
+    var uiFont: String { UserDefaults.standard.string(forKey: "uiFont").flatMap { id in Self.uiFonts.first { $0.id == id }?.id } ?? "mono" }
+    var uiScale: Double {
+        let v = UserDefaults.standard.double(forKey: "uiScale")
+        return Self.uiScales.contains(v) ? v : 1
+    }
+    var uiJSON: [String: Any] {
+        ["font": uiFont, "scale": uiScale, "fonts": Self.uiFonts.map { ["id": $0.id, "name": $0.name] }, "scales": Self.uiScales]
+    }
+
+    func setUI(font: String?, scale: Double?) {
+        if let font, Self.uiFonts.contains(where: { $0.id == font }) { UserDefaults.standard.set(font, forKey: "uiFont") }
+        if let scale, Self.uiScales.contains(scale) { UserDefaults.standard.set(scale, forKey: "uiScale") }
+        repaint()
+        for page in zoomed.allObjects { page.pageZoom = uiScale }
     }
 
     private func load() {
@@ -93,10 +149,15 @@ final class ThemeStore: ObservableObject {
 
     // MARK: the web pages
 
-    /// Gives a page the theme before it loads and keeps it current. Call before the page loads.
-    func attach(_ page: WKWebView) {
+    /// Gives a page the theme before it loads and keeps it current. Call before the page loads. `zooms`: the interface's
+    /// size applies to it (the dashboard).
+    func attach(_ page: WKWebView, zooms: Bool = false) {
         Self.install(script, in: page.configuration.userContentController)
         pages.add(page)
+        if zooms {
+            zoomed.add(page)
+            page.pageZoom = uiScale
+        }
     }
 
     /// The style sheet: every token on the page's root (above style.css's defaults), and the default theme's again on
@@ -109,6 +170,9 @@ final class ThemeStore: ObservableObject {
             + "--panel:rgba(var(--panel-rgb),var(--glass-a));--line:rgba(var(--accent-rgb),0.32);--line-soft:rgba(var(--accent-rgb),0.13);"
             + "color:var(--txt);background:linear-gradient(rgba(var(--bg-rgb),0.6),rgba(var(--bg-rgb),0.6)),"
             + "radial-gradient(ellipse at 50% 40%,var(--bloom) 0%,var(--bg) 70%) fixed}"
+            // A neon theme's text glows in its own colour, as SynthWave '84's "Neon Dreams" does in VS Code.
+            + (current.glow == true ? "body{text-shadow:0 0 1px rgba(255,255,255,0.3),0 0 5px currentColor,0 0 12px rgba(var(--accent-rgb),0.5)}" : "")
+            + (Self.uiFonts.first { $0.id == uiFont }?.css.map { ":root:root{--font:\($0)}" } ?? "")
     }
 
     private var script: WKUserScript {
@@ -298,6 +362,11 @@ final class ThemeBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "preview": store.preview(id); replyHandler(true, nil)
         case "choose": store.choose(id); replyHandler(true, nil)
         case "revert": store.revert(); replyHandler(true, nil)
+        // Settings' interface font and text size.
+        case "ui": replyHandler(store.uiJSON, nil)
+        case "setUI":
+            store.setUI(font: body["font"] as? String, scale: (body["scale"] as? NSNumber)?.doubleValue)
+            replyHandler(store.uiJSON, nil)
         default: replyHandler(nil, "unknown request")
         }
     }

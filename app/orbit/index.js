@@ -752,9 +752,15 @@ function reflections() {
 }
 let shipSeq = 0;
 
+// Cars blown up by End Session, until when they stay gone: their terminal is still on the list for a few seconds while it
+// ends (its processes hung up, then ended), and the car came back.
+const GONE = new Map();
 function syncShips(list) {
   const seen = new Set(), now = performance.now();
+  const listed = new Set((list || []).map((t) => t.id));
+  for (const [id, until] of GONE) if (until < now || !listed.has(id)) GONE.delete(id);
   for (const t of list || []) {
+    if (GONE.has(t.id)) continue;
     seen.add(t.id);
     let s = SHIPS.get(t.id);
     if (!s || s.dying) {
@@ -796,6 +802,7 @@ function explode(s, now) {
 }
 // The app says so the moment End is pressed, before the terminals list catches up.
 function shipGone(id) {
+  GONE.set(id, performance.now() + 30_000);
   const s = SHIPS.get(id);
   if (s && !s.dying) explode(s, performance.now());
 }

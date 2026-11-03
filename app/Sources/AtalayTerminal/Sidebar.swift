@@ -23,6 +23,24 @@ final class SidebarModel: ObservableObject {
     @Published var restored = Set(UserDefaults.standard.stringArray(forKey: "chatRestored") ?? []) {
         didSet { UserDefaults.standard.set(Array(restored), forKey: "chatRestored") }
     }
+    /// Names given to chats (right-click → Rename), over Claude's own titles; kept across launches.
+    @Published var customTitles = UserDefaults.standard.dictionary(forKey: "chatTitles") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(customTitles, forKey: "chatTitles") }
+    }
+    /// The chat whose name is being edited in its row.
+    @Published var renaming: String?
+
+    func title(of item: ChatItem) -> String {
+        customTitles[item.id] ?? (item.title.isEmpty ? item.lastPrompt : item.title)
+    }
+
+    /// A new name for a chat; empty gives it back its own.
+    func rename(_ id: String, to name: String) {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        customTitles[id] = clean.isEmpty ? nil : String(clean.prefix(120))
+        renaming = nil
+    }
+
     /// Folders picked with a click on their header, for archiving (or unarchiving) them all at once.
     @Published var selectedFolders: Set<String> = []
 
@@ -123,7 +141,7 @@ final class SidebarModel: ObservableObject {
         var all = everything
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         if !q.isEmpty {
-            all = all.filter { "\($0.title) \($0.lastPrompt) \($0.cwd)".lowercased().contains(q) }
+            all = all.filter { "\(customTitles[$0.id] ?? "") \($0.title) \($0.lastPrompt) \($0.cwd)".lowercased().contains(q) }
         }
         var order: [String] = []
         var map: [String: [ChatItem]] = [:]
@@ -295,12 +313,17 @@ struct SidebarView: View {
 
     private func row(_ item: ChatItem) -> some View {
         let favorite = model.favorites.contains(item.id), archived = model.isArchived(item)
-        return ChatRow(item: item, brief: model.briefs[item.id], inTab: model.openInTabs.contains(item.id), favorite: favorite,
+        return ChatRow(item: item, title: model.title(of: item), renaming: model.renaming == item.id,
+                       onRename: { name in
+                           if let name { model.rename(item.id, to: name) } else { model.renaming = nil }
+                       },
+                       brief: model.briefs[item.id], inTab: model.openInTabs.contains(item.id), favorite: favorite,
                        archived: archived,
                        onStar: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleFavorite(item) } },
                        onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleArchived(item) } })
             .onTapGesture { actions.open(item.id) }
             .contextMenu {
+                Button("Rename…") { model.renaming = item.id }
                 Button(favorite ? "Remove from Favorites" : "Add to Favorites") {
                     withAnimation(.easeInOut(duration: 0.25)) { model.toggleFavorite(item) }
                 }
@@ -407,6 +430,11 @@ private struct ProjectHeader: View {
 
 private struct ChatRow: View {
     let item: ChatItem
+    /// Its name (one the user gave it, else Claude's title), and whether it's being renamed in place.
+    let title: String
+    let renaming: Bool
+    /// The new name, or nil when the rename is called off (Esc).
+    let onRename: (String?) -> Void
     let brief: SessionBrief?
     let inTab: Bool
     let favorite: Bool
@@ -414,6 +442,8 @@ private struct ChatRow: View {
     let onStar: () -> Void
     let onArchive: () -> Void
     @State private var hover = false
+    @State private var draft = ""
+    @FocusState private var editing: Bool
 
     var body: some View {
         let live = brief?.live == true
@@ -422,10 +452,27 @@ private struct ChatRow: View {
             StatusDot(status: status ?? "ended", size: 7, hollow: !live)
                 .id(status ?? "ended")
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.title.isEmpty ? item.lastPrompt : item.title)
-                    .font(.mono(11))
-                    .foregroundColor(live ? Theme.cHi : Theme.cText)
-                    .lineLimit(1)
+                if renaming {
+                    // Enter keeps it, Esc calls it off; an empty name gives the chat back its own.
+                    TextField("name", text: $draft)
+                        .textFieldStyle(.plain)
+                        .font(.mono(11))
+                        .foregroundColor(Theme.cHi)
+                        .focused($editing)
+                        .onSubmit { onRename(draft) }
+                        .onExitCommand { onRename(nil) }
+                        .onAppear {
+                            draft = title
+                            editing = true
+                        }
+                        .padding(.horizontal, 3)
+                        .background(RoundedRectangle(cornerRadius: 3).stroke(Theme.cAccent, lineWidth: 1))
+                } else {
+                    Text(title)
+                        .font(.mono(11))
+                        .foregroundColor(live ? Theme.cHi : Theme.cText)
+                        .lineLimit(1)
+                }
                 Text(meta(live: live, status: status))
                     .font(.mono(9))
                     .foregroundColor(status == "waiting" ? Theme.cAlert : Theme.cDim)
@@ -463,7 +510,7 @@ private struct ChatRow: View {
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .help(item.lastPrompt.isEmpty ? item.title : item.lastPrompt)
+        .help(item.lastPrompt.isEmpty ? title : item.lastPrompt)
     }
 
     private func meta(live: Bool, status: String?) -> String {

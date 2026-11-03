@@ -65,6 +65,8 @@ button { display: flex; align-items: center; padding: 0; border: 0; background: 
 .txt { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
 .t, .m { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .t { color: var(--txt); font-size: 11px; }
+/* A chat's name edited in place (Rename…). */
+.ren { width: 100%; padding: 1px 4px; border: 1px solid var(--accent); border-radius: 3px; outline: 0; background: rgba(var(--accent-rgb), 0.08); color: var(--hi); font: inherit; font-size: 11px; }
 .t.live { color: var(--hi); }
 .m { color: var(--dim); font-size: 9px; }
 .m.warn { color: var(--warn); }

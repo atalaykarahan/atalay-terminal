@@ -828,6 +828,14 @@ final class RadarEngine {
             }
             cpuSeen[pid] = (info.cpuTime, now)
             S.mem = Int(info.rss / 1_048_576)
+            // /autocompact changed the window mid-session: the gauge follows within seconds, not at Claude's next reply.
+            if !S.model.isEmpty {
+                let limit = contextLimit(S.model, cwd: S.cwd)
+                if limit != S.ctxMax {
+                    S.ctxMax = limit
+                    stateDirty = true
+                }
+            }
         }
         cpuSeen = cpuSeen.filter { alivePids.contains($0.key) }
         pollOthers()

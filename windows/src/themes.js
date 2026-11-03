@@ -6,14 +6,23 @@
 const fs = require('fs');
 const path = require('path');
 
+// The fonts the interface can take (Settings), as the Mac's ThemeStore.uiFonts: its own monospace, or one some read more
+// easily; and how large the dashboard draws, for text too small to read.
+const UI_FONTS = [
+  { id: 'mono', name: 'mono', css: null },
+  { id: 'system', name: 'system', css: '"Segoe UI", -apple-system, system-ui, sans-serif' },
+  { id: 'rounded', name: 'rounded', css: '"Segoe UI Variable Display", "Segoe UI", ui-rounded, system-ui, sans-serif' },
+];
+const UI_SCALES = [1, 1.1, 1.25, 1.4];
 const FALLBACK_ANSI = ['#562f18', '#ff4d4d', '#c5e35a', '#ffd23f', '#c16100', '#e0849c', '#ff7345', '#ffb27a',
   '#7d6553', '#ff5c8a', '#ddf08f', '#ffe28a', '#f88008', '#ffa8c4', '#ff9b73', '#fff3e6'];
 
 /**
  * `webDir`: the dashboard's web folder; `settings`: { get(key), set(key, value) }, where the chosen theme is kept;
- * `onChange(css)`: the theme the app shows changed (a preview, a choice, back to the chosen one).
+ * `onChange(css)`: the theme the app shows changed (a preview, a choice, back to the chosen one, the interface's font);
+ * `onScale(factor)`: the interface's size changed (the dashboard's zoom).
  */
-function createThemes({ webDir, settings, onChange }) {
+function createThemes({ webDir, settings, onChange, onScale }) {
   let list = [];
   try {
     list = JSON.parse(fs.readFileSync(path.join(webDir, 'themes', 'themes.json'), 'utf8'));
@@ -29,6 +38,9 @@ function createThemes({ webDir, settings, onChange }) {
     return made.get(spec.id);
   };
   const chosenId = () => (list.find((t) => t.id === settings.get('theme')) || list[0]).id;
+  const uiFont = () => (UI_FONTS.find((f) => f.id === settings.get('uiFont')) || UI_FONTS[0]);
+  const uiScale = () => (UI_SCALES.includes(settings.get('uiScale')) ? settings.get('uiScale') : 1);
+  const uiJSON = () => ({ font: uiFont().id, scale: uiScale(), fonts: UI_FONTS.map(({ id, name }) => ({ id, name })), scales: UI_SCALES });
   let current = list.find((t) => t.id === chosenId());
 
   // Every token on the page's root (above style.css's defaults), and the default theme's again on the orbit map: the
@@ -39,7 +51,12 @@ function createThemes({ webDir, settings, onChange }) {
     return `:root:root{${decl(tokens(current))}}#mapwrap#mapwrap{${decl(tokens(list[0]))}` +
       '--panel:rgba(var(--panel-rgb),var(--glass-a));--line:rgba(var(--accent-rgb),0.32);--line-soft:rgba(var(--accent-rgb),0.13);' +
       'color:var(--txt);background:linear-gradient(rgba(var(--bg-rgb),0.6),rgba(var(--bg-rgb),0.6)),' +
-      'radial-gradient(ellipse at 50% 40%,var(--bloom) 0%,var(--bg) 70%) fixed}';
+      'radial-gradient(ellipse at 50% 40%,var(--bloom) 0%,var(--bg) 70%) fixed}' +
+      // A neon theme's text glows in its own colour (SynthWave '84's "Neon Dreams" in VS Code), as on the Mac; the
+      // terminal draws on a canvas, so its text blooms through terminal.html's filter instead.
+      (current.glow ? 'body{text-shadow:0 0 1px rgba(255,255,255,0.3),0 0 5px currentColor,0 0 12px rgba(var(--accent-rgb),0.5)}' +
+        '.xterm-screen canvas{filter:url(#atl-neon)}' : '') +
+      (uiFont().css ? `:root:root{--font:${uiFont().css}}` : '');
   };
 
   const show = (id) => {
@@ -64,6 +81,7 @@ function createThemes({ webDir, settings, onChange }) {
       show(id);
     },
     revert: () => show(chosenId()),
+    uiScale,
     /** The page's "theme" handler (cloud.js): the list with every theme's colours, a preview, a choice, back. */
     handle(body) {
       switch (body && body.type) {
@@ -72,6 +90,14 @@ function createThemes({ webDir, settings, onChange }) {
         case 'preview': show(body.id); return true;
         case 'choose': this.choose(body.id); return true;
         case 'revert': show(chosenId()); return true;
+        // Settings' interface font and text size.
+        case 'ui': return uiJSON();
+        case 'setUI':
+          if (UI_FONTS.some((f) => f.id === body.font)) settings.set('uiFont', body.font);
+          if (UI_SCALES.includes(body.scale)) settings.set('uiScale', body.scale);
+          onChange(css());
+          if (onScale) onScale(uiScale());
+          return uiJSON();
         default: return { error: 'unknown request' };
       }
     },

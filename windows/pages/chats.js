@@ -24,6 +24,8 @@
   let query = '';
   const expanded = new Set();
   const picked = new Set();
+  // The chat being renamed in place: ↩ keeps the name, Esc (or a click elsewhere) leaves it.
+  let renaming = null;
 
   function relative(ms) {
     // A live chat with nothing saved yet comes without a time: it's happening now.
@@ -51,7 +53,9 @@
     const st = r.status || 'ended';
     return `<div class="row${r.open ? ' open' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
       `<span class="dot s-${esc(st)}${r.status ? '' : ' hollow'}"></span>` +
-      `<span class="txt"><span class="t${r.status ? ' live' : ''}">${esc(r.title || r.lastPrompt)}</span>` +
+      (r.id === renaming
+        ? `<span class="txt"><input class="ren" value="${esc(r.title || r.lastPrompt)}" spellcheck="false" maxlength="120">`
+        : `<span class="txt"><span class="t${r.status ? ' live' : ''}">${esc(r.title || r.lastPrompt)}</span>`) +
       `<span class="m${st === 'waiting' ? ' warn' : ''}">${esc(meta(r))}</span></span>` +
       `<button type="button" class="star${r.fav ? ' on' : ''}" data-act="star" title="${r.fav ? 'Remove from favorites' : 'Add to favorites: it stays at the top'}">${ICON.star}</button>` +
       `<button type="button" data-act="archive" title="Archive: out of the list (Settings lists it)">${ICON.archive}</button></div>`;
@@ -90,6 +94,25 @@
       if (!all && g.items.length > 5) html += `<button type="button" class="more" data-key="${esc(g.key)}">+${g.items.length - 5} more</button>`;
     }
     $('list').innerHTML = html;
+    const ren = renaming && $('list').querySelector('.ren');
+    if (ren) {
+      ren.focus();
+      ren.select();
+      ren.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          renaming = null;
+          post({ type: 'rename', id: e.target.closest('.row').dataset.id, name: ren.value });
+        } else if (e.key === 'Escape') {
+          renaming = null;
+          render();
+        }
+      });
+      ren.addEventListener('blur', () => {
+        if (!renaming) return;
+        renaming = null;
+        render();
+      });
+    }
     $('bulk').hidden = !picked.size;
     $('picked').textContent = `${picked.size} selected`;
   }
@@ -111,6 +134,7 @@
       return render();
     }
     const r = e.target.closest('.row');
+    if (r && e.target.classList.contains('ren')) return;
     if (r) {
       const act = button && button.dataset.act;
       return post({ type: act === 'star' ? 'favorite' : act === 'archive' ? 'archive' : 'open', id: r.dataset.id });
@@ -134,6 +158,7 @@
       if (!item) return;
       const choice = await post({
         type: 'menu', at, items: [
+          { id: 'rename', title: 'Rename…' },
           { id: 'favorite', title: item.fav ? 'Remove from Favorites' : 'Add to Favorites' },
           { id: 'archive', title: 'Archive' },
           { separator: true },
@@ -145,7 +170,10 @@
           { id: 'copyId', title: 'Copy Session ID' },
         ],
       });
-      if (choice === 'new' || choice === 'reveal') post({ type: choice === 'new' ? 'newTerminal' : 'reveal', cwd: item.cwd });
+      if (choice === 'rename') {
+        renaming = item.id;
+        render();
+      } else if (choice === 'new' || choice === 'reveal') post({ type: choice === 'new' ? 'newTerminal' : 'reveal', cwd: item.cwd });
       else if (choice) post({ type: choice, id: item.id });
     } else if (h) {
       const key = h.dataset.key, sel = picked.has(key), n = picked.size;

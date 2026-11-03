@@ -86,6 +86,8 @@ window.Cloud = (() => {
     badges();
   }
 
+  // How much of the update has downloaded, " 42%" (nothing when it isn't downloading).
+  const pct = () => (S.updateProgress == null ? '' : ` ${Math.round(S.updateProgress * 100)}%`);
   function renderUpdate() {
     const b = $('update');
     const busy = !!S.updating;
@@ -95,9 +97,9 @@ window.Cloud = (() => {
     // A day after a newer version came out, an older one earns no XP (the API): the button says so.
     b.classList.toggle('paused', !busy && !!S.xpPaused);
     // Short label so the top bar fits; the version and progress are in the tooltip and in settings.
-    setHTML(b, `${ARROW}<span>${busy ? 'updating…' : S.xpPaused ? 'update · XP paused' : 'update'}</span>`);
+    setHTML(b, `${ARROW}<span>${busy ? `updating${pct() || '…'}` : S.xpPaused ? 'update · XP paused' : 'update'}</span>`);
     b.title = busy
-      ? S.updating
+      ? S.updating + pct()
       : S.update
         ? S.xpPaused
           ? `Version ${S.update.version} is out · XP is paused until you update · click to see what's new`
@@ -134,6 +136,7 @@ window.Cloud = (() => {
         <div class="hk-body">
           <div class="hk-h">WHAT'S NEW IN ${esc(u.version)}</div>
           <ul class="up-notes">${(lines.length ? lines : ['fixes and improvements']).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
+          <div class="up-bar" hidden><i></i></div>
           <p class="hk-status up-status"></p>
         </div>
         <div class="pk-foot"><span class="pk-sel note">restarts the app · chats keep running</span><button class="pk-cancel">later</button><button class="pk-ok up-go">update now</button></div>
@@ -145,8 +148,6 @@ window.Cloud = (() => {
     };
     renderUpdateModal();
   }
-  // The token saver's question, once (TokenSavers.swift asks the page at a launch that ships rtk): the app's own window
-  // first; rtk is set up, and anything macOS then asks for, only after "turn on".
   // While it downloads and installs: the progress, and no way out (the app restarts at the end).
   function renderUpdateModal() {
     if (modal !== 'update') return;
@@ -156,7 +157,11 @@ window.Cloud = (() => {
     go.disabled = q('.pk-cancel').disabled = busy;
     go.textContent = busy ? 'updating…' : 'update now';
     st.className = `hk-status up-status${busy ? ' ok' : ''}`;
-    st.textContent = busy ? S.updating : '';
+    st.textContent = busy ? S.updating + pct() : '';
+    // The download as a bar, so a long one never looks frozen.
+    const bar = q('.up-bar');
+    bar.hidden = !(busy && S.updateProgress != null);
+    bar.firstElementChild.style.width = `${Math.round((S.updateProgress || 0) * 100)}%`;
   }
 
   // The name's state reaches the page as a push from the app, before or after the call's reply.
@@ -293,6 +298,9 @@ window.Cloud = (() => {
               <button type="button" class="hk-sw act" role="switch" aria-checked="true" title="Show my active time to friends"><i></i></button></div>
             <div class="hk-row"><span>show my name on the leaderboard<small>off: you keep your place as Anonymous, and nobody can add you from there</small></span>
               <button type="button" class="hk-sw brd" role="switch" aria-checked="true" title="Show my name on the leaderboard"><i></i></button></div>
+            ${UI ? `<div class="hk-h">INTERFACE</div>
+            <div class="hk-row"><span>font<small>the dashboard's and the messages' text</small></span><span class="lb-seg ui-seg ui-font"></span></div>
+            <div class="hk-row"><span>text size<small>the dashboard, larger for text too small to read</small></span><span class="lb-seg ui-seg ui-scale"></span></div>` : ''}
             ${SAVERS ? `<div class="hk-h">TOKEN SAVERS</div>
             <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code and Codex<small class="ts-note" data-which="rtk">…</small></span>
               <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
@@ -431,7 +439,10 @@ window.Cloud = (() => {
     const focus = which === 'settings' ? q('.mn-settings .hk-input') : null;
     if (focus) setTimeout(() => focus.focus(), 60);
     if (which === 'keys') renderKeys();
-    if (which === 'settings') renderSaver();
+    if (which === 'settings') {
+      renderSaver();
+      renderUI();
+    }
   }
 
   // ---------- archived chats ----------
@@ -495,9 +506,33 @@ window.Cloud = (() => {
     };
   }
 
+  // ---------- the interface's font and text size ----------
+  // Kept by the app (Themes.swift's ThemeStore on the Mac, themes.js on Windows) and set through the theme bridge: the
+  // font goes on every page, the size is the dashboard's zoom.
+  const UI = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.theme);
+  const uiCall = (msg) => window.webkit.messageHandlers.theme.postMessage(msg);
+  function showUI(ui) {
+    const font = q('.ui-font'), scale = q('.ui-scale');
+    if (!ui || !ui.fonts || !font || !scale) return;
+    setHTML(font, ui.fonts.map((f) => `<button type="button" data-font="${esc(f.id)}" class="${f.id === ui.font ? 'on' : ''}">${esc(f.name)}</button>`).join(''));
+    setHTML(scale, ui.scales.map((x) => `<button type="button" data-scale="${x}" class="${x === ui.scale ? 'on' : ''}">${Math.round(x * 100)}%</button>`).join(''));
+  }
+  async function renderUI() {
+    if (!UI || !q('.ui-font')) return;
+    showUI(await uiCall({ type: 'ui' }).catch(() => null));
+    q('.ui-font').onclick = async (e) => {
+      const b = e.target.closest('button[data-font]');
+      if (b) showUI(await uiCall({ type: 'setUI', font: b.dataset.font }).catch(() => null));
+    };
+    q('.ui-scale').onclick = async (e) => {
+      const b = e.target.closest('button[data-scale]');
+      if (b) showUI(await uiCall({ type: 'setUI', scale: Number(b.dataset.scale) }).catch(() => null));
+    };
+  }
+
   // ---------- the token savers ----------
   // rtk and caveman, which the Mac app ships and turns on for Claude Code and Codex (TokenSavers.swift): a switch each,
-  // and what rtk saved.
+  // and what rtk saved. One the user set up themselves switches the same way.
   const SAVERS = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.savers);
   const saversCall = (msg) => window.webkit.messageHandlers.savers.postMessage(msg);
   const compact = (n) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
@@ -508,11 +543,10 @@ window.Cloud = (() => {
       const st = all[which], sw = q(`.hk-sw.ts[data-which="${which}"]`), note = q(`.ts-note[data-which="${which}"]`);
       if (!st || !sw || !note) continue;
       sw.setAttribute('aria-checked', st.on ? 'true' : 'false');
-      sw.disabled = !st.available || st.theirs;
-      sw.title = st.theirs ? `Your own ${which}: change it there` : `Turn ${which} on or off`;
+      sw.disabled = !st.available;
+      sw.title = `Turn ${which} on or off`;
       note.textContent = !st.available ? 'not in this build'
-        : st.saved != null ? `${st.theirs ? 'your own rtk · ' : ''}saved ${compact(st.saved)} tokens so far, ${Math.round(st.pct)}% of what ${compact(st.commands)} commands printed`
-        : st.theirs ? `your own ${which} · on`
+        : st.saved != null ? `saved ${compact(st.saved)} tokens so far, ${Math.round(st.pct)}% of what ${compact(st.commands)} commands printed`
         : st.on ? (which === 'caveman' ? 'on · about two thirds fewer output tokens, from the next chat' : 'on · nothing saved yet') : SAVER_OFF[which];
     }
   }
@@ -861,8 +895,14 @@ window.Cloud = (() => {
     toast(show ? 'your name shows on the leaderboard again' : "you're Anonymous on the leaderboard · only you see your name there");
   }
 
-  // ---------- the leaderboard: everyone with XP, the last 7 days or ever, and a friend request one click away ----------
+  // ---------- the leaderboard: everyone with XP, this week (since Monday) or ever, and a friend request one click away ----------
   let boardBy = 'week';
+  // Their active time this week, as the board counts its XP: from their Monday (the last of their 7 days is their today).
+  const weekActive = (u) => {
+    if (!u.days) return null;
+    const sinceMonday = u.daysEnd ? new Date(u.daysEnd + 'T00:00:00Z').getUTCDay() || 7 : 7;
+    return u.days.slice(-sinceMonday).reduce((a, s) => a + (s || 0), 0);
+  };
   let board = null; // the API's answer: { by, rows, me }
   let boardSeq = 0;
 
@@ -896,7 +936,7 @@ window.Cloud = (() => {
         `<span class="lb-spark off"></span><span class="lb-score">${boardBy === 'week' ? `+${Xp.num(u.week)}` : Xp.num(u.xp)} XP</span><span class="lb-act"></span></div>`
       );
     }
-    const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
+    const active = weekActive(u);
     // Five hours of work today, from their own midnight (a daily stat, as in games): the card burns. Their today is the
     // last of their 7 days (null while they're invisible).
     const fire = (u.days ? u.days[u.days.length - 1] : 0) >= 5 * 3600;
@@ -919,7 +959,7 @@ window.Cloud = (() => {
       `<button type="button" data-by="all" class="${boardBy === 'all' ? 'on' : ''}">ALL TIME</button></div>` +
       // How many are at work right now (the green dots), so nobody works alone.
       `<span class="lb-note">${board?.working ? `<b class="lb-now"><i class="lb-live"></i>${board.working} working now</b> · ` : ''}` +
-      `${boardBy === 'week' ? 'XP earned over the last 7 days' : 'XP ever'} · click someone for their week</span></div>`;
+      `${boardBy === 'week' ? 'XP earned since Monday' : 'XP ever'} · click someone for their week</span></div>`;
     if (!board || board.error) {
       const why = !board ? (S.reachable ? 'loading…' : "can't reach the server · the leaderboard comes back with the connection") : errorText(board.error);
       return setHTML(el, `${head}<div class="mn-empty">${why}</div>`);
@@ -992,7 +1032,7 @@ window.Cloud = (() => {
     host.setAttribute('style', t ? themeStyle(t.tokens) : '');
     host.querySelector('.meta').textContent = t ? `in their theme · ${t.name}` : '';
     const r = Xp.rank(u.level);
-    const active = u.days ? u.days.reduce((a, s) => a + (s || 0), 0) : null;
+    const active = weekActive(u);
     const theirs = !t ? '' : u.me ? '<em>yours</em>' : t.id === list.chosen ? '<em>you use it too</em>'
       : '<button type="button" class="mn-btn go" data-ans="theme" title="Use their theme">use this theme</button>';
     setHTML(host.querySelector('.pf-host'),
@@ -1053,9 +1093,9 @@ window.Cloud = (() => {
     const el = q('.hk-info');
     if (!el) return;
     const status = S.updating
-      ? `<em>${esc(S.updating)}</em>`
+      ? `<em>${esc(S.updating + pct())}</em>`
       : S.update
-        ? `<em class="${S.xpPaused ? 'bad' : ''}">${esc(S.update.version)} ${S.updateReady ? 'ready · installs when you step away' : 'is out · downloading'}${S.xpPaused ? ' · XP paused until then' : ''}</em>`
+        ? `<em class="${S.xpPaused ? 'bad' : ''}">${esc(S.update.version)} ${S.updateReady ? 'ready · installs when you step away' : `is out · downloading${pct()}`}${S.xpPaused ? ' · XP paused until then' : ''}</em>`
         : S.checking
           ? '<em class="dim">checking…</em>'
           : S.checkedAt

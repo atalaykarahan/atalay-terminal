@@ -97,6 +97,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             },
             close: { [weak self] in self?.toggleSidebar() })))
         sidebarHost = side
+        ThemeStore.glow(side, on: ThemeStore.shared.glows, soft: true)
         radar.handleArchive(ArchiveBridge(model: sidebar))
 
         let split = ThemedSplitView()
@@ -338,7 +339,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             measured.insert(key)
             return cpu
         }
-        for c in chats.values where !c.hud.exited {
+        // An ended window's other tabs are still running: their cars stay.
+        for c in chats.values {
             for pane in c.plainShells() {
                 let jobs = Proc.children(of: pane.shell)
                 let cwd = Proc.cwd(pane.shell) ?? pane.cwd
@@ -427,6 +429,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window?.backgroundColor = Theme.bg
         window?.contentView?.layer?.backgroundColor = Theme.bg.cgColor
         split?.needsDisplay = true
+        ThemeStore.glow(sidebarHost, on: ThemeStore.shared.glows, soft: true)
     }
 
     // MARK: dashboard visibility

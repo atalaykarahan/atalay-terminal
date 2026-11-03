@@ -61,7 +61,11 @@ function createChatList({ settings }) {
   // Whole folders archived (their chats, later ones too), and chats taken back out of one.
   const folders = kept('folders');
   const restored = kept('restored');
-  const save = () => settings.set('chatList', { favorites: [...favorites], archived: [...archived], folders: [...folders], restored: [...restored] });
+  // Names the user gave chats (right-click → Rename…), over the titles Claude gave them, as on the Mac.
+  const titles = new Map(Object.entries(saved.titles && typeof saved.titles === 'object' ? saved.titles : {}).filter(([, v]) => typeof v === 'string'));
+  const save = () => settings.set('chatList', {
+    favorites: [...favorites], archived: [...archived], folders: [...folders], restored: [...restored], titles: Object.fromEntries(titles),
+  });
 
   let items = []; // the engine's history: { id, cwd, mtime, size, title, lastPrompt }
   let live = []; // engine.live()
@@ -155,6 +159,14 @@ function createChatList({ settings }) {
       toggleArchived(item);
       changed();
     },
+    /** A chat's own name; an empty one brings back the title Claude gave it. */
+    rename(id, name) {
+      if (!id) return;
+      const clean = String(name || '').trim().slice(0, 120);
+      if (clean) titles.set(id, clean);
+      else titles.delete(id);
+      changed();
+    },
     setFolder(cwd, on) {
       if (!cwd) return;
       setFolder(cwd, on);
@@ -184,7 +196,7 @@ function createChatList({ settings }) {
         const key = folderKey(i.cwd);
         const fav = favorites.has(i.id);
         rows.push({
-          id: i.id, cwd: i.cwd, key, mtime: i.mtime, size: i.size, title: i.title, lastPrompt: i.lastPrompt, fav,
+          id: i.id, cwd: i.cwd, key, mtime: i.mtime, size: i.size, title: titles.get(i.id) || i.title, lastPrompt: i.lastPrompt, fav,
           status: b ? b.status : null, host: b ? b.host : null, open: open.has(i.id),
         });
         if (!fav && !shown.has(key)) shown.set(key, i.cwd);
@@ -214,7 +226,7 @@ function createChatList({ settings }) {
         const cwd = list[0].cwd;
         return {
           cwd, label: names.get(cwd) || projectLabel(cwd), whole: folders.has(key),
-          chats: list.map((c) => ({ id: c.id, title: c.title || c.lastPrompt, at: Number.isFinite(c.mtime) ? c.mtime : Date.now() })),
+          chats: list.map((c) => ({ id: c.id, title: titles.get(c.id) || c.title || c.lastPrompt, at: Number.isFinite(c.mtime) ? c.mtime : Date.now() })),
         };
       });
     },

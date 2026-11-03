@@ -16,6 +16,17 @@
   <button id="end" type="button" title="End this terminal">end</button>
 </header>
 <main id="term"></main>
+<!-- A neon theme's glow on the terminal's canvas (themes.js turns it on): the text's own colours, blurred and screened
+     over it, the dark background left as it is. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="atl-neon" x="-2%" y="-2%" width="104%" height="104%" color-interpolation-filters="sRGB">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur"/>
+    <feComponentTransfer in="blur" result="bright">
+      <feFuncR type="gamma" amplitude="1.7" exponent="2"/><feFuncG type="gamma" amplitude="1.7" exponent="2"/><feFuncB type="gamma" amplitude="1.7" exponent="2"/>
+    </feComponentTransfer>
+    <feBlend in="SourceGraphic" in2="bright" mode="screen"/>
+  </filter>
+</svg>
 <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
 <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
 <script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>

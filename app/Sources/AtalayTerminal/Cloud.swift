@@ -82,6 +82,8 @@ final class Cloud {
         var xpPaused = false
         /// Progress while an update installs.
         var updating: String?
+        /// How much of the update's download has come (0...1), while it comes.
+        var updateProgress: Double?
         /// Why the last install attempt failed ("not_writable", "failed"), for the page to show once.
         var updateError: String?
         /// Why the API refused a name picked offline ("name_full", …), for the page to show once.
@@ -357,13 +359,19 @@ final class Cloud {
         Task {
             defer { preparing = false }
             do {
-                let s = try await Updater.prepare(u) { _ in }
+                let s = try await Updater.prepare(u, progress: { _ in }, fraction: { [weak self] f in
+                    // A step of a percent at a time: each one reaches the page.
+                    guard let self, f >= 1 || Int(f * 100) != Int((self.state.updateProgress ?? -1) * 100) else { return }
+                    self.state.updateProgress = f
+                })
+                state.updateProgress = nil
                 staged = s
                 state.updateReady = state.update?.build == s.build
                 if restartWhenReady { return restart(into: s) }
                 maybeRestart()
             } catch {
                 NSLog("Atalay's Terminal: update download failed: %@", String(describing: error))
+                state.updateProgress = nil
                 failedBuild = u.build
                 if restartWhenReady { state.updating = nil }
                 restartWhenReady = false
@@ -510,7 +518,7 @@ extension Cloud {
             "hackerName": s.hackerName ?? NSNull(), "tag": s.tag.map { $0 as Any } ?? NSNull(),
             "online": s.online, "version": version, "build": build,
             "update": s.update.map { ["version": $0.version, "build": $0.build, "notes": $0.notes] as [String: Any] } ?? NSNull(),
-            "updating": s.updating ?? NSNull(), "updateError": s.updateError ?? NSNull(), "nameError": s.nameError ?? NSNull(),
+            "updating": s.updating ?? NSNull(), "updateProgress": s.updateProgress ?? NSNull(), "updateError": s.updateError ?? NSNull(), "nameError": s.nameError ?? NSNull(),
             "updateReady": s.updateReady, "updateRightAway": s.updateRightAway, "checking": s.checking,
             "checkedAt": s.checkedAt.map { $0.timeIntervalSince1970 * 1000 } ?? NSNull(), "xpPaused": s.xpPaused,
             "xp": s.xp.flatMap { try? JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) } ?? NSNull(),
