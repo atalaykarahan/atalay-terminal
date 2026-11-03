@@ -22,7 +22,7 @@ const FALLBACK_ANSI = ['#562f18', '#ff4d4d', '#c5e35a', '#ffd23f', '#c16100', '#
  * `onChange(css)`: the theme the app shows changed (a preview, a choice, back to the chosen one, the interface's font);
  * `onScale(factor)`: the interface's size changed (the dashboard's zoom).
  */
-function createThemes({ webDir, settings, onChange, onScale }) {
+function createThemes({ webDir, settings, onChange, onScale, ai }) {
   let list = [];
   try {
     list = JSON.parse(fs.readFileSync(path.join(webDir, 'themes', 'themes.json'), 'utf8'));
@@ -40,7 +40,9 @@ function createThemes({ webDir, settings, onChange, onScale }) {
   const chosenId = () => (list.find((t) => t.id === settings.get('theme')) || list[0]).id;
   const uiFont = () => (UI_FONTS.find((f) => f.id === settings.get('uiFont')) || UI_FONTS[0]);
   const uiScale = () => (UI_SCALES.includes(settings.get('uiScale')) ? settings.get('uiScale') : 1);
-  const uiJSON = () => ({ font: uiFont().id, scale: uiScale(), fonts: UI_FONTS.map(({ id, name }) => ({ id, name })), scales: UI_SCALES });
+  const uiJSON = () => ({
+    font: uiFont().id, scale: uiScale(), fonts: UI_FONTS.map(({ id, name }) => ({ id, name })), scales: UI_SCALES, aiColors: ai ? ai.isOn() : false,
+  });
   let current = list.find((t) => t.id === chosenId());
 
   // Every token on the page's root (above style.css's defaults), and the default theme's again on the orbit map: the
@@ -93,6 +95,11 @@ function createThemes({ webDir, settings, onChange, onScale }) {
         // Settings' interface font and text size.
         case 'ui': return uiJSON();
         case 'setUI':
+          // The AI tools in the theme's colours.
+          if (ai && typeof body.aiColors === 'boolean') {
+            ai.set(body.aiColors);
+            return uiJSON();
+          }
           if (UI_FONTS.some((f) => f.id === body.font)) settings.set('uiFont', body.font);
           if (UI_SCALES.includes(body.scale)) settings.set('uiScale', body.scale);
           onChange(css());

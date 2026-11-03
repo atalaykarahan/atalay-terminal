@@ -118,7 +118,8 @@ final class ThemeStore: ObservableObject {
         return Self.uiScales.contains(v) ? v : 1
     }
     var uiJSON: [String: Any] {
-        ["font": uiFont, "scale": uiScale, "fonts": Self.uiFonts.map { ["id": $0.id, "name": $0.name] }, "scales": Self.uiScales]
+        ["font": uiFont, "scale": uiScale, "fonts": Self.uiFonts.map { ["id": $0.id, "name": $0.name] }, "scales": Self.uiScales,
+         "aiColors": AIColors.isOn]
     }
 
     func setUI(font: String?, scale: Double?) {
@@ -365,6 +366,8 @@ final class ThemeBridge: NSObject, WKScriptMessageHandlerWithReply {
         // Settings' interface font and text size.
         case "ui": replyHandler(store.uiJSON, nil)
         case "setUI":
+            // The AI tools in the theme's colours: once their settings are written.
+            if let on = body["aiColors"] as? Bool { return AIColors.set(on) { replyHandler(store.uiJSON, nil) } }
             store.setUI(font: body["font"] as? String, scale: (body["scale"] as? NSNumber)?.doubleValue)
             replyHandler(store.uiJSON, nil)
         default: replyHandler(nil, "unknown request")

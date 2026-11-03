@@ -7,7 +7,8 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 - Tabs: End Session in a window with tabs ends only the tab in front (its chat, its terminal or its panes), the other tabs keep running; the last one ends the window as before, and asks first when something still runs in it
 - Chat list: right-click a chat to rename it (↩ keeps the new name, Esc leaves it, an empty name brings back the original); its star and archive are in the same menu
-- Themes: Cyberpunk (neon yellow, cyan and magenta on black)
+- Themes: Cyberpunk (neon yellow, cyan and magenta on black, its text in neon cyan)
+- Themes: the AI tools draw in the theme's colours (Settings · INTERFACE, on from the start): Claude Code, Codex and Antigravity on their own themes that use the terminal's 16 colours, so a theme recolours their text and highlights too, as iTerm2's do; turned off, each gets back the theme it had
 - Updates: a bar shows how far the download has come, in the update window, on its button and in Settings ("updating 42%"), on the Mac and Windows
 - Settings · INTERFACE: the font (mono, system, rounded) and the text size (100% to 140%), for text that's hard to read
 - Orbit: a terminal's car ended with End Session stays gone (it blew up, then came back)

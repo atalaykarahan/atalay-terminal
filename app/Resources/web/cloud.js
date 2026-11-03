@@ -300,7 +300,9 @@ window.Cloud = (() => {
               <button type="button" class="hk-sw brd" role="switch" aria-checked="true" title="Show my name on the leaderboard"><i></i></button></div>
             ${UI ? `<div class="hk-h">INTERFACE</div>
             <div class="hk-row"><span>font<small>the dashboard's and the messages' text</small></span><span class="lb-seg ui-seg ui-font"></span></div>
-            <div class="hk-row"><span>text size<small>the dashboard, larger for text too small to read</small></span><span class="lb-seg ui-seg ui-scale"></span></div>` : ''}
+            <div class="hk-row"><span>text size<small>the dashboard, larger for text too small to read</small></span><span class="lb-seg ui-seg ui-scale"></span></div>
+            <div class="hk-row"><span>AI tools in the theme's colours<small>Claude Code, Codex and Antigravity draw in the terminal's colours, so a theme recolours their text too · from their next session</small></span>
+              <button type="button" class="hk-sw ui-ai" role="switch" aria-checked="true" title="AI tools in the theme's colours"><i></i></button></div>` : ''}
             ${SAVERS ? `<div class="hk-h">TOKEN SAVERS</div>
             <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code and Codex<small class="ts-note" data-which="rtk">…</small></span>
               <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
@@ -516,6 +518,11 @@ window.Cloud = (() => {
     if (!ui || !ui.fonts || !font || !scale) return;
     setHTML(font, ui.fonts.map((f) => `<button type="button" data-font="${esc(f.id)}" class="${f.id === ui.font ? 'on' : ''}">${esc(f.name)}</button>`).join(''));
     setHTML(scale, ui.scales.map((x) => `<button type="button" data-scale="${x}" class="${x === ui.scale ? 'on' : ''}">${Math.round(x * 100)}%</button>`).join(''));
+    const ai = q('.ui-ai');
+    if (ai) {
+      ai.setAttribute('aria-checked', ui.aiColors === false ? 'false' : 'true');
+      ai.disabled = false;
+    }
   }
   async function renderUI() {
     if (!UI || !q('.ui-font')) return;
@@ -528,6 +535,14 @@ window.Cloud = (() => {
       const b = e.target.closest('button[data-scale]');
       if (b) showUI(await uiCall({ type: 'setUI', scale: Number(b.dataset.scale) }).catch(() => null));
     };
+    const ai = q('.ui-ai');
+    if (ai) {
+      ai.onclick = async () => {
+        ai.disabled = true;
+        showUI(await uiCall({ type: 'setUI', aiColors: ai.getAttribute('aria-checked') !== 'true' }).catch(() => null));
+        ai.disabled = false;
+      };
+    }
   }
 
   // ---------- the token savers ----------

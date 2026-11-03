@@ -16,6 +16,7 @@ const { createEngine } = require('./engine');
 const { createGit } = require('./git');
 const { createCloud } = require('./cloud');
 const { createThemes } = require('./themes');
+const { createAIColors } = require('./aicolors');
 const { createTerminals, which } = require('./terminals');
 const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
@@ -72,7 +73,17 @@ const boots = new Map(); // webContents id -> what its preload asks for before t
 const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt }
 const panels = { notices: null, chats: new Map() }; // the messages panels: the corner's notices, friends' chats
 
+// The AI tools in the theme's colours (Settings · INTERFACE): Claude Code, Codex and Antigravity on their themes that use
+// the terminal's 16 colours.
+const aiColors = createAIColors({
+  settings,
+  claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+  codexDir: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+  home: os.homedir(),
+});
+
 const themes = createThemes({
+  ai: aiColors,
   webDir: WEB,
   settings,
   onChange(css) {
@@ -1336,6 +1347,7 @@ app.whenReady().then(() => {
   }, 2000);
   // The token savers this build ships go on by themselves the first time (Settings turns them off).
   savers.autoStart();
+  if (!PROBE) aiColors.autoStart();
   powerMonitor.on('resume', () => cloud.kick());
   // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
   // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.

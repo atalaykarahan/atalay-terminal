@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.showWindow(nil)
         // The token savers this build ships go on by themselves the first time (Settings turns them off).
         TokenSavers.autoStart()
+        AIColors.autoStart()
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         installMonitors()
