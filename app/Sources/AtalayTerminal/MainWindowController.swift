@@ -219,7 +219,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else if let c = chat(for: b), c.detached == nil {
             return c.endChat(confirm: false)
         }
-        kill(pid, SIGTERM)
+        // Another AI tool ends with all it started (Codex's launcher left its own binary running, a new planet).
+        for p in (sid.hasPrefix("ai:") ? Self.tree([pid]).reversed() : [pid]) { kill(p, SIGTERM) }
         dismiss(sessionId: sid, pid: pid)
     }
 

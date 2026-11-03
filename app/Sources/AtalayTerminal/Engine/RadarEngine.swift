@@ -842,9 +842,10 @@ final class RadarEngine {
         matchTabs()
     }
 
-    /// The other AI tools running in terminals (Proc.otherAIs), each a session: busy while it works the CPU (its screen
-    /// redrawing as it streams, its tools starting), idle once it has been quiet for 10 seconds; one that quits shows as
-    /// ended for two minutes, so its window turns back into a terminal.
+    /// The other AI tools running in terminals (Proc.otherAIs), each a session: busy while it, or anything it runs, works
+    /// the CPU (its screen redrawing as it streams, its tools; Codex's npm launcher only waits while its own binary works),
+    /// idle once it has been quiet for 10 seconds; one that quits shows as ended for two minutes, so its window turns back
+    /// into a terminal.
     private func pollOthers() {
         let me = getuid(), now = ProcessInfo.processInfo.systemUptime, ms = nowMs()
         var found: [Int32: (tool: String, info: Proc.Info)] = [:]
@@ -852,7 +853,7 @@ final class RadarEngine {
             guard let tool = Proc.otherAI(pid), let info = Proc.info(pid), info.uid == me, info.tty != nil else { continue }
             found[pid] = (tool, info)
         }
-        var seen = Set<String>()
+        var seen = Set<String>(), measured = Set<Int32>()
         // A launcher's child is the same session (Codex's Node script starts Codex's own binary).
         for (pid, f) in found where found[f.info.ppid] == nil {
             let id = "ai:\(pid):\(f.info.started)"
@@ -868,10 +869,20 @@ final class RadarEngine {
                 others[id] = O
                 stateDirty = true
             }
-            if let prev = otherCpu[pid], now > prev.at, f.info.cpuTime >= prev.ns {
-                O.cpu = Double(f.info.cpuTime - prev.ns) / ((now - prev.at) * 1e9) * 100
+            // Its CPU and its descendants', each since the last look (one that started since counts from the next).
+            var used = 0.0, level = [pid]
+            for _ in 0..<5 where !level.isEmpty {
+                for p in level {
+                    guard let info = p == pid ? f.info : Proc.info(p) else { continue }
+                    if let prev = otherCpu[p], now > prev.at, info.cpuTime >= prev.ns {
+                        used += Double(info.cpuTime - prev.ns) / ((now - prev.at) * 1e9) * 100
+                    }
+                    otherCpu[p] = (info.cpuTime, now)
+                    measured.insert(p)
+                }
+                level = level.flatMap { Proc.children(of: $0) }
             }
-            otherCpu[pid] = (f.info.cpuTime, now)
+            O.cpu = used
             O.mem = Int(f.info.rss / 1_048_576)
             if O.cpu >= 1 { O.busyUntil = ms + 10_000 }
             let busy = ms < O.busyUntil
@@ -894,7 +905,7 @@ final class RadarEngine {
         let before = others.count
         others = others.filter { $0.value.endedAt == 0 || ms - $0.value.endedAt < 120_000 }
         if others.count != before { stateDirty = true }
-        otherCpu = otherCpu.filter { found[$0.key] != nil }
+        otherCpu = otherCpu.filter { measured.contains($0.key) }
     }
 
     private func matchTabs() {
