@@ -14,6 +14,33 @@
 const { spawn, execFile } = require('child_process');
 
 const WIN = process.platform === 'win32';
+
+// AI coding tools besides Claude Code, as the Mac's Proc.otherAIs: by the program's name, or for one Node, Bun or Python
+// runs, by its script or its npm package in the command line (npm's .cmd shims run node with the package's own path).
+// Each one running is a session on the orbit (the engine's setOthers).
+const AI_TOOLS = {
+  codex: 'Codex', agy: 'Antigravity', gemini: 'Gemini', opencode: 'OpenCode', aider: 'Aider', 'cursor-agent': 'Cursor', amp: 'Amp',
+  qwen: 'Qwen Code', crush: 'Crush', droid: 'Droid', copilot: 'Copilot', 'kiro-cli': 'Kiro', grok: 'Grok', auggie: 'Auggie',
+  cline: 'Cline', kimi: 'Kimi', kilocode: 'Kilo Code', plandex: 'Plandex',
+};
+const AI_PACKAGES = [['@openai/codex', 'Codex'], ['@google/gemini-cli', 'Gemini'], ['@qwen-code/', 'Qwen Code'], ['@github/copilot', 'Copilot'],
+  ['@sourcegraph/amp', 'Amp'], ['opencode-ai', 'OpenCode'], ['@augmentcode/auggie', 'Auggie'], ['@kilocode/cli', 'Kilo Code'], ['@vibe-kit/grok-cli', 'Grok']];
+const INTERPRETER = /^(node|bun|deno|python[0-9.]*|pythonw)$/i;
+function aiTool(p) {
+  const name = String(p.name).toLowerCase();
+  if (AI_TOOLS[name]) return AI_TOOLS[name];
+  if (!INTERPRETER.test(name)) return null;
+  const cmd = String(p.cmd || '');
+  // The script, past the interpreter's options (`node --no-warnings …\codex.js`, `python -m aider`).
+  const words = [...cmd.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+  const script = words.slice(1).find((w) => !w.startsWith('-'));
+  const base = script ? script.split(/[\\/]/).pop().replace(/\.[^.]*$/, '').toLowerCase() : '';
+  if (AI_TOOLS[base]) return AI_TOOLS[base];
+  const lower = cmd.replace(/\\/g, '/').toLowerCase();
+  const hit = AI_PACKAGES.find(([pkg]) => lower.includes(pkg));
+  return hit ? hit[1] : null;
+}
+
 const SHELLS = '^(pwsh|powershell|cmd|bash|sh|zsh|fish|node|python[0-9.]*|ruby|perl|php|java|deno|bun|claude)(\\.exe)?$';
 const SHELL_RE = new RegExp(SHELLS, 'i');
 
@@ -50,7 +77,7 @@ public static class AtlCwd {
   }
 }`;
 
-function createRunaways({ onChange }) {
+function createRunaways({ onChange, onRead }) {
   const LINE = 50, SUSTAIN = 120_000, EVERY = 5000;
   const last = new Map(); // pid -> { started, cpu (ms of CPU in all), at }
   const over = new Map(); // pid -> since when it has been over the line
@@ -177,6 +204,7 @@ function createRunaways({ onChange }) {
     }
     table = next;
     kids = children;
+    if (onRead) onRead();
     consider([...next.values()].filter((p) => p.orphan && SHELL_RE.test(p.name)), at);
     for (const done of waiting.splice(0)) done();
   }
@@ -298,6 +326,27 @@ function createRunaways({ onChange }) {
     children: (pid) => (kids.get(pid) || []).map((c) => table.get(c)).filter(Boolean).sort((a, b) => a.started - b.started),
     /** % of a core the processes under `roots` used over the last reading. */
     busy,
+    /**
+     * The other AI tools running (aiTool), each once: a launcher's child that's the same tool (Codex's Node script starts
+     * its own codex.exe) isn't another, nor one Claude runs. [{ pid, started, tool, cwd, pct, chain (its parents) }]
+     */
+    ais() {
+      const found = new Map();
+      for (const p of table.values()) {
+        const tool = aiTool(p);
+        if (tool) found.set(p.pid, tool);
+      }
+      const out = [];
+      for (const [pid, tool] of found) {
+        const p = table.get(pid);
+        if (!p.orphan && found.has(p.ppid)) continue;
+        const chain = [];
+        for (let q = !p.orphan && table.get(p.ppid); q && chain.length < 12; q = !q.orphan && table.get(q.ppid)) chain.push(q);
+        if (chain.some((q) => /^claude$/i.test(q.name))) continue;
+        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: p.pct || 0, chain: chain.map((q) => q.pid) });
+      }
+      return out;
+    },
     /** Processes whose folder the next reading should look up (the cars' jobs). */
     want(pids) {
       wanted = [...new Set(pids)].filter((p) => p > 0);

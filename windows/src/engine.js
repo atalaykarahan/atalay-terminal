@@ -873,6 +873,8 @@ class RadarEngine {
     this.initWanted = false;
     this.day0 = dayStart();
     this.sessions = new Map();
+    // Other AI tools running (Codex, Antigravity…), by session id ("ai:<pid>:<start>"): see setOthers.
+    this.others = new Map();
     this.agents = new Map();
     this.cursors = new Map();
     this.seenMsg = new Set();
@@ -997,6 +999,14 @@ class RadarEngine {
       out.push({
         sessionId: S.id, pid: S.pid, cwd: S.cwd, status: this.shownStatus(S, bySession.get(S.id) || [], now),
         name: S.name || S.id.slice(0, 8), title: S.title || '', host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null,
+      });
+    }
+    // The other AI tools (`ai`: no conversation to resume, nor one a new chat window should take for its own).
+    for (const O of this.others.values()) {
+      if (O.endedAt > 0) continue;
+      out.push({
+        sessionId: O.id, pid: O.pid, cwd: O.cwd, status: this.otherStatus(O), name: O.tool, title: baseName(O.cwd),
+        host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
       });
     }
     return out;
@@ -1932,6 +1942,52 @@ class RadarEngine {
     this.matchTabs();
   }
 
+  // The other AI tools running (Codex, Antigravity…; runaways.js finds them in its process readings), each a session as
+  // on the Mac: busy while it uses the CPU, idle once it has been quiet for 10 seconds, ended for two minutes after it
+  // quits so its window turns back into a terminal. No transcript to read: no tokens nor cost.
+  setOthers(list) {
+    const now = Date.now(), seen = new Set();
+    for (const a of list) {
+      const id = `ai:${a.pid}:${a.started}`;
+      seen.add(id);
+      let O = this.others.get(id);
+      if (!O) {
+        O = { id, tool: a.tool, pid: a.pid, cwd: '', cpu: 0, busy: false, busyUntil: 0, statusSince: now, firstTs: a.started, lastTs: now, endedAt: 0, hostTab: null, chain: [] };
+        this.others.set(id, O);
+        this.stateDirty = true;
+      }
+      O.cpu = a.pct;
+      O.chain = a.chain;
+      if (a.pct >= 1) O.busyUntil = now + 10_000;
+      const busy = now < O.busyUntil;
+      if (busy) O.lastTs = now;
+      const cwd = a.cwd || O.cwd;
+      if (busy !== O.busy || cwd !== O.cwd) {
+        if (busy !== O.busy) O.statusSince = now;
+        O.busy = busy;
+        O.cwd = cwd;
+        this.stateDirty = true;
+      }
+    }
+    for (const O of this.others.values()) {
+      if (O.endedAt === 0 && !seen.has(O.id)) {
+        O.endedAt = now;
+        O.busy = false;
+        this.stateDirty = true;
+      }
+      if (O.endedAt > 0 && now - O.endedAt >= 120_000) {
+        this.others.delete(O.id);
+        this.stateDirty = true;
+      }
+    }
+    this.matchTabs();
+    this.publishState();
+  }
+
+  otherStatus(O) {
+    return O.endedAt > 0 ? 'ended' : O.busy ? 'busy' : 'idle';
+  }
+
   // A live session whose Claude process is one the app started, or under one, runs in the app's own window.
   matchTabs() {
     for (const S of this.sessions.values()) {
@@ -1952,6 +2008,26 @@ class RadarEngine {
       }
       if (tab !== S.hostTab) this.stateDirty = true;
       S.hostTab = tab;
+    }
+    // An AI tool under one of the app's terminals runs in that window.
+    for (const O of this.others.values()) {
+      let tab = null;
+      if (O.endedAt === 0 && this.isAppPid) {
+        for (const pid of [O.pid, ...O.chain]) {
+          let hit = false;
+          try {
+            hit = this.isAppPid(pid);
+          } catch (e) {
+            report(e);
+          }
+          if (hit) {
+            tab = hit;
+            break;
+          }
+        }
+      }
+      if (tab !== O.hostTab) this.stateDirty = true;
+      O.hostTab = tab;
     }
   }
 
@@ -2051,6 +2127,20 @@ class RadarEngine {
       };
       if (S.last) item.last = S.last;
       list.push(item);
+    }
+    // The other AI tools: what Claude's sessions show, minus what only a transcript would tell.
+    for (const O of this.others.values()) {
+      if (this.dismissed.has(O.id) && this.dismissed.get(O.id) === O.pid) continue;
+      const live = O.endedAt === 0;
+      list.push({
+        id: O.id, name: O.tool, title: baseName(O.cwd), lastPrompt: '', cwd: cwdLabel(O.cwd), branch: '',
+        model: O.tool, effort: '', status: this.otherStatus(O), live, statusSince: live ? O.statusSince : O.endedAt,
+        cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: 0, ctxMax: 0, turnMs: 0,
+        tok: { in: 0, out: 0, cr: 0, cw: 0 }, cost: 0, tools: 0, errors: 0, web: 0, prompts: 0,
+        byCat: {}, pending: [], spark: new Array(30).fill(0), flags: [], agents: [], agentsRunning: 0,
+        waitingFor: null, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
+        tab: typeof O.hostTab === 'string' ? O.hostTab : null,
+      });
     }
     list.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.lastTs - a.lastTs);
 
@@ -2182,6 +2272,7 @@ function createEngine(opts = {}) {
     gitSessions: () => e.gitSessions(),
     written: () => e.written(),
     live: () => e.live(),
+    setOthers: (list) => e.setOthers(list),
     sessionCwd: (sessionId) => e.sessionCwd(sessionId),
     dismiss: (sessionId, pid) => e.dismiss(sessionId, pid),
     transcriptItems: (sessionId, limit) => e.transcriptItems(sessionId, limit),

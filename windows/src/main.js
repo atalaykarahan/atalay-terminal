@@ -237,6 +237,8 @@ function loadClientKey() {
 const overlay = createOverlay({ dataDir: app.getPath('userData'), claudeDir: path.join(os.homedir(), '.claude') });
 // Processes left burning a core where nobody sees them: the dashboard sounds the alarm (DANGER).
 const runaways = createRunaways({
+  // Each reading: the AI tools running besides Claude (Codex, Antigravity…), sessions on the orbit.
+  onRead: () => engine.setOthers(runaways.ais()),
   onChange: (json) => {
     toDash(`runaways(${json})`);
     // The alarm, in the middle of the screen (the notices panel can play its sound).
@@ -615,7 +617,7 @@ function matchChats() {
   const taken = new Set([...chats.values()].map((c) => c.sessionId).filter(Boolean));
   for (const c of chats.values()) {
     if (!c.claude || c.sessionId || !c.claudeArgs) continue;
-    const s = live.find((x) => !taken.has(x.sessionId) && samePath(x.cwd, c.cwd));
+    const s = live.find((x) => !x.ai && !taken.has(x.sessionId) && samePath(x.cwd, c.cwd));
     if (s) {
       c.sessionId = s.sessionId;
       taken.add(s.sessionId);
@@ -671,6 +673,8 @@ function showChat(id) {
 function openSession(sid, fork) {
   if (!sid) return false;
   const live = engine.live().find((s) => s.sessionId === sid);
+  // Another AI tool (Codex…) has no conversation to resume or copy: a click shows the window it runs in, when it's ours.
+  if (sid.startsWith('ai:')) return !fork && !!live && !!live.tab && chats.has(live.tab) && terminals.has(live.tab) && showChat(live.tab);
   if (!fork) {
     for (const [id, c] of chats) if (c.sessionId === sid && terminals.has(id)) return showChat(id);
     // Running in one of the app's windows that doesn't know it yet: a terminal Claude was started in, a chat back from
@@ -763,8 +767,8 @@ function pushTerminals(force) {
       running: true, cpu: Math.round(l.cpu), left: true, pid: l.pid, started: l.started,
     });
   }
-  // Their folders come with the next reading.
-  runaways.want(jobs);
+  // Their folders come with the next reading, and the AI tools' (the title of their session).
+  runaways.want([...jobs, ...runaways.ais().map((a) => a.pid)]);
   list.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const json = JSON.stringify(list);
   if (json === terminalsJSON && !force) return;
