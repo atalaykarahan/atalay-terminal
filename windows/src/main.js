@@ -881,21 +881,28 @@ function notices() {
   return panels.notices;
 }
 
-// A friend's chat, all of it on one display: the one it's mostly on, moved in from the edges (cut to fit only where the
-// display is smaller). With several displays a chat opened where it was left on one since unplugged or moved, or grew
-// past the bottom, out of sight.
-function wholeOnDisplay(r) {
-  const a = screen.getDisplayMatching(r).workArea;
+// A friend's chat, all of it on one display (by default the one it's mostly on), moved in from the edges (cut to fit
+// only where the display is smaller). With several displays a chat opened where it was left on one since unplugged or
+// moved, or grew past the bottom, out of sight.
+function wholeOnDisplay(r, display = screen.getDisplayMatching(r)) {
+  const a = display.workArea;
   const width = Math.min(r.width, a.width), height = Math.min(r.height, a.height);
   return { x: Math.min(Math.max(r.x, a.x), a.x + a.width - width), y: Math.min(Math.max(r.y, a.y), a.y + a.height - height), width, height };
 }
 
-// A display unplugged or changed: the chats on screen come back into view, whole.
+// The display a chat opens on, as on the Mac: the dashboard's while it's on screen, else the one in use (the pointer's).
+// Opening where it was last left could put it on another display, out of sight of someone looking at the dashboard.
+function chatHome() {
+  if (dash && !dash.isDestroyed() && dash.isVisible() && !dash.isMinimized()) return screen.getDisplayMatching(dash.getBounds());
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+}
+
+// A display plugged in, unplugged or changed: the chats on screen come back into view, whole.
 let watchingDisplays = false;
 function watchDisplays() {
   if (watchingDisplays) return;
   watchingDisplays = true;
-  for (const event of ['display-removed', 'display-metrics-changed']) {
+  for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) {
     screen.on(event, () => {
       for (const w of panels.chats.values()) if (!w.isDestroyed() && w.isVisible()) w.setBounds(wholeOnDisplay(w.getBounds()));
     });
@@ -950,13 +957,13 @@ function handleMessages(win, body) {
       } else {
         const b = win.getBounds();
         if (!win.isVisible()) {
-          // Where it was left while that's on a display, else the middle of the dashboard's display (or the main one).
+          // Where it was left while that's on the display it opens on (give or take 40 px), else that display's middle.
+          const home = chatHome(), a = home.workArea;
           const saved = settings.get('chatWindowTopLeft');
-          const left = Array.isArray(saved) && screen.getAllDisplays().some(({ workArea: a }) =>
-            saved[0] + 40 >= a.x && saved[0] + 40 < a.x + a.width && saved[1] + 20 >= a.y && saved[1] + 20 < a.y + a.height);
-          const a = (dash && !dash.isDestroyed() && dash.isVisible() ? screen.getDisplayMatching(dash.getBounds()) : d).workArea;
+          const p = Array.isArray(saved) && saved.length === 2 && { x: saved[0] + 40, y: saved[1] + 20 };
+          const left = p && p.x >= a.x - 40 && p.x < a.x + a.width + 40 && p.y >= a.y - 40 && p.y < a.y + a.height + 40;
           const [x, y] = left ? saved : [a.x + Math.round((a.width - w) / 2), a.y + Math.round((a.height - h) / 2)];
-          win.setBounds(wholeOnDisplay({ x, y, width: w, height: h }));
+          win.setBounds(wholeOnDisplay({ x, y, width: w, height: h }, home));
           win.show();
         } else win.setBounds(wholeOnDisplay({ x: b.x, y: b.y, width: w, height: h }));
         if (body.focus) win.focus();
