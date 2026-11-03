@@ -10,3 +10,5 @@
 /windows/src/clientkey.js
 /app/vendor/
 /windows/vendor/
+# Claude Code's own files (skills for the release PCs) stay on those machines, never in this public repo
+/.claude/
