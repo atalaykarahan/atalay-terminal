@@ -16,9 +16,137 @@ final class ChatTerminalView: LocalProcessTerminalView {
     /// The folder a relative path in the output is taken from (the session's), for ⌘-click.
     var workingDirectory: () -> String? = { nil }
 
+    /// A click or a drag goes to Claude when its full-screen view is in front and follows the mouse, as in iTerm2: Claude
+    /// selects across its whole history, the selection staying on the text as it scrolls (when the drag reaches the
+    /// window's edge too), and ⌘C copies it (copy). The terminal itself can only select what's on screen, and Claude's
+    /// history isn't in its scrollback, so a selection there slid off the text as Claude scrolled. Shift-drag still
+    /// selects on the terminal, ⌘-click still opens a link.
+    private(set) var mouseToProgram = false
+
     override func mouseDown(with event: NSEvent) {
+        // ⌥ (as in iTerm2) or ⇧ (SwiftTerm's) with the drag: the terminal's own selection.
+        mouseToProgram = event.modifierFlags.intersection([.command, .option]).isEmpty && claudeInFront && (engine.map { $0.mouseMode != .off } ?? false)
+        if mouseToProgram {
+            // screen doesn't pass Claude's request for SGR reports (1006) on: without it the clicks reach Claude garbled.
+            feed(text: "\u{1b}[?1006h")
+            allowMouseReporting = true
+        }
         super.mouseDown(with: event)
         onFocus?()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        stopEdgeScroll()
+        guard mouseToProgram else { return }
+        mouseToProgram = false
+        allowMouseReporting = false
+    }
+
+    // MARK: iTerm2's terminal keys
+
+    /// ⌘K, Clear Buffer: the history goes and the screen clears, the program in front drawing itself again (Ctrl+L).
+    func clearBuffer() {
+        feed(text: "\u{1b}[3J")
+        send(txt: "\u{0c}")
+    }
+
+    enum ScrollStep { case lineUp, lineDown, pageUp, pageDown, top, bottom }
+
+    /// ⌘↑ ⌘↓, ⌘⇞ ⌘⇟, ⌘↖ ⌘↘: through the history, as in iTerm2. Claude's full-screen view keeps its own, so there they
+    /// go to Claude as its scroll keys (the wheel, Page Up/Down, Ctrl+Home/End).
+    func scrollBuffer(_ step: ScrollStep) {
+        if claudeInFront, let t = engine, t.mouseMode != .off {
+            feed(text: "\u{1b}[?1006h")
+            let mid = "\(max(1, t.cols / 2));\(max(1, t.rows / 2))"
+            switch step {
+            case .lineUp: send(txt: "\u{1b}[<64;\(mid)M")
+            case .lineDown: send(txt: "\u{1b}[<65;\(mid)M")
+            case .pageUp: send(txt: "\u{1b}[5~")
+            case .pageDown: send(txt: "\u{1b}[6~")
+            case .top: send(txt: "\u{1b}[1;5H")
+            case .bottom: send(txt: "\u{1b}[1;5F")
+            }
+            return
+        }
+        switch step {
+        case .lineUp: scrollUp(lines: 1)
+        case .lineDown: scrollDown(lines: 1)
+        case .pageUp: pageUp()
+        case .pageDown: pageDown()
+        case .top: scrollUp(lines: 1_000_000)
+        case .bottom: scrollDown(lines: 1_000_000)
+        }
+    }
+
+    /// Right-click, as in iTerm2: copy, paste, find, clear, split.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        func item(_ title: String, _ action: Selector, _ target: AnyObject?, tag: Int = 0) {
+            let i = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            i.target = target
+            i.tag = tag
+            menu.addItem(i)
+        }
+        if !(getSelection() ?? "").isEmpty { item("Copy", #selector(copy(_:)), self) }
+        item("Paste", #selector(paste(_:)), self)
+        item("Select All", #selector(selectAll(_:)), self)
+        menu.addItem(.separator())
+        item("Find…", #selector(performTextFinderAction(_:)), self, tag: NSTextFinder.Action.showFindInterface.rawValue)
+        item("Clear Buffer", #selector(clearBufferAction), self)
+        menu.addItem(.separator())
+        // The app's own (AppDelegate), through the responder chain.
+        item("Split Vertically", NSSelectorFromString("splitVertically"), nil)
+        item("Split Horizontally", NSSelectorFromString("splitHorizontally"), nil)
+        return menu
+    }
+
+    @objc private func clearBufferAction() { clearBuffer() }
+
+    // A drag that goes to Claude, held past the top or the bottom edge, scrolls Claude's view under it as a terminal's
+    // own selection scrolls its history (iTerm2): the wheel turns a notch or more at a time, faster the farther past the
+    // edge, and the drag follows to the edge row, so Claude's selection grows with what comes into view. The mouse sends
+    // nothing while it's held still, so a timer drives it.
+    private var edgeTimer: Timer?
+    private var edgePoint: CGPoint = .zero
+
+    override func mouseDragged(with event: NSEvent) {
+        super.mouseDragged(with: event)
+        guard mouseToProgram else { return }
+        edgePoint = convert(event.locationInWindow, from: nil)
+        if edgeDistance(edgePoint) == 0 { stopEdgeScroll() } else if edgeTimer == nil { startEdgeScroll() }
+    }
+
+    /// How far past the top (negative) or the bottom (positive) of the view the pointer is, in points; 0 inside it.
+    private func edgeDistance(_ p: CGPoint) -> CGFloat {
+        let fromTop = isFlipped ? p.y : bounds.height - p.y
+        if fromTop < 0 { return fromTop }
+        if fromTop > bounds.height { return fromTop - bounds.height }
+        return 0
+    }
+
+    private func startEdgeScroll() {
+        // In .common modes: during a drag the run loop tracks the mouse, and default-mode timers wait.
+        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.edgeTick() } }
+        RunLoop.main.add(timer, forMode: .common)
+        edgeTimer = timer
+        edgeTick()
+    }
+
+    private func stopEdgeScroll() {
+        edgeTimer?.invalidate()
+        edgeTimer = nil
+    }
+
+    private func edgeTick() {
+        let d = edgeDistance(edgePoint)
+        guard mouseToProgram, d != 0, let t = engine else { return stopEdgeScroll() }
+        let cols = max(t.cols, 1), rows = max(t.rows, 1)
+        let col = max(1, min(cols, Int(edgePoint.x / (bounds.width / CGFloat(cols))) + 1))
+        let row = d < 0 ? 1 : rows
+        // SGR mouse reports: the wheel (64 up, 65 down), then the left button's drag (32) at the edge row.
+        let notches = min(4, 1 + Int(abs(d) / 30))
+        send(txt: String(repeating: "\u{1b}[<\(d < 0 ? 64 : 65);\(col);\(row)M", count: notches) + "\u{1b}[<32;\(col);\(row)M")
     }
 
     nonisolated override func selectionChanged(source: Terminal) {
@@ -109,6 +237,18 @@ final class ChatTerminalView: LocalProcessTerminalView {
     }
 
     override func copy(_ sender: Any) {
+        // Nothing selected on the terminal while Claude's full-screen view is in front: the selection is Claude's (a drag
+        // goes to Claude, mouseDown), kept on the text as it scrolls. ⌘C asks Claude to copy it, with its own key for
+        // that (Ctrl+Shift+C, in the keyboard protocol Claude reads), and the badge shows what landed on the clipboard.
+        if (getSelection() ?? "").isEmpty, claudeInFront {
+            let before = NSPasteboard.general.changeCount
+            send(txt: "\u{1b}[99;6u")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard NSPasteboard.general.changeCount != before, let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+                self?.onCopy?(text)
+            }
+            return
+        }
         super.copy(sender)
         if let text = getSelection(), !text.isEmpty { onCopy?(text) }
     }
@@ -264,9 +404,9 @@ enum TerminalFactory {
         // diff paints green or red is darkened just enough to read.
         tv.minimumContrastRatio = 4.5
         if let style = look?.cursorStyle { tv.setCursorStyle(style) }
-        // The mouse selects text rather than going to the program. Claude turns mouse tracking on, but Apple's screen
-        // passes that on without its modern encoding (1006) and drops OSC 52 copies, so a drag reached Claude garbled
-        // and nothing got selected. Native selection highlights and copies with ⌘C, as in iTerm2.
+        // The mouse selects text on the terminal unless Claude's full-screen view is in front: then a click, a drag or
+        // the wheel goes to Claude, one gesture at a time, with the SGR encoding it asks for (ChatTerminalView.mouseDown,
+        // AppDelegate's wheel monitor).
         tv.allowMouseReporting = false
         paint(tv)
         // Colours 16–255 as iTerm2 has them, xterm's fixed cube and grey ramp. SwiftTerm otherwise derives them from the

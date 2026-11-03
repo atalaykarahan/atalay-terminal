@@ -3,8 +3,11 @@
 // and no terminal (a shell's leftover helper, a stuck script). The alarm itself sounds in the middle of the screen (the
 // notices panel, messages.js); this is its Details card, which the alarm's button or the burning blue box on the orbit
 // opens: a line or two for each, and END IT. It sits at the map's right, so the camera flying to the box stays in sight.
+// The same card ends what a closed terminal left running, an amber car on the orbit (openLeft): one process and all it
+// started.
 window.Danger = (() => {
   let list = [];
+  let left = null; // the car's terminal entry while the card shows it, not the runaways
   let panel = null, sure = null, sureTimer = 0;
   const ending = new Set();
   const key = (r) => `${r.pid}:${r.started}`;
@@ -30,15 +33,27 @@ window.Danger = (() => {
 
   function open(pid) {
     if (!list.length) return;
-    if (!panel) {
-      panel = document.createElement('div');
-      panel.id = 'danger-panel';
-      panel.addEventListener('click', onClick);
-      addEventListener('keydown', onKey, true);
-      document.body.appendChild(panel);
-    }
+    left = null;
+    mount();
     render();
     window.Orbit?.focusRunaway?.(pid ?? list[0].pid);
+  }
+
+  function openLeft(t) {
+    if (!t) return;
+    if (left?.id !== t.id) sure = null;
+    left = t;
+    mount();
+    render();
+  }
+
+  function mount() {
+    if (panel) return;
+    panel = document.createElement('div');
+    panel.id = 'danger-panel';
+    panel.addEventListener('click', onClick);
+    addEventListener('keydown', onKey, true);
+    document.body.appendChild(panel);
   }
 
   function close() {
@@ -46,6 +61,7 @@ window.Danger = (() => {
     panel.remove();
     panel = null;
     sure = null;
+    left = null;
     removeEventListener('keydown', onKey, true);
   }
 
@@ -56,7 +72,13 @@ window.Danger = (() => {
     close();
   }
 
+  function endButton(k) {
+    return ending.has(k) ? '<button type="button" class="dp-end" disabled>ENDING…</button>'
+      : `<button type="button" class="dp-end${sure === k ? ' sure' : ''}">${sure === k ? 'SURE?' : 'END IT'}</button>`;
+  }
+
   function render() {
+    if (left) return renderLeft();
     if (!list.length) return close();
     const now = Date.now(), first = !panel.firstElementChild;
     panel.innerHTML =
@@ -64,8 +86,7 @@ window.Danger = (() => {
       `<p class="dp-sub">${list.length === 1 ? 'A process was' : `${list.length} processes were`} left running with no terminal, burning the CPU.</p>` +
       list.map((r) => {
         const k = key(r);
-        const btn = ending.has(k) ? '<button type="button" class="dp-end" disabled>ENDING…</button>'
-          : `<button type="button" class="dp-end${sure === k ? ' sure' : ''}">${sure === k ? 'SURE?' : 'END IT'}</button>`;
+        const btn = endButton(k);
         return (
           `<div class="dp-row" data-key="${esc(k)}"><div class="dp-l1"><b>${esc(r.name)}</b><span class="dp-cpu">${Math.round(r.cpu)}%</span>${btn}</div>` +
           `<div class="dp-l2" title="${esc(r.cmd)}">PID ${r.pid} · for ${dur(now - r.since)} · ${esc(r.cmd)}</div></div>`
@@ -74,8 +95,19 @@ window.Danger = (() => {
       '</div>';
   }
 
+  function renderLeft() {
+    const t = left, k = `${t.pid}:${t.started}`, first = !panel.firstElementChild;
+    panel.innerHTML =
+      `<div class="dp left${first ? ' in' : ''}"><div class="dp-head"><b>⚠ LEFT RUNNING</b><button type="button" class="dp-x" title="Close (Esc)">✕</button></div>` +
+      '<p class="dp-sub">Its terminal closed, but this kept running.</p>' +
+      `<div class="dp-row" data-key="${esc(k)}"><div class="dp-l1"><b>${esc(t.cmd)}</b>${endButton(k)}</div>` +
+      `<div class="dp-l2" title="${esc(t.cwd)}">PID ${t.pid} · for ${dur(Date.now() - t.started)} · ${esc(t.cwd)}</div></div>` +
+      '</div>';
+  }
+
   function onClick(e) {
     if (e.target.closest('.dp-x')) return close();
+    if (left) return onLeftClick(e);
     const row = e.target.closest('.dp-row');
     const r = row && list.find((x) => key(x) === row.dataset.key);
     if (!r || !e.target.closest('.dp-end')) return;
@@ -95,6 +127,30 @@ window.Danger = (() => {
     impact(e.target.closest('.dp-end'));
     window.Orbit?.blowUp?.(r.pid);
     render();
+  }
+
+  function onLeftClick(e) {
+    const t = left, k = `${t.pid}:${t.started}`;
+    if (!e.target.closest('.dp-end') || ending.has(k)) return;
+    if (sure !== k) {
+      sure = k;
+      clearTimeout(sureTimer);
+      sureTimer = setTimeout(() => {
+        sure = null;
+        if (panel) render();
+      }, 3000);
+      return render();
+    }
+    sure = null;
+    ending.add(k);
+    send({ type: 'endLeftover', pid: t.pid, started: t.started });
+    impact(e.target.closest('.dp-end'));
+    window.Orbit?.terminalGone?.(t.id);
+    render();
+    setTimeout(() => {
+      ending.delete(k);
+      if (left === t) close();
+    }, 900);
   }
 
   // A hit you feel, as in games: a punch from the speakers, sparks flying off the button, the card jolting; on the orbit
@@ -126,5 +182,5 @@ window.Danger = (() => {
     setTimeout(() => layer.remove(), 900);
   }
 
-  return { update, open };
+  return { update, open, openLeft };
 })();

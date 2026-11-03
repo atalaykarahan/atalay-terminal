@@ -145,6 +145,38 @@ window.Cloud = (() => {
     };
     renderUpdateModal();
   }
+  // The token saver's question, once (TokenSavers.swift asks the page at a launch that ships rtk): the app's own window
+  // first; rtk is set up, and anything macOS then asks for, only after "turn on".
+  function askSaver() {
+    if (!SAVERS || modal) return;
+    modal = 'saver';
+    tellModal(true);
+    root.className = 'on';
+    root.innerHTML = `
+      <div class="pk hk sav crt-on">
+        <div class="pk-border"></div>
+        <div class="pk-title"><img class="hk-logo" src="logo.png" alt=""><b>TOKEN SAVER</b></div>
+        <div class="hk-body sav-body">
+          <b class="sav-big">~33%</b>
+          <p class="sav-sub">fewer tokens for Claude and Codex</p>
+          <p class="sav-line">with <b>rtk</b> · shorter command output, same work</p>
+          <p class="hk-status sav-status"></p>
+        </div>
+        <div class="pk-foot"><span class="pk-sel"></span><button class="pk-cancel">not now</button><button class="pk-ok sav-go">turn on</button></div>
+      </div>`;
+    q('.pk-cancel').onclick = () => {
+      saversCall({ type: 'set', on: false }).catch(() => {});
+      close();
+    };
+    q('.sav-go').onclick = async () => {
+      q('.sav-go').disabled = q('.pk-cancel').disabled = true;
+      q('.sav-status').textContent = 'setting up rtk…';
+      const st = await saversCall({ type: 'set', on: true }).catch(() => null);
+      close();
+      toast(st && st.on ? 'rtk is on · Claude Code and Codex save tokens from now on' : "couldn't set up rtk");
+    };
+  }
+
   // While it downloads and installs: the progress, and no way out (the app restarts at the end).
   function renderUpdateModal() {
     if (modal !== 'update') return;
@@ -291,6 +323,9 @@ window.Cloud = (() => {
               <button type="button" class="hk-sw act" role="switch" aria-checked="true" title="Show my active time to friends"><i></i></button></div>
             <div class="hk-row"><span>show my name on the leaderboard<small>off: you keep your place as Anonymous, and nobody can add you from there</small></span>
               <button type="button" class="hk-sw brd" role="switch" aria-checked="true" title="Show my name on the leaderboard"><i></i></button></div>
+            ${SAVERS ? `<div class="hk-h">TOKEN SAVER</div>
+            <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code and Codex<small class="ts-note">…</small></span>
+              <button type="button" class="hk-sw ts" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>` : ''}
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
@@ -420,6 +455,33 @@ window.Cloud = (() => {
     const focus = which === 'settings' ? q('.mn-settings .hk-input') : null;
     if (focus) setTimeout(() => focus.focus(), 60);
     if (which === 'keys') renderKeys();
+    if (which === 'settings') renderSaver();
+  }
+
+  // ---------- the token saver ----------
+  // rtk, which the Mac app ships and sets up for Claude Code and Codex (TokenSavers.swift): on or off, and what it saved.
+  const SAVERS = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.savers);
+  const saversCall = (msg) => window.webkit.messageHandlers.savers.postMessage(msg);
+  const compact = (n) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+  function showSaver(st) {
+    const sw = q('.hk-sw.ts'), note = q('.ts-note');
+    if (!sw || !st) return;
+    sw.setAttribute('aria-checked', st.on ? 'true' : 'false');
+    sw.disabled = !st.available || st.theirs;
+    sw.title = st.theirs ? 'Your own rtk: change it with rtk itself' : 'Turn rtk on or off';
+    note.textContent = !st.available ? 'not in this build'
+      : st.saved != null ? `${st.theirs ? 'your own rtk · ' : ''}saved ${compact(st.saved)} tokens so far, ${Math.round(st.pct)}% of what ${compact(st.commands)} commands printed`
+      : st.on ? 'on · nothing saved yet' : 'off · Claude Code and Codex read commands\' output in full';
+  }
+  async function renderSaver() {
+    if (!SAVERS || !q('.hk-sw.ts')) return;
+    showSaver(await saversCall({ type: 'state' }).catch(() => null));
+    q('.hk-sw.ts').onclick = async (e) => {
+      const sw = e.currentTarget, on = sw.getAttribute('aria-checked') !== 'true';
+      sw.disabled = true;
+      q('.ts-note').textContent = on ? 'setting up rtk…' : 'taking rtk off…';
+      showSaver(await saversCall({ type: 'set', on }).catch(() => null));
+    };
   }
 
   // ---------- shortcuts ----------
@@ -428,13 +490,42 @@ window.Cloud = (() => {
   const KEYS = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.keys);
   const keysCall = (msg) => window.webkit.messageHandlers.keys.postMessage(msg);
   let keysMsg = '';
-  async function renderKeys(list) {
+  // The shortcut wheel, as small as a settings icon: its five slices around the middle, the first one lit.
+  const WHEEL_ICON = (() => {
+    const C = 32, R0 = 10, R1 = 28, N = 5, GAP = 7;
+    const pt = (r, deg) => `${(C + r * Math.cos((deg * Math.PI) / 180)).toFixed(2)} ${(C + r * Math.sin((deg * Math.PI) / 180)).toFixed(2)}`;
+    let slices = '';
+    for (let i = 0; i < N; i++) {
+      const mid = -90 + (i * 360) / N, a = mid - 180 / N + GAP / 2, b = mid + 180 / N - GAP / 2;
+      slices += `<path${i ? '' : ' class="on"'} d="M${pt(R0, a)} L${pt(R1, a)} A${R1} ${R1} 0 0 1 ${pt(R1, b)} L${pt(R0, b)} A${R0} ${R0} 0 0 0 ${pt(R0, a)}Z"/>`;
+    }
+    return `<svg class="ksw-ico" viewBox="0 0 64 64" aria-hidden="true"><circle class="ring" cx="32" cy="32" r="31"/>${slices}<circle class="dot" cx="32" cy="32" r="3"/></svg>`;
+  })();
+  // How the shortcut wheel opens, on top of the page, as VS Code shows a command's keys: the primary way, the trackpad's
+  // four-finger click, and a secondary one you set: keys, or a mouse button with modifiers held (⌃ and the middle
+  // button to begin with, as on Windows).
+  function wheelCard(k) {
+    const label = k?.label || '';
+    return (
+      `<div class="ks-wheel">${WHEEL_ICON}<div class="ksw-txt"><b>Shortcut wheel</b><span>Your folders around the pointer: pick one and a chat opens there.</span></div>` +
+      '<div class="ksw-how">' +
+      '<div><small>primary</small><span class="ks-key fixed">4-finger click</span></div>' +
+      '<div><small>secondary</small>' +
+      (k?.changed ? '<button type="button" class="ks-undo" data-id="shortcutsWheel" title="Back to how it came">↺</button>' : '') +
+      `<button type="button" class="ks-key${label ? '' : ' none'}" data-id="shortcutsWheel" data-mouse="1" title="Click, then press keys or a mouse button (hold ⌃ ⌥ ⇧ ⌘ with it if you like). Delete: none">${label ? esc(label) : '—'}</button></div>` +
+      '</div></div>'
+    );
+  }
+  async function renderKeys(st) {
     const page = q('.mn-keys');
     if (!page) return;
-    if (!list) list = (await keysCall({ type: 'list' }).catch(() => null))?.shortcuts || [];
+    if (!st) st = (await keysCall({ type: 'list' }).catch(() => null)) || {};
+    const all = st.shortcuts || [];
+    const list = all.filter((k) => k.id !== 'shortcutsWheel');
     const groups = [];
     for (const k of list) (groups.find((g) => g.name === k.group) || (groups.push({ name: k.group, items: [] }), groups[groups.length - 1])).items.push(k);
     page.innerHTML =
+      wheelCard(all.find((k) => k.id === 'shortcutsWheel')) +
       '<p class="ks-note">Click a shortcut, then press the new keys. Esc cancels, Delete takes them off.</p>' +
       `<p class="ks-msg${keysMsg ? ' on' : ''}">${esc(keysMsg)}</p>` +
       groups.map((g) => `<div class="hk-h">${esc(g.name.toUpperCase())}</div>` + g.items.map((k) =>
@@ -447,15 +538,16 @@ window.Cloud = (() => {
   async function onKeysClick(e) {
     const undo = e.target.closest('.ks-undo'), all = e.target.closest('.ks-all'), key = e.target.closest('.ks-key');
     keysMsg = '';
-    if (undo || all) return renderKeys((await keysCall({ type: 'reset', id: undo ? undo.dataset.id : '' })).shortcuts);
-    if (!key || key.classList.contains('rec')) return;
+    if (undo || all) return renderKeys(await keysCall({ type: 'reset', id: undo ? undo.dataset.id : '' }));
+    if (!key || key.classList.contains('rec') || key.classList.contains('fixed')) return;
     key.classList.add('rec');
-    key.textContent = 'press keys…';
-    const r = await keysCall({ type: 'record' }).catch(() => ({ cancel: true }));
+    const mouse = !!key.dataset.mouse;
+    key.textContent = mouse ? 'keys or a mouse button…' : 'press keys…';
+    const r = await keysCall({ type: 'record', mouse }).catch(() => ({ cancel: true }));
     if (r.cancel) return renderKeys();
     const done = await keysCall({ type: 'set', id: key.dataset.id, combo: r.combo });
     if (done.error) keysMsg = done.error;
-    renderKeys(done.shortcuts);
+    renderKeys(done.error ? null : done);
   }
 
   async function copyHandle() {
@@ -1175,5 +1267,5 @@ window.Cloud = (() => {
   refresh();
   Social.loadNotes();
 
-  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView };
+  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView, askSaver };
 })();

@@ -3,10 +3,15 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
-## Unreleased (on the develop branch, out with the next version)
+## 0.13.0
 
-- Shortcuts: change any of the app's keyboard shortcuts in the main menu's new SHORTCUTS tab: click one and press the new keys (↺ brings it back)
+- Shortcuts: change any of the app's keyboard shortcuts in the main menu's new SHORTCUTS tab: click one and press the new keys (↺ brings it back); on top, the shortcut wheel's card: the four-finger click, and a second way you set, keys or a mouse button with ⌃ ⌥ ⇧ ⌘
+- Windows: Ctrl and the middle mouse button open the shortcut wheel (Ctrl+K still does)
+- Tabs: a long chat name no longer stretches its tab (and the window) across the screen: it's cut short with …, every tab the same width; a mirror (a chat the other app runs) gets ⌘T tabs and ⌘D splits too
+- Orbit: every plain tab and split pane is a car of its own (Claude in one is a session), and a click opens that very pane, its tab in front; what a closed terminal left running (a dev server still holding its port) flies as an amber car, and a click ends it
 - Chats: a copy button at the top right (and ⇧⌘C) copies Claude's last reply, all of it, even what doesn't fit the window: Claude's full-screen view only lets the terminal select what's on screen
+- Terminals work as iTerm2 does: ⌘F finds (⌘G, ⇧⌘G, ⌘E), ⌘K clears the buffer, ⌘↑ ⌘↓ ⌘⇞ ⌘⇟ ⌘↖ ⌘↘ move through the history (in Claude's full-screen view too), ⌥-drag selects on the terminal, a right-click menu (copy, paste, find, clear, split), ⌘↩ full screen; the shortcut wheel opens with the four-finger click and with ⌃ and the middle mouse button (changeable in SHORTCUTS), no longer with ⌘K
+- Chats: select with the mouse as in iTerm2: in Claude's full-screen view a drag goes to Claude, which selects across the whole conversation, scrolling when you hold the drag past the top or the bottom (faster the farther), the selection staying on the text, and ⌘C copies it; Shift-drag selects on the terminal itself
 - Friends and the leaderboard: the flames burn on 5 hours of work today, counted from midnight as a daily stat, no longer on 5 in the last 24 hours
 - Logo: it shows again at the top left and on the loading screen (it had vanished with the themes), always in its own orange whatever the theme
 - Top left: no red count on the logo any more, unread messages and friend requests count on the friends icon on the left edge
@@ -48,9 +53,11 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Token saver: in the app since 0.13.0 (the question once, Settings' switch and what it saved), on once rtk is in the build: run app/scripts/fetch-rtk.sh once on the Mac that builds
 - Chats: group chats, several friends in one conversation (users asked for it)
 - Anime mode: a funny mode for the whole app, with anime girls and the like, and sound effects where they shout "uwu"
 - Skins: sexy skins (requested)
+- Token savers built in: rtk (Rust Token Killer: shortens command output before Claude reads it; 36% saved on Atalay's Mac) and caveman (terse replies), set up by the app for every user's Claude Code
 - Remote control: a chat started with Claude's remote control on another of your computers (the Windows PC) shows here too; needs your devices linked into one account first (a pairing code, or the Claude account they share)
 
 ### From user feedback (2026-11-02; the messages: feedback/2026-11-02.md, kept off git)

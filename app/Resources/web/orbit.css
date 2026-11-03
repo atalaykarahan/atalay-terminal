@@ -73,6 +73,8 @@
 .shl b { font-weight: 700; }
 .shl span { color: rgba(214, 236, 255, 0.58); }
 .shl.idle b { color: rgba(143, 211, 255, 0.62); font-weight: 400; }
+.shl.left b { color: #ffa040; }
+.shl.left span { color: rgba(255, 190, 120, 0.7); }
 #space.far .shl:not(.parked) { opacity: 0; }
 /* cinematic (idle) camera */
 .cine-tag { position: absolute; left: 50%; bottom: 30px; z-index: 6; padding: 3px 11px; border: 1px solid rgba(var(--accent-rgb), 0.35); background: rgba(10, 6, 3, 0.55); color: var(--accent-soft); font: 10px/1.4 var(--font); letter-spacing: 0.16em; white-space: nowrap; opacity: 0; transform: translateX(-50%); transition: opacity 0.8s; pointer-events: none; }

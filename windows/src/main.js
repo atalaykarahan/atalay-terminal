@@ -535,12 +535,15 @@ function showOverlay(js) {
 function hideOverlay() {
   if (over && !over.isDestroyed() && over.isVisible()) over.hide();
 }
-/** The wheel, centred where the pointer is (Ctrl+K: Windows has no three-finger click). */
+/** The wheel, centred where the pointer is (Ctrl and the middle mouse button, or Ctrl+K: Windows has no four-finger
+ *  click). */
 function showShortcuts() {
   const p = screen.getCursorScreenPoint();
   const d = screen.getDisplayNearestPoint(p);
   return showOverlay(`Overlay.shortcuts(${p.x - d.bounds.x}, ${p.y - d.bounds.y})`);
 }
+// Ctrl and the middle button in any of the app's windows (preload.js).
+ipcMain.on('atl:wheel', () => showShortcuts());
 
 // ---------- the messages panels: the corner's notices and friends' chats ----------
 function panelWindow(role, friend) {

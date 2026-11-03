@@ -12,10 +12,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         controller = MainWindowController(engine: engine)
         controller.showWindow(nil)
+        // Once, when this build ships rtk: whether to save tokens with it (TokenSavers). The staging build asks at every
+        // launch, to see the question (so does --token-saver-question).
+        let staging = Bundle.main.bundleIdentifier?.hasSuffix(".staging") == true
+        let askAnyway = staging || CommandLine.arguments.contains("--token-saver-question")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.5) { [weak self] in
+            guard let self, TokenSavers.shouldAsk(force: askAnyway) else { return }
+            self.controller.showDashboard()
+            self.controller.radar.push("askTokenSaver", "null")
+        }
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         installMonitors()
-        if !Trackpad.start() { NSLog("Atalay's Terminal: trackpad finger tracking unavailable; use ⌘K for shortcuts") }
+        if !Trackpad.start() { NSLog("Atalay's Terminal: trackpad finger tracking unavailable; ⌃ and the middle mouse button open the shortcut wheel") }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Trackpad.start()
             // Sleep kills the live line to the API without a word; open a fresh one.
@@ -101,9 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.controller.overlay.showShortcuts(at: NSEvent.mouseLocation)
             return nil
         }) { monitors.append(m) }
-        // The same with a mouse: its middle button (the wheel pressed), for people without a trackpad.
+        // The same with a mouse: ⌃ and its middle button (the wheel pressed), or what was set in SHORTCUTS.
         if let m = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown, handler: { [weak self] event in
-            guard event.buttonNumber == 2, let self else { return event }
+            guard Shortcuts.wheelOpens(event), let self else { return event }
             self.controller.overlay.showShortcuts(at: NSEvent.mouseLocation)
             return nil
         }) { monitors.append(m) }
@@ -114,7 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   let tv = sequence(first: hit, next: { $0.superview }).first(where: { $0 is ChatTerminalView }) as? ChatTerminalView,
                   tv.wheelGoesToProgram() else { return event }
             tv.allowMouseReporting = true
-            DispatchQueue.main.async { tv.allowMouseReporting = false }
+            // Not in the middle of a drag that goes to Claude (it ends with the mouse button).
+            DispatchQueue.main.async { if !tv.mouseToProgram { tv.allowMouseReporting = false } }
             return event
         }) { monitors.append(m) }
 
@@ -174,8 +184,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return item
         }
         // An action whose keys the user can change (Shortcuts, the dashboard's main menu → SHORTCUTS).
-        func keyed(_ menu: NSMenu, _ id: String, _ title: String, _ action: Selector, target: AnyObject? = nil) {
-            menu.addItem(Shortcuts.item(id, title: title, action: action, target: target))
+        @discardableResult
+        func keyed(_ menu: NSMenu, _ id: String, _ title: String, _ action: Selector, target: AnyObject? = nil) -> NSMenuItem {
+            let item = Shortcuts.item(id, title: title, action: action, target: target)
+            menu.addItem(item)
+            return item
         }
 
         let app = submenu("Atalay's Terminal")
@@ -205,6 +218,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyed(edit, "copyReply", "Copy Claude's Last Reply", #selector(copyReply), target: self)
         add(edit, "Paste", #selector(NSText.paste(_:)), "v")
         add(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
+        // As in iTerm2: find in the terminal in front (its find bar), and clear it.
+        edit.addItem(.separator())
+        let find = #selector(NSResponder.performTextFinderAction(_:))
+        keyed(edit, "find", "Find…", find).tag = NSTextFinder.Action.showFindInterface.rawValue
+        keyed(edit, "findNext", "Find Next", find).tag = NSTextFinder.Action.nextMatch.rawValue
+        keyed(edit, "findPrevious", "Find Previous", find).tag = NSTextFinder.Action.previousMatch.rawValue
+        keyed(edit, "findSelection", "Use Selection for Find", find).tag = NSTextFinder.Action.setSearchString.rawValue
+        edit.addItem(.separator())
+        keyed(edit, "clearBuffer", "Clear Buffer", #selector(clearBuffer), target: self)
 
         let view = submenu("View")
         add(view, "Dashboard", #selector(showDashboard), "", target: self)
@@ -216,6 +238,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyed(view, "defaultText", "Default Text Size", #selector(fontReset), target: self)
         view.addItem(.separator())
         keyed(view, "fullScreen", "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)))
+        view.addItem(.separator())
+        keyed(view, "scrollLineUp", "Scroll Up One Line", #selector(scrollLineUp), target: self)
+        keyed(view, "scrollLineDown", "Scroll Down One Line", #selector(scrollLineDown), target: self)
+        keyed(view, "scrollPageUp", "Scroll Up One Page", #selector(scrollPageUp), target: self)
+        keyed(view, "scrollPageDown", "Scroll Down One Page", #selector(scrollPageDown), target: self)
+        keyed(view, "scrollTop", "Scroll to Top", #selector(scrollTop), target: self)
+        keyed(view, "scrollBottom", "Scroll to Bottom", #selector(scrollBottom), target: self)
 
         let window = submenu("Window")
         add(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
@@ -267,6 +296,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func dividerRight() { controller.moveDivider(dx: 1, dy: 0) }
     @objc private func maximizePane() { controller.toggleMaximize() }
     @objc private func selectTabNumber(_ sender: NSMenuItem) { controller.selectTab(number: sender.tag) }
+    /// The terminal in front (a chat's or a terminal's, the pane with the keyboard).
+    private var frontTerminal: ChatTerminalView? { NSApp.keyWindow?.firstResponder as? ChatTerminalView }
+    @objc private func clearBuffer() { frontTerminal?.clearBuffer() }
+    @objc private func scrollLineUp() { frontTerminal?.scrollBuffer(.lineUp) }
+    @objc private func scrollLineDown() { frontTerminal?.scrollBuffer(.lineDown) }
+    @objc private func scrollPageUp() { frontTerminal?.scrollBuffer(.pageUp) }
+    @objc private func scrollPageDown() { frontTerminal?.scrollBuffer(.pageDown) }
+    @objc private func scrollTop() { frontTerminal?.scrollBuffer(.top) }
+    @objc private func scrollBottom() { frontTerminal?.scrollBuffer(.bottom) }
     /// The chat window in front: Claude's last reply onto the clipboard, all of it.
     @objc private func copyReply() { (NSApp.keyWindow?.delegate as? ChatWindowController)?.copyLastReply() }
     @objc private func showShortcuts() { controller.overlay.showShortcuts(at: NSEvent.mouseLocation) }

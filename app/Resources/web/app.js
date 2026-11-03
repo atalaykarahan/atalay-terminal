@@ -134,8 +134,18 @@ function setVisibility(visible, focused) {
   document.documentElement.classList.toggle('paused', !visible);
   map('activity', visible, focused);
 }
+// Once the dashboard is past its boot screen (a question asked at launch waits for it).
+function afterBoot(fn) {
+  const b = $('boot');
+  if (!b || b.classList.contains('gone')) return fn();
+  const t = setInterval(() => {
+    if (!b.classList.contains('gone')) return;
+    clearInterval(t);
+    fn();
+  }, 300);
+}
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open(), askTokenSaver: () => afterBoot(() => window.Cloud?.askSaver()) };
   native({ type: 'ready' });
 }
 
@@ -838,6 +848,13 @@ function stationTip(c) {
   );
 }
 function terminalTip(t) {
+  if (t.left) {
+    return (
+      `<div class="h" style="color:#ffa040">▸ ${esc(t.cmd)}</div>` +
+      `<div class="r">${esc(t.cwd)}</div>` +
+      `<div class="d">its terminal closed, it kept running · click to end it</div>`
+    );
+  }
   return (
     `<div class="h" style="color:#8fd3ff">▸ ${esc(t.running ? t.cmd : 'terminal')}</div>` +
     `<div class="r">${esc(t.cwd)}</div>` +

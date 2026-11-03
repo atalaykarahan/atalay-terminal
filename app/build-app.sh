@@ -80,6 +80,14 @@ if [ "${STAGING:-}" = 1 ]; then
 fi
 cp -R Resources/web "$APP/Contents/Resources/web"
 cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
+# The token saver (TokenSavers.swift): rtk, fetched once by scripts/fetch-rtk.sh.
+if [ -x vendor/rtk/rtk ]; then
+  mkdir -p "$APP/Contents/Resources/bin"
+  cp vendor/rtk/rtk "$APP/Contents/Resources/bin/rtk"
+  cp vendor/rtk/LICENSE "$APP/Contents/Resources/bin/rtk-LICENSE"
+else
+  echo "build-app: no rtk to put in (run scripts/fetch-rtk.sh), the token saver will be off" >&2
+fi
 codesign --force --deep --sign - "$APP" >/dev/null
 echo "built $APP"
 

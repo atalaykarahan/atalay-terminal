@@ -12,10 +12,12 @@ enum PaneKind: Character {
 
 extension Detached {
     /// An extra pane's session: `<prefix>x<kind><8 hex>-<the window session's id>`. It must not start with the window's
-    /// session name: screen picks sessions by prefix, and `-S name -X quit` refuses when two match.
+    /// session name: screen picks sessions by prefix, and `-S name -X quit` refuses when two match. A mirror's window
+    /// session is another build's (`atl-` in the staging build): its id is what follows that build's prefix.
     static func extraName(parent: String, kind: PaneKind) -> String {
         let hex = String(UUID().uuidString.lowercased().filter(\.isHexDigit).prefix(8))
-        return prefix + "x" + String(kind.rawValue) + hex + "-" + parent.dropFirst(prefix.count)
+        let own = allPrefixes.first(where: parent.hasPrefix) ?? prefix
+        return prefix + "x" + String(kind.rawValue) + hex + "-" + parent.dropFirst(own.count)
     }
 
     /// The same session, renamed for another kind (a tab dragged into a split): it comes back that way after a restart.
@@ -376,6 +378,10 @@ private final class TabChip: NSView {
         label.textColor = ThemeStore.shared.color(active ? "--accent-soft" : "--dim")
         label.lineBreakMode = .byTruncatingTail
         label.alignment = .center
+        // A long title (a chat named after its whole first prompt) is cut short with "…": it neither widens its tab past
+        // the others' nor the window past the screen (the window grows for anything that resists harder than this).
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         close.isBordered = false
         close.font = Theme.mono(13, .medium)
         close.contentTintColor = ThemeStore.shared.color(active ? "--accent-soft" : "--dim")

@@ -87,7 +87,7 @@ chats run in the app, through node-pty, and end with it.
 
 - Closing the dashboard keeps the app going while a chat or terminal runs (starting the app again brings it back, as
   the Dock does on the Mac); with none, it quits.
-- No three-finger click (Mac trackpads only): Ctrl+K opens the shortcut wheel and Ctrl+N a new terminal, in the
-  terminal windows too (where they'd otherwise go to the shell).
+- No four-finger click (Mac trackpads only): Ctrl and the middle mouse button (or Ctrl+K) open the shortcut wheel and
+  Ctrl+N a new terminal, in the terminal windows too (where they'd otherwise go to the shell).
 - No iTerm2: a chat started in another terminal shows on the dashboard and can be opened as a copy.
 - Updates come from the releases repo's `windows` release (above), not from the API's offer, which is the Mac app's.

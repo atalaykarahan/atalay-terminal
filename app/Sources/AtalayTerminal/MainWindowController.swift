@@ -181,7 +181,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case "open": if let sid = msg["sid"] as? String { openSession(sid) }
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
-        case "openTerminal": if let id = msg["id"] as? String { chats[id]?.show() }
+        case "openTerminal": if let id = msg["id"] as? String { openTerminal(id) }
+        case "endLeftover":
+            if let pid = (msg["pid"] as? NSNumber)?.int32Value, let started = (msg["started"] as? NSNumber)?.doubleValue {
+                runaways.endLeft(pid: pid, started: started)
+            }
         case "endSession": if let sid = msg["sid"] as? String { endSession(sid) }
         case "endRunaway":
             if let pid = (msg["pid"] as? NSNumber)?.int32Value, let started = (msg["started"] as? NSNumber)?.doubleValue {
@@ -299,31 +303,46 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var terminalsJSON = ""
     private var terminalCPU: [Int32: (ns: UInt64, at: TimeInterval)] = [:]
 
-    /// Every app terminal without Claude in it, for the dashboard's orbit: what runs there (the shell's foreground job,
-    /// e.g. `npm run dev`), in which folder, and how busy. Sent when it changes.
+    /// Every app terminal without Claude in it, for the dashboard's orbit: each window's own when it's one and every tab
+    /// and split pane (Claude in one is a session there), with what runs there (the shell's foreground job, e.g.
+    /// `npm run dev`), in which folder, and how busy; and what a closed terminal left running (Runaways.left). Sent when
+    /// it changes.
     private func pushTerminals() {
         let now = ProcessInfo.processInfo.systemUptime
         var list: [[String: Any]] = []
         var measured = Set<Int32>()
-        for c in chats.values where c.hud.status == "terminal" && !c.hud.exited {
-            guard let shell = c.detached?.shellPid else { continue }
-            let jobs = Proc.children(of: shell)
-            let cwd = Proc.cwd(shell) ?? c.hud.terminalDir ?? HOME
+        // % of a core the processes under `roots` used since the last time (`key`: the shell, or the process left behind).
+        func busy(_ key: Int32, _ roots: [Int32], work: Bool) -> Double {
+            guard !roots.isEmpty else { return 0 }
             var cpu = 0.0
-            if !jobs.isEmpty {
-                let ns = Self.tree(jobs).reduce(UInt64(0)) { $0 &+ (Proc.info($1)?.cpuTime ?? 0) }
-                if let prev = terminalCPU[shell], now > prev.at, ns >= prev.ns {
-                    cpu = Double(ns - prev.ns) / ((now - prev.at) * 1e9) * 100
-                }
-                // A build, tests, a dev server recompiling: work (Activity). An idle dev server isn't.
-                if cpu >= 5 { Activity.work() }
-                terminalCPU[shell] = (ns, now)
-                measured.insert(shell)
+            let ns = Self.tree(roots).reduce(UInt64(0)) { $0 &+ (Proc.info($1)?.cpuTime ?? 0) }
+            if let prev = terminalCPU[key], now > prev.at, ns >= prev.ns {
+                cpu = Double(ns - prev.ns) / ((now - prev.at) * 1e9) * 100
             }
+            // A build, tests, a dev server recompiling: work (Activity). An idle dev server isn't.
+            if work, cpu >= 5 { Activity.work() }
+            terminalCPU[key] = (ns, now)
+            measured.insert(key)
+            return cpu
+        }
+        for c in chats.values where !c.hud.exited {
+            for pane in c.plainShells() {
+                let jobs = Proc.children(of: pane.shell)
+                let cwd = Proc.cwd(pane.shell) ?? pane.cwd
+                let cpu = busy(pane.shell, jobs, work: true)
+                list.append([
+                    "id": pane.id, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
+                    "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
+                    "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                ])
+            }
+        }
+        for l in runaways.left {
+            let cpu = busy(l.pid, [l.pid], work: false)
             list.append([
-                "id": c.id, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
-                "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
-                "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                "id": "left:\(l.pid):\(Int64(l.started))", "cwd": tildify(l.cwd), "dir": (l.cwd as NSString).lastPathComponent,
+                "cmd": Self.commandLabel(l.args), "running": true, "cpu": cpu.rounded(),
+                "left": true, "pid": l.pid, "started": l.started,
             ])
         }
         terminalCPU = terminalCPU.filter { measured.contains($0.key) }
@@ -356,7 +375,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// "node /…/node_modules/.bin/vite --port 5173" -> "vite --port 5173"; "npm run dev" stays.
     private static func commandLabel(_ args: [String]) -> String {
-        var parts = args.map { $0.contains("/") ? ($0 as NSString).lastPathComponent : $0 }
+        // A process that renamed itself (npm: "npm exec remotion studio") pads its arguments with spaces.
+        var parts = args.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            .map { $0.contains("/") ? ($0 as NSString).lastPathComponent : $0 }
         if let first = parts.first, first == "node" || first == "nodejs", parts.count > 1 { parts.removeFirst() }
         let label = parts.joined(separator: " ")
         return label.count > 48 ? String(label.prefix(47)) + "…" : label
@@ -435,9 +456,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             if let b = brief, b.live, let pid = b.pid {
                 // A live chat opens the window its process runs in. Another window here can hold an older copy of the
                 // same conversation (a `claude --resume` that didn't fork); that one isn't it. Outside the app: below.
-                if let tab = b.tab, let c = chats[tab] { return c.show() }
-                if let name = Detached.sessionName(hosting: pid), let c = chats.values.first(where: { $0.detached?.name == name }) {
-                    return c.show()
+                // On the pane it runs in: a Claude in the window's second tab opens that tab.
+                if let tab = b.tab, let c = chats[tab] {
+                    c.show()
+                    return c.focusPane(hosting: pid)
+                }
+                // A tab or split pane's session goes by its window's.
+                if let name = Detached.sessionName(hosting: pid),
+                   let c = chats.values.first(where: { $0.detached?.name == (Detached.extraInfo(name)?.parent ?? name) }) {
+                    c.show()
+                    return c.focusPane(hosting: pid)
                 }
             } else {
                 if let c = chats.values.first(where: { $0.sessionId == sid && !$0.hud.exited }) { return c.show() }
@@ -675,6 +703,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func panesChanged() {
         syncShells()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.syncShells() }
+    }
+
+    /// A car on the orbit was clicked: its window comes up with that very pane in front (its tab shown, the keyboard in
+    /// it), not whichever was used last.
+    private func openTerminal(_ id: String) {
+        let parts = id.split(separator: "#", maxSplits: 1).map(String.init)
+        guard let c = parts.first.flatMap({ chats[$0] }) else { return }
+        c.show()
+        c.focusPane(parts.count > 1 ? parts[1] : nil)
     }
 
     /// A terminal ended with its End button: its car explodes on the orbit now, not at the next terminals update.

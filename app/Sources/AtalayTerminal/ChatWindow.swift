@@ -1091,6 +1091,55 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     private func extra(of tv: ChatTerminalView) -> ExtraPane? { extras.first { $0.terminal === tv } }
 
+    /// The window's terminals with no Claude in them, for the orbit's cars: its own when it's a terminal, and every tab
+    /// and split pane besides (a dev server in the tab next to a chat). `id` is what the orbit opens again
+    /// (MainWindowController.openTerminal): the window's id, then `#` and the pane's for a pane.
+    func plainShells() -> [(id: String, shell: Int32, cwd: String)] {
+        var out: [(id: String, shell: Int32, cwd: String)] = []
+        if hud.status == "terminal", let shell = detached?.shellPid { out.append((id, shell, hud.terminalDir ?? cwd)) }
+        for pane in extras {
+            let shell = pane.shellPid
+            // Claude in a pane is a session on the orbit, not a car.
+            guard shell > 0, !Self.runsClaude(shell) else { continue }
+            out.append((id + "#" + paneKey(pane), shell, pane.cwd))
+        }
+        return out
+    }
+
+    private func paneKey(_ pane: ExtraPane) -> String { pane.link?.name ?? "pid\(pane.shellPid)" }
+
+    private static func runsClaude(_ shell: Int32) -> Bool {
+        var level = Proc.children(of: shell)
+        for _ in 0..<4 where !level.isEmpty {
+            if level.contains(where: Proc.isClaude) { return true }
+            level = level.flatMap { Proc.children(of: $0) }
+        }
+        return false
+    }
+
+    /// The orbit opened this window for one of its panes (`key` from plainShells; nil: the window's own): its tab comes to
+    /// the front and the keyboard goes to it, so a window split five ways opens on the pane that was clicked.
+    func focusPane(_ key: String?) {
+        reveal(key.flatMap { k in extras.first { paneKey($0) == k }?.terminal } ?? terminal)
+    }
+
+    /// The same for the pane a process runs in (a Claude session clicked on the orbit): the one whose shell it's under.
+    func focusPane(hosting pid: Int32) {
+        var cur = pid
+        for _ in 0..<8 {
+            if cur == shellPid { return reveal(terminal) }
+            if let pane = extras.first(where: { $0.shellPid == cur }) { return reveal(pane.terminal) }
+            guard let parent = Proc.parent(cur), parent > 1 else { return }
+            cur = parent
+        }
+    }
+
+    private func reveal(_ tv: ChatTerminalView) {
+        if zoomed, tv !== focusedTerminal { _ = toggleZoom() }
+        if let t = tabs.indices.first(where: { i in terminals(in: i).contains { $0 === tv } }), t != activeTab { selectTab(t) }
+        focus(tv)
+    }
+
     /// The pane with the keyboard, else the one used last in the shown tab.
     var focusedTerminal: ChatTerminalView {
         if let tv = window?.firstResponder as? ChatTerminalView, allTerminals.contains(where: { $0 === tv }) { return tv }
@@ -1138,9 +1187,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         return pane
     }
 
-    /// ⌘T: a new tab with a shell in the folder of the pane in front.
+    /// ⌘T: a new tab with a shell in the folder of the pane in front. In a mirror too (a chat the other app runs): the
+    /// tab's shell is this app's own.
     func newTab() {
-        guard !hud.mirror else { return }
         let pane = makeExtra(kind: .tab, cwd: currentFolder)
         tabs.append(pane.terminal)
         selectTab(tabs.count - 1)
@@ -1151,7 +1200,6 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     /// ⌘D (`vertical`: side by side) / ⇧⌘D (one above the other): the pane in front gives half its place to a shell in
     /// its folder.
     func split(vertical: Bool) {
-        guard !hud.mirror else { return }
         if zoomed { _ = toggleZoom() }
         let old = focusedTerminal
         let pane = makeExtra(kind: vertical ? .vertical : .horizontal, cwd: currentFolder)
@@ -1164,7 +1212,6 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     /// A pane's session still running (⇧⌘T right after closing it, or after the app restarted) comes back: in a tab of
     /// its own or split off the shown tab's last pane.
     func adoptPane(session: String, kind: PaneKind, cwd: String, focus: Bool) {
-        guard !hud.mirror else { return }
         let pane = makeExtra(kind: kind, cwd: cwd)
         if kind == .tab {
             tabs.append(pane.terminal)
@@ -1256,7 +1303,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private func dragTab(_ i: Int, _ phase: TabDrag) {
         switch phase {
         case .began:
-            guard !hud.mirror, tabs.indices.contains(i) else { return }
+            guard tabs.indices.contains(i) else { return }
             if zoomed { _ = toggleZoom() }
             draggedTab = i
         case .moved(let p):

@@ -23,3 +23,11 @@
 .dp-end:disabled { opacity: 0.6; cursor: default; }
 .dp-l2 { margin-top: 2px; overflow: hidden; color: #c9a5a5; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .dp-l2 em { color: #ffb057; font-style: normal; }
+
+/* What a closed terminal left running (danger.js openLeft): the same card, in the amber of its car. */
+#danger-panel .dp.left { border-color: #ffa040; background: rgba(24, 14, 4, 0.94); box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6), 0 0 28px rgba(255, 160, 64, 0.3); color: #f5e8da; }
+.dp.left .dp-head b { color: #ffa040; }
+.dp.left .dp-sub, .dp.left .dp-l2 { color: #d2b79a; }
+.dp.left .dp-l1 b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp.left .dp-end { flex: none; margin-left: auto; border-color: #ffa040; background: #ffa040; color: #1a0d00; }
+.dp.left .dp-end.sure { border-color: #fff; background: #fff; color: #a04800; }

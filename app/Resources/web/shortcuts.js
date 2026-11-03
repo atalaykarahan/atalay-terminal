@@ -25,7 +25,8 @@
     if (parent) parent.appendChild(n);
     return n;
   };
-  // Windows (the Windows app sets __platform): "\" between a path's names, and Ctrl+K opens the wheel (no trackpad).
+  // Windows (the Windows app sets __platform): "\" between a path's names, and Ctrl with the middle mouse button (or
+  // Ctrl+K) opens the wheel (no trackpad).
   const WIN = window.__platform === 'win32';
   const baseName = WIN ? (p) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p : (p) => p.replace(/\/+$/, '').split('/').pop() || p;
 
@@ -109,7 +110,7 @@
 
     const hint = document.createElement('div');
     hint.className = 'hint';
-    hint.textContent = `${WIN ? 'Ctrl+K' : '4-finger click'} · keys 1–5 · right-click a folder to change it · esc`;
+    hint.textContent = `${WIN ? 'Ctrl + middle click' : '4-finger click'} · keys 1–5 · right-click a folder to change it · esc`;
     pie.appendChild(hint);
     root.appendChild(pie);
     root.classList.add('on');

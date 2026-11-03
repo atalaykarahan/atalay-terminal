@@ -732,9 +732,12 @@ function refreshStations(state) {
 // Something running in the shell (its foreground job, e.g. `npm run dev`) lights the thrusters: the car lifts off and
 // cruises, faster when the job is busy. When nothing runs, the car leaves the lane and parks at the edge of the view
 // like a session waiting for you, always the same size on screen and within reach; a new job takes it back to the
-// lane. Click: the app shows that terminal's window. (The code calls them ships.)
+// lane. Click: the app shows that terminal's window, on that very pane (a tab, a split). Every plain tab and split pane
+// is a car of its own. So is what a closed terminal left running (a dev server still holding its port): an amber car on
+// the lane, whose click offers to end it. (The code calls them ships.)
 const LANE = { R: 305, Y: 18, LIFT: 12, SIZE: 1.7 }; // SIZE: the car's scale, so its shape reads at the default zoom
 const ICE = colorOf('#8fd3ff');
+const LEFT = colorOf('#ffa040'); // a car whose terminal is gone
 const SHIPS = new Map();
 const SHIP_FLY_MS = 1400; // between the lane and a parking spot
 // What the cars' paint and glass reflect, made once when the first car appears.
@@ -771,7 +774,8 @@ function syncShips(list) {
       s.homeKind = kind;
     }
     setText(s.el.querySelector('b'), t.running ? R.clipT(t.cmd || 'running', 30) : t.dir || 'terminal');
-    setText(s.el.querySelector('span'), t.running ? `${t.dir}${t.cpu >= 1 ? ` · ${Math.round(t.cpu)}% cpu` : ''}` : 'idle shell');
+    setText(s.el.querySelector('span'), t.left ? `left running · ${t.dir}` : t.running ? `${t.dir}${t.cpu >= 1 ? ` · ${Math.round(t.cpu)}% cpu` : ''}` : 'idle shell');
+    s.el.classList.toggle('left', !!t.left);
     s.el.classList.toggle('idle', !t.running);
     s.el.classList.toggle('parked', kind === 'park');
   }
@@ -812,11 +816,12 @@ function freeAngle() {
 }
 
 function makeShip(t) {
-  const m = buildRoadster(ICE, reflections());
+  const tint = t.left ? LEFT : ICE;
+  const m = buildRoadster(tint, reflections());
   m.group.scale.setScalar(0.01);
   scene.add(m.group);
   // One shared material, so every thruster of a car glows together.
-  const flameMat = new THREE.SpriteMaterial({ map: glowTex, color: ICE.clone().multiplyScalar(1.6), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+  const flameMat = new THREE.SpriteMaterial({ map: glowTex, color: tint.clone().multiplyScalar(1.6), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
   const flames = m.jetKinds.map((j) => {
     const f = new THREE.Sprite(flameMat);
     f.position.copy(j.at);
@@ -1557,8 +1562,9 @@ function endPress(e, cancel) {
     R.focusSession(h.owner.sid);
   } else if (h.kind === 'station') STATIONS[h.cat].hitAt = performance.now();
   else if (h.kind === 'ship') {
-    sparks(h.ship.pos, ICE, 12, 55);
-    R.openTerminal(h.ship.id);
+    sparks(h.ship.pos, h.ship.t.left ? LEFT : ICE, 12, 55);
+    if (h.ship.t.left) window.Danger?.openLeft?.(h.ship.t);
+    else R.openTerminal(h.ship.id);
   } else if (h.kind === 'box') {
     sparks(h.b.pos, HOT, 14, 60);
     window.Danger?.open(h.b.r.pid);

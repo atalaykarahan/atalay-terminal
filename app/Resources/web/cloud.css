@@ -347,3 +347,28 @@
 .ks-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
 .ks-all { padding: 3px 10px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--dim); font: 12px var(--font); cursor: pointer; }
 .ks-all:hover { border-color: var(--accent); color: var(--hi); }
+
+/* SHORTCUTS: how the shortcut wheel opens (cloud.js wheelCard) */
+.ks-wheel { display: flex; align-items: center; gap: 14px; margin: 2px 0 14px; padding: 12px 14px; border: 1px solid rgba(var(--accent-rgb), 0.35); border-radius: 8px; background: rgba(var(--accent-rgb), 0.06); }
+.ksw-ico { flex: none; width: 58px; height: 58px; overflow: visible; filter: drop-shadow(0 0 8px rgba(var(--accent-rgb), 0.35)); }
+.ksw-ico path { fill: rgba(var(--panel-rgb), 0.94); stroke: rgba(var(--accent-rgb), 0.7); stroke-width: 1.2; }
+.ksw-ico path.on { fill: rgba(var(--accent-rgb), 0.32); stroke: var(--accent); }
+.ksw-ico .ring { fill: none; stroke: rgba(var(--accent-rgb), 0.3); stroke-dasharray: 2 4; }
+.ksw-ico .dot { fill: var(--accent); }
+.ksw-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ksw-txt b { color: var(--hi); letter-spacing: 0.04em; }
+.ksw-txt span { color: var(--dim); font-size: 0.92em; line-height: 1.4; }
+.ksw-how { flex: none; display: flex; flex-direction: column; gap: 5px; }
+.ksw-how > div { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.ksw-how small { color: var(--dim); font-size: 0.85em; letter-spacing: 0.06em; }
+.ksw-how .ks-key { box-sizing: border-box; width: 172px; min-width: 0; }
+.ks-key.fixed { display: inline-flex; align-items: center; justify-content: center; color: var(--txt); cursor: default; }
+.ks-key.fixed:hover { border-color: var(--line); }
+
+/* the token saver's question (cloud.js askSaver): one big number, one line */
+.pk.sav { width: min(380px, 92vw); }
+.sav-body { padding-top: 22px; text-align: center; }
+.sav-big { display: block; color: var(--accent); font-size: 52px; font-weight: 800; line-height: 1; text-shadow: 0 0 22px rgba(var(--accent-rgb), 0.5); }
+.sav-sub { margin: 8px 0 4px; color: var(--hi); font-size: 1.1em; }
+.sav-line { margin: 0 0 6px; color: var(--dim); }
+.sav-line b { color: var(--accent); }

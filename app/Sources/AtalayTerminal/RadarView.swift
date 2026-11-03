@@ -19,6 +19,7 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         ucc.addScriptMessageHandler(CloudBridge(), contentWorld: .page, name: "cloud")
         ucc.addScriptMessageHandler(ThemeBridge(), contentWorld: .page, name: "theme")
         ucc.addScriptMessageHandler(KeysBridge(), contentWorld: .page, name: "keys")
+        ucc.addScriptMessageHandler(SaversBridge(), contentWorld: .page, name: "savers")
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = self
         let dir = Self.webDirectory()

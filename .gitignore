@@ -8,3 +8,4 @@
 /windows/node_modules/
 /windows/dist/
 /windows/src/clientkey.js
+/app/vendor/
