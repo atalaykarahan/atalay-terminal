@@ -672,14 +672,19 @@ function handleMessages(win, body) {
 // updates right away) and the restart stops nothing: chats in the session host go on across it. One running in the app
 // itself (no host) would end, so then it waits for the user's quit (or "update now").
 const updates = (() => {
-  let offer = null, ready = false, busy = null, checking = false, checkedAt = null;
+  let offer = null, ready = false, busy = null, checking = false, checkedAt = null, error = null;
+  // "Update now" pressed while the update was still downloading (the notice of a new version comes as its download
+  // starts): it goes in the moment the download is done, as on the Mac, rather than waiting for the user to step away
+  // while the page says "downloading…" with no way out.
+  let whenReady = false;
   const usable = !!autoUpdater && app.isPackaged && !PROBE;
   const rightAway = () => !!settings.get('updateRightAway');
   const maybeRestart = () => {
-    if (!ready || terminals.list().some((t) => terminals.local(t.id))) return;
+    if (!ready || busy || terminals.list().some((t) => terminals.local(t.id))) return;
     if (rightAway() || powerMonitor.getSystemIdleTime() >= 600) install();
   };
   const install = () => {
+    whenReady = false;
     busy = 'restarting…';
     pushCloud();
     setImmediate(() => autoUpdater.quitAndInstall(true, true));
@@ -695,15 +700,25 @@ const updates = (() => {
     autoUpdater.on('update-downloaded', () => {
       ready = true;
       pushCloud();
-      maybeRestart();
+      if (whenReady) install();
+      else maybeRestart();
     });
-    autoUpdater.on('error', (e) => console.error('updates:', e.message));
+    autoUpdater.on('error', (e) => {
+      console.error('updates:', e.message);
+      // The installer didn't start: this version stays, the page says the update failed, and "update now" can be
+      // pressed again.
+      if (busy === 'restarting…') {
+        busy = null;
+        error = 'failed';
+        pushCloud();
+      }
+    });
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 30 * 60_000);
     setInterval(maybeRestart, 60_000);
     setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 10_000);
   }
   return {
-    state: () => ({ update: offer, updateReady: ready, updating: busy, updateRightAway: rightAway(), checking, checkedAt, xpPaused: false }),
+    state: () => ({ update: offer, updateReady: ready, updating: busy, updateError: error, updateRightAway: rightAway(), checking, checkedAt, xpPaused: false }),
     async check() {
       if (!usable) return;
       checking = true;
@@ -714,11 +729,21 @@ const updates = (() => {
       pushCloud();
     },
     now() {
-      if (!usable || !offer) return;
+      if (!usable || !offer || busy) return;
+      error = null;
       if (ready) return install();
       busy = 'downloading…';
+      whenReady = true;
       pushCloud();
-      autoUpdater.downloadUpdate().catch(() => {});
+      // The download already running is the one waited for. When it fails (offline), the page says so and "update now"
+      // comes back for another try, instead of "downloading…" staying for ever.
+      autoUpdater.downloadUpdate().catch(() => {
+        if (busy !== 'downloading…') return;
+        whenReady = false;
+        busy = null;
+        error = 'failed';
+        pushCloud();
+      });
     },
     setRightAway(on) {
       settings.set('updateRightAway', !!on);
