@@ -34,9 +34,10 @@ there are signed. The packaged app can't be run as plain Node, inspected or edit
 
 ### Releases and updates
 
-Installed copies look for updates every 30 minutes in the `windows` release of
-[atalay-terminal-releases](https://github.com/atalaykarahan/atalay-terminal-releases) (electron-updater; package.json's
-`publish`). It's a pre-release, so it never becomes the repo's latest, the Mac's `.dmg` link keeps working, and a newer
+Installed copies look for updates every minute (and on waking or unlocking the PC), as the Mac's heartbeat does, in the
+`windows` release of [atalay-terminal-releases](https://github.com/atalaykarahan/atalay-terminal-releases)
+(electron-updater; package.json's `publish`): they read its latest.yml (about 1 KB) with a time limit and hand over to
+electron-updater only when it names a newer version, so a release shows within a minute of going out. It's a pre-release, so it never becomes the repo's latest, the Mac's `.dmg` link keeps working, and a newer
 Mac release can't hide the Windows files. An update downloads by itself and goes in when the app quits, or right away
 when nothing would be stopped by a restart and the PC has been left alone for 10 minutes (or "right away" is on in
 Settings). New users download `Atalays-Terminal-Setup.exe` from that release; it's always the newest.

@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.15.1 (Windows only)
+
+- Updates: a new version shows within a minute of going out (it was looked for every 30 minutes, so one could wait half an hour unseen), also right after the PC wakes or unlocks; a look that hangs on the network no longer holds up the ones after it
+
 ## 0.15.0
 
 - Chat list: star a chat and it stays at the top (FAVORITES); archive one, a whole folder, or several folders picked with a click, and they leave the list altogether, and Settings doesn't show them either: its "archived chats · manage" button opens them in a window of their own, as in Claude and ChatGPT, where a chat, a folder or all of them come back (so a stream shows only what's meant to be seen)

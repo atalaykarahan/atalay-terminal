@@ -1003,6 +1003,8 @@ const updates = (() => {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on('update-available', (i) => {
+      // A newer one than an update already downloaded: that one isn't what goes in any more.
+      ready = false;
       offer = { version: i.version, build: 0, notes: notesOf(i.releaseNotes) };
       pushCloud();
       toNotices(`update(${JSON.stringify({ version: i.version, build: 0 })})`);
@@ -1023,17 +1025,77 @@ const updates = (() => {
         pushCloud();
       }
     });
-    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 30 * 60_000);
+    const look = () => poll().catch(() => {});
+    setTimeout(look, 10_000);
+    setInterval(look, 60_000);
+    // Back from sleep or the lock screen: at once, not at the next minute.
+    powerMonitor.on('resume', look);
+    powerMonitor.on('unlock-screen', look);
     setInterval(maybeRestart, 60_000);
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 10_000);
   }
+
+  // A new release shows within a minute of going out, as on the Mac (whose heartbeat asks the API every minute; it was
+  // every 30 minutes here, so a release could wait half an hour to be seen): the feed's latest.yml, about 1 KB, is read
+  // every minute with a time limit, and electron-updater only asked when it names a newer version than this one and the
+  // one on offer, so its notice comes once.
+  const feed = (() => {
+    if (!usable) return null;
+    try {
+      const m = /^url:\s*(.+)$/m.exec(fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'));
+      return m ? m[1].trim().replace(/^['"]|['"]$/g, '').replace(/\/+$/, '') : null;
+    } catch {
+      return null;
+    }
+  })();
+  async function feedVersion() {
+    const res = await net.fetch(`${feed}/latest.yml?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) throw new Error(`latest.yml: HTTP ${res.status}`);
+    const m = /^version:\s*['"]?(\d[^'"\s]*)/m.exec(await res.text());
+    if (!m) throw new Error('latest.yml: no version');
+    return m[1];
+  }
+  let polling = null;
+  function poll() {
+    if (!feed) return Promise.resolve(null);
+    if (!polling) {
+      polling = feedVersion()
+        .then((v) => {
+          if (newerVersion(v, offer ? offer.version : app.getVersion())) askUpdater();
+          return v;
+        })
+        .finally(() => (polling = null));
+    }
+    return polling;
+  }
+  // electron-updater's own check, which downloads what it finds. Its requests are to time out through their socket,
+  // which Electron's requests don't have: one that stalls never ends, and every later check is handed that same one. So
+  // one still out after two minutes is let go, and the next check starts afresh.
+  let asking = null, askedAt = 0;
+  function askUpdater() {
+    if (asking && Date.now() - askedAt < 120_000) return;
+    if (asking) autoUpdater.checkForUpdatesPromise = null;
+    askedAt = Date.now();
+    const p = autoUpdater
+      .checkForUpdates()
+      .catch(() => {})
+      .finally(() => {
+        if (asking === p) asking = null;
+      });
+    asking = p;
+  }
+
   return {
     state: () => ({ update: offer, updateReady: ready, updating: busy, updateError: error, updateRightAway: rightAway(), checking, checkedAt, xpPaused: false }),
+    // Settings' "check for updates": answered within the feed's time limit, even with the network hanging.
     async check() {
       if (!usable) return;
       checking = true;
       pushCloud();
-      await autoUpdater.checkForUpdates().catch(() => {});
+      try {
+        await poll();
+        // What electron-updater found, when it was asked, comes before "up to date" would.
+        if (asking) await Promise.race([asking, new Promise((r) => setTimeout(r, 20_000))]);
+      } catch {}
       checking = false;
       checkedAt = Date.now();
       pushCloud();
@@ -1062,6 +1124,16 @@ const updates = (() => {
     },
   };
 })();
+
+/** Whether version `a` is newer than `b` ("0.15.1" than "0.15.0"): the numbers only, as the releases have them. */
+function newerVersion(a, b) {
+  const nums = (v) => String(v || '').split(/[-+]/)[0].split('.').map((n) => parseInt(n, 10) || 0);
+  const [x, y] = [nums(a), nums(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+}
 
 function notesOf(n) {
   if (!n) return '';
