@@ -314,7 +314,7 @@
 
 /* the themes view: each theme as a small picture of the app in its own colours */
 #themes-view .cv-themes { flex: 1; }
-.th-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; gap: 20px 16px; padding: 16px 18px; }
+.th-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; overflow-y: auto; gap: 20px 16px; padding: 16px 18px; }
 .th-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 0; border: 0; background: none; color: var(--txt); font: 11px var(--font); text-align: left; cursor: pointer; }
 .th-shot { display: grid; grid-template-columns: 28% minmax(0, 1fr); grid-template-rows: 15px minmax(0, 1fr) 8px; gap: 5px; height: 150px; padding: 5px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; background: var(--t-bg); overflow: hidden; transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
 .th-card:hover .th-shot, .th-card.hot .th-shot { border-color: var(--accent); box-shadow: 0 0 14px rgba(var(--accent-rgb), 0.45); transform: translateY(-1px); }
