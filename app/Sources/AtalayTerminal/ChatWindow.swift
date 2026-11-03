@@ -97,7 +97,7 @@ struct ChatHeaderView: View {
             let status = hud.status
             let hex = Theme.statusHex[status] ?? Theme.endedHex
             ZStack(alignment: .topLeading) {
-                HeaderBackdrop(hex: hex)
+                if Mur47.on { Mur47Backdrop() } else { HeaderBackdrop(hex: hex) }
                 VStack(alignment: .leading, spacing: 0) {
                     TitleRow(hud: hud, now: tl.date, status: status, hex: hex)
                         .frame(height: 32)
@@ -123,20 +123,36 @@ private struct TitleRow: View {
         let dir = status == "terminal" ? hud.terminalDir : nil
         let name = dir.map { ($0 as NSString).lastPathComponent } ?? hud.brief?.name ?? "chat"
         let title = dir.map(tildify) ?? hud.brief?.title ?? ""
+        let mur47 = Mur47.on
         HStack(spacing: 8) {
-            Image(systemName: "hexagon")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(color)
-                .shadow(color: color, radius: 6)
-            Text(name)
-                .font(.mono(12, .bold))
-                .foregroundColor(Theme.cAccent)
-                .shadow(color: Theme.cAccent.opacity(0.6), radius: 6)
-                .lineLimit(1)
-            Text("·").font(.mono(12)).foregroundColor(Theme.cDim2)
+            if mur47 {
+                // MUR47: its mark in place of the hexagon, the name in stencil on the walnut
+                Text("47")
+                    .font(Mur47.stencil(15))
+                    .foregroundColor(Theme.cAccent)
+                    .shadow(color: Theme.cAccent.opacity(0.7), radius: 6)
+                Text(name.uppercased())
+                    .font(Mur47.stencil(12))
+                    .tracking(1.4)
+                    .foregroundColor(Mur47.titleText)
+                    .shadow(color: .black.opacity(0.7), radius: 0, x: 0, y: 1)
+                    .lineLimit(1)
+            } else {
+                Image(systemName: "hexagon")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(color)
+                    .shadow(color: color, radius: 6)
+                Text(name)
+                    .font(.mono(12, .bold))
+                    .foregroundColor(Theme.cAccent)
+                    .shadow(color: Theme.cAccent.opacity(0.6), radius: 6)
+                    .lineLimit(1)
+            }
+            Text("·").font(.mono(12)).foregroundColor(mur47 ? Mur47.titleText.opacity(0.6) : Theme.cDim2)
             Text(title)
                 .font(.mono(12))
-                .foregroundColor(Theme.cHi)
+                .foregroundColor(mur47 ? Mur47.titleText : Theme.cHi)
+                .shadow(color: mur47 ? .black.opacity(0.6) : .clear, radius: 0, x: 0, y: 1)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 8)
