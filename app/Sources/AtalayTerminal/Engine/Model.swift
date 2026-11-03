@@ -79,7 +79,16 @@ final class OtherAI {
     var call: (id: String, p: Pending)?
     /// Its own record says it waits for the user (Antigravity's step WAITING: a permission).
     var waitsForUser = false
+    /// Antigravity's: the tool calls of its last reply, and whether its steps tell which of them runs (its database read).
+    var plan: AgyPlan?, stepsKnown = false
     var title = ""
+    /// Its subagents (Antigravity's child conversations), as Claude's are shown: the dashboard's workers, its drones. One
+    /// of them waiting for the user's permission makes the session wait.
+    var agents: [[String: Any]] = [], agentWaiting: Pending?
+    /// What each subagent's transcript said, read again when it changes, and what the session asked of it (its role, its
+    /// prompt): by conversation id.
+    var agentLogs: [String: AgyLog] = [:]
+    var agentRoles: [String: (role: String, prompt: String)] = [:]
     var prompt = "", model = "", ctx = 0, ctxMax = 0.0
 
     init(id: String, tool: String, pid: Int32) {
@@ -87,6 +96,19 @@ final class OtherAI {
         self.tool = tool
         self.pid = pid
     }
+}
+
+/// An Antigravity conversation's last reply's tool calls: its step, the calls in order (each runs as one of the steps right
+/// after it), when.
+struct AgyPlan {
+    var idx: Int, calls: [[String: Any]], ts: Double
+}
+
+/// What an Antigravity subagent's transcript says, read again when it changes.
+struct AgyLog {
+    var mtime = 0.0, firstTs = 0.0, lastTs = 0.0, prompt = ""
+    var plan: AgyPlan?
+    var tools = 0, errors = 0, web = 0, tokIn = 0, tokOut = 0, tokCache = 0
 }
 
 final class SubAgent: Track {

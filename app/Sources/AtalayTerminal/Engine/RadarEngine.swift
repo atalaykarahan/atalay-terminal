@@ -990,37 +990,23 @@ final class RadarEngine {
 
     /// Antigravity's own records (~/.gemini/antigravity-cli): its conversation in this folder, newest first, from
     /// conversation_summaries.db (its title and its run status: RUNNING or BUSY while it works, IDLE once it's the user's
-    /// turn), and that conversation's transcript.jsonl for what it's on: the tool call it waits on, a step WAITING for the
-    /// user's permission, the prompt and the context. Its screen redrawing while the user types is no work.
+    /// turn); that conversation's transcript.jsonl for the prompt, the context and its last reply's tool calls; and its own
+    /// database (conversations/<id>.db) for the steps not over yet, which the transcript only gets once they're done: the
+    /// tool call that runs, or one WAITING for the user's permission. Its subagents (the conversation's children) show as
+    /// Claude's do. Its screen redrawing while the user types is no work.
     private func readAntigravity(_ O: OtherAI, cwd: String) {
         let root = HOME + "/.gemini/antigravity-cli"
-        let sql = "SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 "
-            + "ORDER BY last_modified_time DESC LIMIT 40"
-        // Read-only while Antigravity has it open (its write-ahead log beside it); once it has closed it (the log merged in
-        // and gone) a read-only reader can't open it that way, and reads it as it stands.
-        var db: OpaquePointer?, stmt: OpaquePointer?
-        for mode in ["mode=ro", "immutable=1"] {
-            let url = "file:" + (root + "/conversation_summaries.db").addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)! + "?" + mode
-            if sqlite3_open_v2(url, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
-               sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK { break }
-            sqlite3_finalize(stmt)
-            stmt = nil
-            sqlite3_close(db)
-            db = nil
-        }
-        guard let db, let stmt else { return }
-        defer {
-            sqlite3_finalize(stmt)
-            sqlite3_close(db)
-        }
-        sqlite3_busy_timeout(db, 200)
+        guard let db = Self.agyOpen(root + "/conversation_summaries.db") else { return }
+        defer { sqlite3_close(db) }
         // Its newest conversation in this folder (a folder as a file:// address, as Antigravity writes it).
         let here = URL(fileURLWithPath: cwd).standardizedFileURL.path
-        let text = { (i: Int32) in sqlite3_column_text(stmt, i).map { String(cString: $0) } ?? "" }
         var row: (id: String, title: String, status: String)?
-        while row == nil, sqlite3_step(stmt) == SQLITE_ROW {
-            let uris = (try? JSONSerialization.jsonObject(with: Data(text(3).utf8)) as? [String]) ?? []
-            if uris.contains(where: { URL(string: $0)?.standardizedFileURL.path == here }) { row = (text(0), text(1), text(2)) }
+        Self.agyRows(db, "SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 "
+                     + "ORDER BY last_modified_time DESC LIMIT 40") { col in
+            let uris = (try? JSONSerialization.jsonObject(with: Data(col(3).utf8)) as? [String]) ?? []
+            guard uris.contains(where: { URL(string: $0)?.standardizedFileURL.path == here }) else { return true }
+            row = (col(0), col(1), col(2))
+            return false
         }
         guard let (id, title, status) = row else { return }
         let open = status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY") || status.hasSuffix("_CANCELING")
@@ -1029,12 +1015,32 @@ final class RadarEngine {
             O.title = title
             stateDirty = true
         }
-        if !open { O.call = nil; O.waitsForUser = false }
-        // Its transcript, read on from where it was (a new conversation: from the start).
+        readAgyTranscript(O, root: root, id: id)
+        // What runs, or waits for the user, right now: its steps not over yet.
+        let was = (O.call?.p.l, O.waitsForUser)
+        if !open {
+            O.call = nil
+            O.waitsForUser = false
+        } else if let steps = Self.agySteps(root, id) {
+            O.stepsKnown = true
+            O.waitsForUser = steps.waiting != nil
+            O.call = O.plan.flatMap { plan in (steps.waiting ?? steps.open).flatMap { Self.agyCall(plan, step: $0) } }.map { ("", $0) }
+        } else {
+            O.stepsKnown = false
+        }
+        if was.0 != O.call?.p.l || was.1 != O.waitsForUser { stateDirty = true }
+        readAntigravityAgents(O, db: db, parent: id, root: root)
+    }
+
+    /// The conversation's transcript, read on from where it was (a new conversation: from the start): the prompt, the
+    /// context, its last reply's tool calls (the last of them runs until a step is over, when its steps can't be read),
+    /// and the subagents it started.
+    private func readAgyTranscript(_ O: OtherAI, root: String, id: String) {
         let path = root + "/brain/" + id + "/.system_generated/logs/transcript.jsonl"
         if O.log != path {
             O.log = path
             O.logOffset = 0
+            O.plan = nil
         }
         guard let st = fileStat(path), st.size > O.logOffset, let fh = FileHandle(forReadingAtPath: path) else { return }
         defer { try? fh.close() }
@@ -1046,32 +1052,233 @@ final class RadarEngine {
         for line in data[data.startIndex...lastBreak].split(separator: 0x0A) {
             guard let j = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
             let kind = j["type"] as? String ?? "", step = j["status"] as? String ?? ""
-            let ts = parseISO(j["created_at"] as? String)
+            let ts = parseISO(j["created_at"] as? String), idx = int(j["step_index"])
             O.waitsForUser = step == "WAITING"
             switch kind {
             case "USER_INPUT":
-                let said = (j["content"] as? String ?? "").replacingOccurrences(of: #"</?USER_REQUEST>"#, with: "", options: .regularExpression)
-                O.prompt = clip(said.trimmingCharacters(in: .whitespacesAndNewlines), 200)
+                O.prompt = clip(Self.agyRequest(j["content"]), 200)
                 O.call = nil
+                O.plan = nil
             case "PLANNER_RESPONSE":
                 if let n = j["input_tokens"] as? NSNumber { O.ctx = n.intValue + int(j["cache_read_tokens"]) }
-                // A reply that calls tools: they run (or wait) next.
-                if let call = (j["tool_calls"] as? [[String: Any]])?.last {
-                    let name = call["name"] as? String ?? "tool"
-                    let args = call["args"] as? [String: Any] ?? [:]
-                    let line = (args["CommandLine"] ?? args["Command"] ?? args["Prompt"] ?? args["AbsolutePath"]).map { "\($0)" } ?? name
-                    let shell = name == "run_command"
-                    O.call = ("", Pending(n: shell ? "Bash" : name, c: shell ? "bash" : "plan",
-                                          l: clip(line.trimmingCharacters(in: CharacterSet(charactersIn: "\"")), 120), t: ts))
-                } else {
-                    O.call = nil
-                }
+                // A reply that calls tools: they run (or wait) next, a step each.
+                let calls = j["tool_calls"] as? [[String: Any]] ?? []
+                O.plan = calls.isEmpty ? nil : AgyPlan(idx: idx, calls: calls, ts: ts)
+                O.call = calls.last.map { ("", Self.agyTool($0, at: ts)) }
             default:
                 // A tool's own step: done, it no longer waits; still running or waiting, it does.
                 if step == "DONE" || step == "ERROR" || step == "CANCELED" { O.call = nil }
+                // One that started subagents says which, in the order the call asked for them (their roles, prompts).
+                guard let plan = O.plan, let call = Self.agyPlanned(plan, step: idx), call["name"] as? String == "invoke_subagent",
+                      let text = j["content"] as? String else { break }
+                let args = call["args"] as? [String: Any] ?? [:]
+                let asked = Self.agyValue(args["Subagents"]) as? [[String: Any]] ?? [args]
+                let children = text.components(separatedBy: "\"conversationId\"").dropFirst()
+                    .compactMap { $0.split(separator: "\"", maxSplits: 2).dropFirst().first.map(String.init) }
+                for (k, child) in children.enumerated() {
+                    let spec = asked[min(k, asked.count - 1)]
+                    O.agentRoles[child] = (Self.agyArg(spec["Role"]) ?? "", Self.agyArg(spec["Prompt"]) ?? "")
+                }
             }
         }
         stateDirty = true
+    }
+
+    /// Antigravity's subagents: its conversation's children in conversation_summaries.db, each running or done, with its
+    /// role, what it was asked and the tool it's on (its steps; its transcript, read again when it changes), as Claude's
+    /// subagents are shown. One waiting for the user's permission is the session's wait.
+    private func readAntigravityAgents(_ O: OtherAI, db: OpaquePointer, parent: String, root: String) {
+        let now = nowMs()
+        var views: [[String: Any]] = [], seen = Set<String>(), waiting: Pending?
+        Self.agyRows(db, "SELECT conversation_id, title, status, agent_name, killed FROM conversation_summaries "
+                     + "WHERE parent_conversation_id = ? ORDER BY last_modified_time DESC LIMIT 12", [parent]) { col in
+            let id = col(0), title = col(1), status = col(2), agent = col(3)
+            seen.insert(id)
+            let running = (status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY")) && col(4) != "1"
+            let path = root + "/brain/" + id + "/.system_generated/logs/transcript.jsonl"
+            let mtime = fileStat(path)?.mtime ?? 0
+            var log = O.agentLogs[id] ?? AgyLog()
+            if mtime != log.mtime {
+                log = Self.agyLog(path, mtime: mtime)
+                O.agentLogs[id] = log
+                stateDirty = true
+            }
+            // Done more than 15 minutes ago: off the list, as Claude's.
+            guard running || now - mtime < 15 * Self.MIN else { return true }
+            var call: Pending?, waits = false
+            if running, let plan = log.plan {
+                if let steps = Self.agySteps(root, id) {
+                    waits = steps.waiting != nil
+                    call = (steps.waiting ?? steps.open).flatMap { Self.agyCall(plan, step: $0) }
+                } else {
+                    call = plan.calls.last.map { Self.agyTool($0, at: plan.ts) }
+                }
+            }
+            if waits, waiting == nil { waiting = call ?? Pending(n: "Agent", c: "agent", l: "a step", t: now) }
+            let asked = O.agentRoles[id]
+            let firstLine = (asked?.prompt.isEmpty == false ? asked!.prompt : log.prompt).split(whereSeparator: \.isNewline).first.map(String.init)
+            let desc = [asked?.role, title, firstLine, agent].compactMap { $0 }.first { !$0.isEmpty } ?? "subagent"
+            var v: [String: Any] = [
+                "id": id, "sid": O.id, "desc": clip(desc, 90), "type": agent == "self" ? "" : agent, "model": O.model, "bg": true,
+                "running": running, "firstTs": log.firstTs > 0 ? log.firstTs : mtime, "lastTs": max(log.lastTs, mtime),
+                "tools": log.tools, "errors": log.errors, "web": log.web, "cost": 0.0,
+                "tok": ["in": log.tokIn, "out": log.tokOut, "cr": log.tokCache, "cw": 0], "pending": call.map { [$0.dict] } ?? [[String: Any]](),
+                "loop": false,
+            ]
+            if let call { v["last"] = call.dict }
+            views.append(v)
+            return true
+        }
+        O.agentLogs = O.agentLogs.filter { seen.contains($0.key) }
+        let key = { (list: [[String: Any]]) in list.map { "\($0["id"] ?? "")\($0["running"] ?? "")\(($0["last"] as? [String: Any])?["l"] ?? "")" } }
+        if key(views) != key(O.agents) || waiting?.l != O.agentWaiting?.l { stateDirty = true }
+        O.agents = views
+        O.agentWaiting = waiting
+    }
+
+    /// A subagent's whole transcript (it's short): when it started and last moved, what it was asked, its last reply's
+    /// tool calls, and its counts (tools, errors, web, tokens), as Claude's subagents have them.
+    private static func agyLog(_ path: String, mtime: Double) -> AgyLog {
+        var log = AgyLog(mtime: mtime)
+        guard let data = FileManager.default.contents(atPath: path) else { return log }
+        for line in data.split(separator: 0x0A) {
+            guard let j = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+            let ts = parseISO(j["created_at"] as? String)
+            if log.firstTs == 0 { log.firstTs = ts }
+            log.lastTs = max(log.lastTs, ts)
+            if j["status"] as? String == "ERROR" { log.errors += 1 }
+            switch j["type"] as? String {
+            case "SYSTEM_MESSAGE" where log.prompt.isEmpty:
+                // The session's message to it: what it was asked.
+                let text = j["content"] as? String ?? ""
+                if let r = text.range(of: " content=") {
+                    log.prompt = String(text[r.upperBound...]).replacingOccurrences(of: "</SYSTEM_MESSAGE>", with: "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            case "USER_INPUT" where log.prompt.isEmpty:
+                log.prompt = agyRequest(j["content"])
+            case "PLANNER_RESPONSE":
+                let calls = j["tool_calls"] as? [[String: Any]] ?? []
+                log.plan = calls.isEmpty ? nil : AgyPlan(idx: int(j["step_index"]), calls: calls, ts: ts)
+                log.tools += calls.count
+                log.web += calls.filter { ["web", "browser"].contains(agyTool($0, at: ts).c) }.count
+                log.tokIn += int(j["input_tokens"])
+                log.tokOut += int(j["output_tokens"])
+                log.tokCache += int(j["cache_read_tokens"])
+            default: break
+            }
+        }
+        return log
+    }
+
+    /// A conversation's steps not over yet, from its own database: the first that runs or waits to (a tool's), and the
+    /// first WAITING for the user's permission. Nil: it can't be read.
+    private static func agySteps(_ root: String, _ id: String) -> (open: Int?, waiting: Int?)? {
+        guard let db = agyOpen(root + "/conversations/" + id + ".db") else { return nil }
+        defer { sqlite3_close(db) }
+        // Its step statuses: 1 pending, 2 running, 9 waiting, 11 queued (3 done; 8 the model still writing its reply).
+        var open: Int?, waiting: Int?, read = false
+        agyRows(db, "SELECT idx, status FROM steps WHERE status IN (1, 2, 9, 11) ORDER BY idx") { col in
+            let idx = Int(col(0)) ?? 0
+            if open == nil { open = idx }
+            if waiting == nil, col(1) == "9" { waiting = idx }
+            return true
+        } done: { read = $0 }
+        return read ? (open, waiting) : nil
+    }
+
+    /// The tool call a step runs: the reply's calls run in order, a step each, right after it.
+    private static func agyPlanned(_ plan: AgyPlan, step: Int) -> [String: Any]? {
+        let k = step - plan.idx - 1
+        return plan.calls.indices.contains(k) ? plan.calls[k] : nil
+    }
+
+    private static func agyCall(_ plan: AgyPlan, step: Int) -> Pending? {
+        agyPlanned(plan, step: step).map { agyTool($0, at: plan.ts) }
+    }
+
+    /// A read-only connection to one of Antigravity's databases: while it has it open (its write-ahead log beside it), as
+    /// any reader; otherwise (the log merged in and gone; it opens its conversations' only to write) it reads as it stands.
+    private static func agyOpen(_ path: String) -> OpaquePointer? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let modes = FileManager.default.fileExists(atPath: path + "-wal") ? ["mode=ro", "immutable=1"] : ["immutable=1"]
+        for mode in modes {
+            var db: OpaquePointer?
+            let url = "file:" + path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)! + "?" + mode
+            if sqlite3_open_v2(url, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK {
+                sqlite3_busy_timeout(db, 200)
+                if sqlite3_exec(db, "SELECT 1 FROM sqlite_master LIMIT 1", nil, nil, nil) == SQLITE_OK { return db }
+            }
+            sqlite3_close(db)
+        }
+        return nil
+    }
+
+    /// Each row of a query (its columns as text) until `row` says stop; `done` hears whether it read.
+    private static func agyRows(_ db: OpaquePointer, _ sql: String, _ args: [String] = [], _ row: ((Int32) -> String) -> Bool,
+                                done: ((Bool) -> Void)? = nil) {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            done?(false)
+            return
+        }
+        defer { sqlite3_finalize(stmt) }
+        for (i, arg) in args.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), arg, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        let col = { (i: Int32) in sqlite3_column_text(stmt, i).map { String(cString: $0) } ?? "" }
+        var rc = sqlite3_step(stmt)
+        while rc == SQLITE_ROW, row(col) { rc = sqlite3_step(stmt) }
+        done?(rc == SQLITE_ROW || rc == SQLITE_DONE)
+    }
+
+    /// What the user asked in an Antigravity step: the request, without what Antigravity adds to it (the time…).
+    private static func agyRequest(_ v: Any?) -> String {
+        let s = v as? String ?? ""
+        if let a = s.range(of: "<USER_REQUEST>"), let b = s.range(of: "</USER_REQUEST>", range: a.upperBound..<s.endIndex) {
+            return s[a.upperBound..<b.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// An Antigravity tool call's argument as it was meant: its transcript writes each as JSON (a string in quotes, a list…).
+    private static func agyValue(_ v: Any?) -> Any? {
+        guard let s = v as? String, let data = s.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) else { return v }
+        return decoded
+    }
+
+    private static func agyArg(_ v: Any?) -> String? {
+        switch agyValue(v) {
+        case let s as String: return s
+        case let list as [Any]: return list.compactMap { agyArg($0) }.joined(separator: ", ")
+        case nil, is NSNull: return nil
+        case let other?: return "\(other)"
+        }
+    }
+
+    /// An Antigravity tool call as Claude's tools are shown: its kind (a shell, the web, a file…) and what it's on.
+    private static func agyTool(_ call: [String: Any], at: Double) -> Pending {
+        let name = call["name"] as? String ?? "tool"
+        let args = call["args"] as? [String: Any] ?? [:]
+        let what = ["CommandLine", "Command", "command", "Query", "query", "queries", "Url", "url", "Uri", "AbsolutePath", "TargetFile",
+                    "File", "path", "SearchPath", "DirectoryPath", "Role", "ServerName", "toolSummary", "Prompt"]
+            .lazy.compactMap { agyArg(args[$0]) }.first { !$0.isEmpty } ?? name
+        let (n, c): (String, String)
+        switch name {
+        case "run_command", "read_terminal", "send_command_input", "command_status": (n, c) = ("Bash", "bash")
+        case "search_web": (n, c) = ("WebSearch", "web")
+        case "read_url_content", "view_content_chunk": (n, c) = ("WebFetch", "web")
+        case let x where x.hasPrefix("browser_") || x.hasSuffix("_browser_url") || x.hasSuffix("_browser_page") || x == "capture_browser_screenshot":
+            (n, c) = ("Browser", "browser")
+        case "view_file", "view_file_outline", "view_code_item", "list_dir": (n, c) = ("Read", "read")
+        case "grep_search", "find_by_name", "codebase_search": (n, c) = ("Grep", "search")
+        case let x where x.contains("write") || x.contains("replace") || x.contains("edit"): (n, c) = ("Edit", "edit")
+        case "invoke_subagent": (n, c) = ("Agent", "agent")
+        case let x where x.hasPrefix("mcp"): (n, c) = ("MCP", "mcp")
+        default: (n, c) = (name, "plan")
+        }
+        return Pending(n: n, c: c, l: clip(what, 120), t: at)
     }
 
     /// A Codex tool call as a pending tool: its shell command, or the files it patches.
@@ -1258,15 +1465,19 @@ final class RadarEngine {
             // What it runs: a shell of its own right now, else the tool call its log has it on.
             let running = O.command.map { Pending(n: "Bash", c: "bash", l: $0, t: O.commandSince) } ?? O.call?.p
             var status = "ended", waiting: String?
+            // Its subagents end with it.
+            let agents = live ? O.agents : O.agents.map { var a = $0; a["running"] = false; a["pending"] = [[String: Any]](); return a }
+            let agentsRunning = agents.filter { $0["running"] as? Bool == true }.count
             if live, let open = O.turnOpen {
-                // Its log has the turn: over is the user's turn; a step waiting for the user, or a tool call that runs
-                // nothing and burns nothing for a few seconds, waits for the user's approval.
-                if !open {
-                    status = "idle"
-                } else if O.waitsForUser {
+                // Its records have the turn: over is the user's turn, unless its subagents still work (as Claude's
+                // background ones); a step waiting for the user's permission, its own or a subagent's, waits; without its
+                // steps to tell, a tool call that runs nothing and burns nothing for a few seconds does.
+                if O.waitsForUser || O.agentWaiting != nil {
                     status = "waiting"
-                    waiting = "approval: " + (O.call?.p.l ?? "a step")
-                } else if O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 {
+                    waiting = "approval: " + ((O.waitsForUser ? O.call?.p : O.agentWaiting)?.l ?? "a step")
+                } else if !open {
+                    status = agentsRunning > 0 ? "busy" : "idle"
+                } else if !O.stepsKnown, O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 {
                     status = "waiting"
                     waiting = "approval: " + call.p.l
                 } else {
@@ -1274,6 +1485,10 @@ final class RadarEngine {
                 }
             } else if live {
                 status = O.busy || O.command != nil ? "busy" : "idle"
+            }
+            runningAgents += agentsRunning
+            for p in (running.map { [$0.dict] } ?? []) + agents.flatMap({ $0["pending"] as? [[String: Any]] ?? [] }) {
+                pendingByCat[p["c"] as? String ?? "plan", default: 0] += 1
             }
             let host: String? = O.hostTab != nil ? "app" : (live ? "term" : nil)
             let folder = (O.cwd as NSString).lastPathComponent
@@ -1284,7 +1499,7 @@ final class RadarEngine {
                 "firstTs": O.firstTs, "lastTs": O.lastTs, "ctx": O.ctx, "ctxMax": O.ctxMax, "turnMs": 0.0,
                 "tok": ["in": 0, "out": 0, "cr": 0, "cw": 0], "cost": 0.0, "tools": 0, "errors": 0, "web": 0, "prompts": 0,
                 "byCat": [String: Int](), "pending": running.map { [$0.dict] } ?? [[String: Any]](),
-                "spark": [Int](repeating: 0, count: 30), "flags": [String](), "agents": [[String: Any]](), "agentsRunning": 0,
+                "spark": [Int](repeating: 0, count: 30), "flags": [String](), "agents": agents, "agentsRunning": agentsRunning,
             ]
             if let running { item["last"] = running.dict }
             item["waitingFor"] = orNull(waiting)
@@ -1298,6 +1513,7 @@ final class RadarEngine {
             brief.model = O.model.isEmpty ? O.tool : O.model
             brief.ctx = O.ctx
             brief.ctxMax = O.ctxMax
+            brief.agentsRunning = agentsRunning
             brief.statusSince = live ? O.statusSince : O.endedAt
             if let running {
                 brief.actionName = running.n

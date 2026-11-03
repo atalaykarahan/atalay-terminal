@@ -17,6 +17,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Orbit: Codex shows as working while its own program works (npm's Codex launcher only waits on it), and End Session on another AI tool outside the app ends all it started, as on Windows
 - Orbit: the other AI tools show what they do: the command they have a shell run, and for Codex its turn from its own log (working, waiting for your approval, your turn), what you asked it and how full its context is; a click on one running outside the app brings its terminal forward (iTerm2's session or Terminal's tab; on Windows its window)
 - Orbit: Antigravity's planet says what it does from Antigravity's own records: working only once you've sent it something (typing no longer counts), waiting for your approval, your turn, with its conversation's title and your message
+- Orbit: Antigravity's subagents show as Claude's do, as workers of its planet with their role and the tool each is on, and the planet works while any of them does; one waiting for your approval (its command) makes the planet wait. Its web and browser tools show as web and browser, its file reads, searches and edits as theirs
 - Leaderboard: THIS WEEK counts from Monday (each player's own), as the weekly goal does, not the last 7 days; the time beside a name too
 
 ## 0.15.3

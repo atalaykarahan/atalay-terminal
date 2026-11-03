@@ -386,13 +386,37 @@ try {
   sqlite = require('node:sqlite');
 } catch {}
 
-// Antigravity's newest conversation in `cwd` (its folders are file:// addresses, decoded to compare): read-only while
-// Antigravity has the database open (its write-ahead log beside it), else as it stands (a read-only reader can't open it
-// the usual way once the log is merged in and gone).
-function agyConversation(root, cwd) {
-  const file = path.join(root, 'conversation_summaries.db');
+// A read-only connection to one of Antigravity's databases: while it has it open (its write-ahead log beside it), as any
+// reader; otherwise (the log merged in and gone; it opens its conversations' only to write) as it stands.
+function agyOpen(file) {
   if (!sqlite || !fs.existsSync(file)) return null;
-  const { fileURLToPath, pathToFileURL } = require('url');
+  const { pathToFileURL } = require('url');
+  const asItStands = () => new sqlite.DatabaseSync(new URL(`${pathToFileURL(file).href}?immutable=1`), { readOnly: true });
+  const ways = fs.existsSync(`${file}-wal`) ? [() => new sqlite.DatabaseSync(file, { readOnly: true }), asItStands] : [asItStands];
+  for (const open of ways) {
+    let db = null;
+    try {
+      db = open();
+      db.exec('SELECT 1 FROM sqlite_master LIMIT 1');
+      return db;
+    } catch {
+      try {
+        if (db) db.close();
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function agyClose(db) {
+  try {
+    db.close();
+  } catch {}
+}
+
+// Antigravity's newest conversation in `cwd` (its folders are file:// addresses, decoded to compare).
+function agyConversation(db, cwd) {
+  const { fileURLToPath } = require('url');
   const same = (uri) => {
     try {
       const p = path.resolve(fileURLToPath(uri));
@@ -401,27 +425,138 @@ function agyConversation(root, cwd) {
       return false;
     }
   };
-  for (const open of [() => new sqlite.DatabaseSync(file, { readOnly: true }), () => new sqlite.DatabaseSync(new URL(`${pathToFileURL(file).href}?immutable=1`), { readOnly: true })]) {
-    let db = null;
+  let rows = [];
+  try {
+    rows = db.prepare('SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 ORDER BY last_modified_time DESC LIMIT 40').all();
+  } catch {}
+  for (const r of rows) {
+    let uris = [];
     try {
-      db = open();
-      const rows = db.prepare('SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 ORDER BY last_modified_time DESC LIMIT 40').all();
-      for (const r of rows) {
-        let uris = [];
-        try {
-          uris = JSON.parse(r.workspace_uris);
-        } catch {}
-        if (Array.isArray(uris) && uris.some(same)) return r;
-      }
-      return null;
-    } catch {
-    } finally {
-      try {
-        if (db) db.close();
-      } catch {}
-    }
+      uris = JSON.parse(r.workspace_uris);
+    } catch {}
+    if (Array.isArray(uris) && uris.some(same)) return r;
   }
   return null;
+}
+
+// A conversation's steps not over yet, from its own database (the transcript only gets a step once it's done): the
+// first that runs or waits to (a tool's), and the first WAITING for the user's permission. Null: it can't be read.
+// Its step statuses: 1 pending, 2 running, 9 waiting, 11 queued (3 done; 8 the model still writing its reply).
+function agySteps(root, id) {
+  const db = agyOpen(path.join(root, 'conversations', `${id}.db`));
+  if (!db) return null;
+  try {
+    const rows = db.prepare('SELECT idx, status FROM steps WHERE status IN (1, 2, 9, 11) ORDER BY idx').all();
+    const waiting = rows.find((r) => Number(r.status) === 9);
+    return { open: rows.length ? Number(rows[0].idx) : null, waiting: waiting ? Number(waiting.idx) : null };
+  } catch {
+    return null;
+  } finally {
+    agyClose(db);
+  }
+}
+
+// The tool call a step runs: a reply's calls run in order, a step each, right after it.
+function agyPlanned(plan, step) {
+  const k = step - plan.idx - 1;
+  return k >= 0 && k < plan.calls.length ? plan.calls[k] : null;
+}
+
+function agyCall(plan, step) {
+  const call = step == null ? null : agyPlanned(plan, step);
+  return call ? agyTool(call, plan.ts) : null;
+}
+
+// What the user asked in an Antigravity step: the request, without what Antigravity adds to it (the time…).
+function agyRequest(content) {
+  const s = String(content || '');
+  const m = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(s);
+  return (m ? m[1] : s).trim();
+}
+
+// An Antigravity tool call's argument as it was meant: its transcript writes each as JSON (a string in quotes, a list…).
+function agyValue(v) {
+  if (typeof v !== 'string') return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  }
+}
+
+function agyArg(v) {
+  const d = agyValue(v);
+  if (d == null) return null;
+  if (Array.isArray(d)) return d.map(agyArg).filter((x) => x != null).join(', ');
+  return typeof d === 'object' ? JSON.stringify(d) : String(d);
+}
+
+const AGY_LABEL_KEYS = ['CommandLine', 'Command', 'command', 'Query', 'query', 'queries', 'Url', 'url', 'Uri', 'AbsolutePath', 'TargetFile', 'File', 'path', 'SearchPath', 'DirectoryPath', 'Role', 'ServerName', 'toolSummary', 'Prompt'];
+
+// An Antigravity tool call as Claude's tools are shown: its kind (a shell, the web, a file…) and what it's on.
+function agyTool(call, at) {
+  const name = String(call.name || 'tool');
+  const args = call.args || {};
+  let what = name;
+  for (const k of AGY_LABEL_KEYS) {
+    const v = agyArg(args[k]);
+    if (v) {
+      what = v;
+      break;
+    }
+  }
+  let n = name, c = 'plan';
+  if (['run_command', 'read_terminal', 'send_command_input', 'command_status'].includes(name)) [n, c] = ['Bash', 'bash'];
+  else if (name === 'search_web') [n, c] = ['WebSearch', 'web'];
+  else if (name === 'read_url_content' || name === 'view_content_chunk') [n, c] = ['WebFetch', 'web'];
+  else if (name.startsWith('browser_') || name.endsWith('_browser_url') || name.endsWith('_browser_page') || name === 'capture_browser_screenshot') [n, c] = ['Browser', 'browser'];
+  else if (['view_file', 'view_file_outline', 'view_code_item', 'list_dir'].includes(name)) [n, c] = ['Read', 'read'];
+  else if (['grep_search', 'find_by_name', 'codebase_search'].includes(name)) [n, c] = ['Grep', 'search'];
+  else if (/write|replace|edit/.test(name)) [n, c] = ['Edit', 'edit'];
+  else if (name === 'invoke_subagent') [n, c] = ['Agent', 'agent'];
+  else if (name.startsWith('mcp')) [n, c] = ['MCP', 'mcp'];
+  return { n, c, l: clip(what, 120), t: at };
+}
+
+// A subagent's whole transcript (it's short): when it started and last moved, what it was asked, its last reply's tool
+// calls, and its counts (tools, errors, web, tokens), as Claude's subagents have them.
+function agyLog(file, mtime) {
+  const log = { mtime, firstTs: 0, lastTs: 0, prompt: '', plan: null, tools: 0, errors: 0, web: 0, tokIn: 0, tokOut: 0, tokCache: 0 };
+  let text = '';
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return log;
+  }
+  for (const line of text.split('\n')) {
+    let j;
+    try {
+      j = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const ts = parseISO(j.created_at) || 0;
+    if (!log.firstTs) log.firstTs = ts;
+    log.lastTs = Math.max(log.lastTs, ts);
+    if (j.status === 'ERROR') log.errors++;
+    if (j.type === 'SYSTEM_MESSAGE' && !log.prompt) {
+      // The session's message to it: what it was asked.
+      const s = String(j.content || '');
+      const at = s.indexOf(' content=');
+      if (at >= 0) log.prompt = s.slice(at + 9).replace('</SYSTEM_MESSAGE>', '').trim();
+    } else if (j.type === 'USER_INPUT' && !log.prompt) {
+      log.prompt = agyRequest(j.content);
+    } else if (j.type === 'PLANNER_RESPONSE') {
+      const calls = Array.isArray(j.tool_calls) ? j.tool_calls : [];
+      log.plan = calls.length ? { idx: Number(j.step_index) || 0, calls, ts } : null;
+      log.tools += calls.length;
+      log.web += calls.filter((call) => ['web', 'browser'].includes(agyTool(call, ts).c)).length;
+      log.tokIn += Number(j.input_tokens) || 0;
+      log.tokOut += Number(j.output_tokens) || 0;
+      log.tokCache += Number(j.cache_read_tokens) || 0;
+    }
+  }
+  return log;
 }
 
 // The newest Codex log of the last week begun in `cwd` and written since `since` (ms).
@@ -2132,14 +2267,19 @@ class RadarEngine {
     this.publishState();
   }
 
-  // Its status: ended, or what its log says (Codex: over is the user's turn; a tool call that runs nothing and burns
-  // nothing for a few seconds waits for the user's approval), else busy while it works the CPU or runs a command.
+  // Its status: ended, or what its records say (over is the user's turn, unless its subagents still work, as Claude's
+  // background ones; a step waiting for the user's permission, its own or a subagent's, waits; without Antigravity's
+  // steps to tell, a tool call that runs nothing and burns nothing for a few seconds does), else busy while it works the
+  // CPU or runs a command.
   otherStatus(O, now = Date.now()) {
     if (O.endedAt > 0) return { status: 'ended', waiting: null };
-    if (O.turnOpen === false) return { status: 'idle', waiting: null };
-    if (O.turnOpen === true && O.waitsForUser) return { status: 'waiting', waiting: `approval: ${O.call ? O.call.p.l : 'a step'}` };
+    if (O.turnOpen != null && (O.waitsForUser || O.agentWaiting)) {
+      const p = O.waitsForUser ? O.call && O.call.p : O.agentWaiting;
+      return { status: 'waiting', waiting: `approval: ${p ? p.l : 'a step'}` };
+    }
+    if (O.turnOpen === false) return { status: (O.agents || []).some((a) => a.running) ? 'busy' : 'idle', waiting: null };
     if (O.turnOpen === true) {
-      if (!O.command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
+      if (!O.stepsKnown && !O.command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
       return { status: 'busy', waiting: null };
     }
     return { status: O.busy || O.command ? 'busy' : 'idle', waiting: null };
@@ -2152,46 +2292,146 @@ class RadarEngine {
 
   // Antigravity's own records (~/.gemini/antigravity-cli), as the Mac engine reads them: its newest conversation in this
   // folder from conversation_summaries.db (its title and run status: RUNNING or BUSY while it works, IDLE once it's the
-  // user's turn), and that conversation's transcript.jsonl for the tool call it's on, a step WAITING for the user's
-  // permission, the prompt and the context. Its screen redrawing while the user types is no work.
+  // user's turn); that conversation's transcript.jsonl for the prompt, the context and its last reply's tool calls; and
+  // its own database (conversations\<id>.db) for the steps not over yet, which the transcript only gets once they're
+  // done: the tool call that runs, or one WAITING for the user's permission. Its subagents (the conversation's children)
+  // show as Claude's do. Its screen redrawing while the user types is no work.
   readAntigravity(O, cwd, now) {
     const root = path.join(HOME, '.gemini', 'antigravity-cli');
-    const row = agyConversation(root, cwd);
-    if (!row) return;
-    const open = /_(RUNNING|BUSY|CANCELING)$/.test(row.status || '');
-    if (O.turnOpen !== open || O.title !== row.title) {
-      O.turnOpen = open;
-      O.title = row.title || '';
-      this.stateDirty = true;
+    const db = agyOpen(path.join(root, 'conversation_summaries.db'));
+    if (!db) return;
+    try {
+      const row = agyConversation(db, cwd);
+      if (!row) return;
+      const id = row.conversation_id;
+      const open = /_(RUNNING|BUSY|CANCELING)$/.test(row.status || '');
+      if (O.turnOpen !== open || O.title !== row.title) {
+        O.turnOpen = open;
+        O.title = row.title || '';
+        this.stateDirty = true;
+      }
+      this.readAgyTranscript(O, root, id, now);
+      // What runs, or waits for the user, right now: its steps not over yet.
+      const was = `${O.call ? O.call.p.l : ''}|${O.waitsForUser}`;
+      if (!open) {
+        O.call = null;
+        O.waitsForUser = false;
+      } else {
+        const steps = agySteps(root, id);
+        O.stepsKnown = !!steps;
+        if (steps) {
+          O.waitsForUser = steps.waiting != null;
+          const p = O.plan ? agyCall(O.plan, steps.waiting ?? steps.open) : null;
+          O.call = p ? { id: '', p } : null;
+        }
+      }
+      if (was !== `${O.call ? O.call.p.l : ''}|${O.waitsForUser}`) this.stateDirty = true;
+      this.readAntigravityAgents(O, db, id, root, now);
+    } finally {
+      agyClose(db);
     }
-    if (!open) {
-      O.call = null;
-      O.waitsForUser = false;
-    }
-    const file = path.join(root, 'brain', row.conversation_id, '.system_generated', 'logs', 'transcript.jsonl');
+  }
+
+  // The conversation's transcript, read on from where it was (a new conversation: from the start): the prompt, the
+  // context, its last reply's tool calls (the last of them runs until a step is over, when its steps can't be read), and
+  // the subagents it started.
+  readAgyTranscript(O, root, id, now) {
+    const file = path.join(root, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
     if (O.log !== file) {
       O.log = file;
       O.logOffset = 0;
+      O.plan = null;
     }
-    for (const j of readNewLines(O)) {
+    const lines = readNewLines(O);
+    for (const j of lines) {
       const step = j.status || '';
       const ts = parseISO(j.created_at) || now;
+      const idx = Number(j.step_index) || 0;
       O.waitsForUser = step === 'WAITING';
       if (j.type === 'USER_INPUT') {
-        O.prompt = clip(String(j.content || '').replace(/<\/?USER_REQUEST>/g, '').trim(), 200);
+        O.prompt = clip(agyRequest(j.content), 200);
         O.call = null;
+        O.plan = null;
       } else if (j.type === 'PLANNER_RESPONSE') {
         if (j.input_tokens != null) O.ctx = (Number(j.input_tokens) || 0) + (Number(j.cache_read_tokens) || 0);
-        const call = Array.isArray(j.tool_calls) && j.tool_calls[j.tool_calls.length - 1];
-        if (call) {
-          const args = call.args || {};
-          const line = String(args.CommandLine ?? args.Command ?? args.Prompt ?? args.AbsolutePath ?? call.name ?? 'tool').replace(/^"|"$/g, '');
-          const shell = call.name === 'run_command';
-          O.call = { id: '', p: { n: shell ? 'Bash' : call.name || 'tool', c: shell ? 'bash' : 'plan', l: clip(line, 120), t: ts } };
-        } else O.call = null;
-      } else if (['DONE', 'ERROR', 'CANCELED'].includes(step)) O.call = null;
+        // A reply that calls tools: they run (or wait) next, a step each.
+        const calls = Array.isArray(j.tool_calls) ? j.tool_calls : [];
+        O.plan = calls.length ? { idx, calls, ts } : null;
+        O.call = calls.length ? { id: '', p: agyTool(calls[calls.length - 1], ts) } : null;
+      } else {
+        // A tool's own step: done, it no longer waits; still running or waiting, it does.
+        if (['DONE', 'ERROR', 'CANCELED'].includes(step)) O.call = null;
+        // One that started subagents says which, in the order the call asked for them (their roles, prompts).
+        const call = O.plan && agyPlanned(O.plan, idx);
+        if (!call || call.name !== 'invoke_subagent' || typeof j.content !== 'string') continue;
+        const args = call.args || {};
+        const listed = agyValue(args.Subagents);
+        const asked = Array.isArray(listed) && listed.length ? listed : [args];
+        const children = [...j.content.matchAll(/"conversationId"\s*:\s*"([^"]+)"/g)].map((m) => m[1]);
+        O.agentRoles = O.agentRoles || new Map();
+        children.forEach((child, k) => {
+          const spec = asked[Math.min(k, asked.length - 1)] || {};
+          O.agentRoles.set(child, { role: agyArg(spec.Role) || '', prompt: agyArg(spec.Prompt) || '' });
+        });
+      }
     }
-    this.stateDirty = true;
+    if (lines.length) this.stateDirty = true;
+  }
+
+  // Antigravity's subagents: its conversation's children in conversation_summaries.db, each running or done, with its
+  // role, what it was asked and the tool it's on (its steps; its transcript, read again when it changes), as Claude's
+  // subagents are shown. One waiting for the user's permission is the session's wait.
+  readAntigravityAgents(O, db, parent, root, now) {
+    let rows = [];
+    try {
+      rows = db.prepare('SELECT conversation_id, title, status, agent_name, killed FROM conversation_summaries WHERE parent_conversation_id = ? ORDER BY last_modified_time DESC LIMIT 12').all(parent);
+    } catch {
+      return;
+    }
+    O.agentLogs = O.agentLogs || new Map();
+    const views = [], seen = new Set();
+    let waiting = null;
+    for (const r of rows) {
+      const id = r.conversation_id, title = r.title || '', agent = r.agent_name || '';
+      seen.add(id);
+      const running = /_(RUNNING|BUSY)$/.test(r.status || '') && Number(r.killed) !== 1;
+      const file = path.join(root, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
+      let mtime = 0;
+      try {
+        mtime = fs.statSync(file).mtimeMs;
+      } catch {}
+      let log = O.agentLogs.get(id);
+      if (!log || log.mtime !== mtime) {
+        log = agyLog(file, mtime);
+        O.agentLogs.set(id, log);
+        this.stateDirty = true;
+      }
+      // Done more than 15 minutes ago: off the list, as Claude's.
+      if (!running && now - mtime >= 15 * MIN) continue;
+      let call = null, waits = false;
+      if (running && log.plan) {
+        const steps = agySteps(root, id);
+        if (steps) {
+          waits = steps.waiting != null;
+          call = agyCall(log.plan, steps.waiting ?? steps.open);
+        } else call = agyTool(log.plan.calls[log.plan.calls.length - 1], log.plan.ts);
+      }
+      if (waits && !waiting) waiting = call || { n: 'Agent', c: 'agent', l: 'a step', t: now };
+      const asked = O.agentRoles && O.agentRoles.get(id);
+      const firstLine = ((asked && asked.prompt) || log.prompt).split(/\r?\n/)[0];
+      const desc = [asked && asked.role, title, firstLine, agent].find((x) => x) || 'subagent';
+      views.push({
+        id, sid: O.id, desc: clip(desc, 90), type: agent === 'self' ? '' : agent, model: O.model || '', bg: true, running,
+        firstTs: log.firstTs || mtime, lastTs: Math.max(log.lastTs, mtime), tools: log.tools, errors: log.errors, web: log.web, cost: 0,
+        tok: { in: log.tokIn, out: log.tokOut, cr: log.tokCache, cw: 0 }, pending: call ? [call] : [], loop: false,
+        ...(call && { last: call }),
+      });
+    }
+    for (const id of [...O.agentLogs.keys()]) if (!seen.has(id)) O.agentLogs.delete(id);
+    const key = (list) => (list || []).map((a) => `${a.id}${a.running}${a.last ? a.last.l : ''}`).join('|');
+    if (key(views) !== key(O.agents) || (waiting && waiting.l) !== (O.agentWaiting && O.agentWaiting.l)) this.stateDirty = true;
+    O.agents = views;
+    O.agentWaiting = waiting;
   }
 
   // Codex's own log (CODEX_HOME\sessions\<date>\rollout-….jsonl), as the Mac engine reads it: its turn open or over,
@@ -2408,12 +2648,17 @@ class RadarEngine {
       const live = O.endedAt === 0;
       const { status, waiting } = this.otherStatus(O, now);
       const running = this.otherRunning(O);
+      // Its subagents end with it.
+      const agents = (O.agents || []).map((a) => (live ? a : { ...a, running: false, pending: [] }));
+      const nRun = agents.filter((a) => a.running).length;
+      runningAgents += nRun;
+      for (const p of [...(running ? [running] : []), ...agents.flatMap((a) => a.pending)]) pendingByCat[p.c ?? 'plan'] = (pendingByCat[p.c ?? 'plan'] || 0) + 1;
       list.push({
         id: O.id, name: O.tool, title: O.title || baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
         model: O.model || O.tool, effort: '', status, live, statusSince: live ? O.statusSince : O.endedAt,
         cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: 0,
         tok: { in: 0, out: 0, cr: 0, cw: 0 }, cost: 0, tools: 0, errors: 0, web: 0, prompts: 0,
-        byCat: {}, pending: running ? [running] : [], spark: new Array(30).fill(0), flags: [], agents: [], agentsRunning: 0,
+        byCat: {}, pending: running ? [running] : [], spark: new Array(30).fill(0), flags: [], agents, agentsRunning: nRun,
         waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
         tab: typeof O.hostTab === 'string' ? O.hostTab : null,
         ...(running && { last: running }),
