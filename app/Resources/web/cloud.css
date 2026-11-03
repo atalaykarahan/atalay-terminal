@@ -368,3 +368,20 @@
 .ksw-how .ks-key { box-sizing: border-box; width: 172px; min-width: 0; }
 .ks-key.fixed { display: inline-flex; align-items: center; justify-content: center; color: var(--txt); cursor: default; }
 .ks-key.fixed:hover { border-color: var(--line); }
+
+/* the archived chats, in a window of their own over Settings (cloud.js openArchive) */
+#arcmodal { position: fixed; inset: 0; z-index: 2800; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.62); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+/* Solid: Settings under it would read through a see-through card. */
+#arcmodal .arc-pk { width: min(560px, 92vw); --glass-a: 1; }
+#arcmodal .arc-list { max-height: 50vh; }
+.arc-none { margin: 0 0 6px; color: var(--dim); font-size: 0.92em; }
+.arc-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 6px; color: var(--txt); }
+.arc-list { max-height: 260px; overflow: auto; }
+.arc-folder { margin: 0 0 8px; }
+.arc-f, .arc-c { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.arc-f { padding: 4px 0; color: var(--accent-soft); font-weight: 600; }
+.arc-c { padding: 2px 0 2px 14px; color: var(--txt); }
+.arc-f span, .arc-c span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arc-f i { margin-left: 6px; color: var(--dim2); font-style: normal; font-weight: 400; }
+.arc-btn { flex: none; padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--dim); font: 11px var(--font); cursor: pointer; }
+.arc-btn:hover { border-color: var(--accent); color: var(--hi); }

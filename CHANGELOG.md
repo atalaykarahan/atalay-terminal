@@ -3,6 +3,11 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.15.0
+
+- Chat list: star a chat and it stays at the top (FAVORITES); archive one, a whole folder, or several folders picked with a click, and they leave the list altogether, and Settings doesn't show them either: its "archived chats · manage" button opens them in a window of their own, as in Claude and ChatGPT, where a chat, a folder or all of them come back (so a stream shows only what's meant to be seen)
+- Chat list: open from the start (⌘B or the × in its corner closes it), sliding open and shut slowly with a fade at the width it had
+
 ## 0.14.0
 
 - Friends: "is now online" notices are back, as on Steam: a friend who comes online after ten minutes or more away (a dropped connection, a restart for an update or a short sleep doesn't say it again)
@@ -65,6 +70,11 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Tabs: End Session in a window with tabs ends only the session of the tab in front, not the whole window
+- Big update · accounts: sign in, and a user's Macs and Windows PCs join one account: their hours and XP add up there, and their settings sync between them by default (as VS Code's Settings Sync), which Settings can turn off
+- Big update · extensions: users write extensions for the app as for VS Code, and add or remove them in Settings; first, research how VS Code does it (the extension API, the manifest, activation, the marketplace, how extensions are kept apart from the app)
+- Themes: Cyberpunk, and SynthWave '84 (Robb Owen's VS Code theme, neon text with its glow), Atalay's favourite
+- Chat list: right-click a chat to rename it, with its other actions there too
 - Updates (must be in the next version): a progress bar while an update downloads and installs, on Windows and the Mac; on Windows one looked frozen and with nothing moving there was no telling whether it was
 - Chats: group chats, several friends in one conversation (users asked for it)
 - Anime mode: a funny mode for the whole app, with anime girls and the like, and sound effects where they shout "uwu"

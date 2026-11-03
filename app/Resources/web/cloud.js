@@ -298,6 +298,9 @@ window.Cloud = (() => {
               <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
             <div class="hk-row ts-row"><span>caveman · short answers from Claude Code and Codex<small class="ts-note" data-which="caveman">…</small></span>
               <button type="button" class="hk-sw ts" data-which="caveman" role="switch" aria-checked="false" title="Turn caveman on or off"><i></i></button></div>` : ''}
+            ${ARCHIVE() ? `<div class="hk-h">CHATS</div>
+            <div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
+              <button type="button" class="arc-btn arc-open">manage</button></div>` : ''}
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
@@ -308,6 +311,7 @@ window.Cloud = (() => {
 
     // settings: the hacker name
     const settings = q('.mn-settings');
+    settings.querySelector('.arc-open')?.addEventListener('click', openArchive);
     const own = S.hackerName || '';
     settings.querySelector('.hk-input').value = own;
     const ok = q('.mn-save');
@@ -428,6 +432,67 @@ window.Cloud = (() => {
     if (focus) setTimeout(() => focus.focus(), 60);
     if (which === 'keys') renderKeys();
     if (which === 'settings') renderSaver();
+  }
+
+  // ---------- archived chats ----------
+  // The chats archived from the chats list (the Mac app's Sidebar.swift keeps them) are out of it, and out of Settings
+  // too: as in Claude's and ChatGPT's settings, a button there opens them in a window of their own, by folder, where a
+  // chat, a whole folder or all of them come back with a click. Settings itself shows nothing of them.
+  const ARCHIVE = () => !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.archive);
+  const archiveCall = (msg) => window.webkit.messageHandlers.archive.postMessage(msg);
+  function openArchive() {
+    if (!ARCHIVE()) return;
+    let layer = document.getElementById('arcmodal');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.id = 'arcmodal';
+      document.body.appendChild(layer);
+    }
+    layer.innerHTML =
+      '<div class="pk hk arc-pk crt-on"><div class="pk-border"></div>' +
+      '<div class="pk-title"><img class="hk-logo" src="logo.png" alt=""><b>ARCHIVED CHATS</b></div>' +
+      '<div class="hk-body"><div class="arc"></div></div>' +
+      '<div class="pk-foot"><span class="pk-sel note">esc to close</span><button type="button" class="pk-cancel arc-close">close</button></div></div>';
+    layer.onmousedown = (e) => e.target === layer && closeArchive();
+    layer.querySelector('.arc-close').onclick = closeArchive;
+    addEventListener('keydown', archiveKey, true);
+    renderArchive();
+  }
+  function closeArchive() {
+    document.getElementById('arcmodal')?.remove();
+    removeEventListener('keydown', archiveKey, true);
+  }
+  // Esc closes this window only, Settings stays under it.
+  function archiveKey(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeArchive();
+  }
+  async function renderArchive(r) {
+    const box = document.querySelector('#arcmodal .arc');
+    if (!box) return;
+    if (!r) r = await archiveCall({ type: 'list' }).catch(() => null);
+    const folders = (r && r.folders) || [];
+    const total = folders.reduce((n, f) => n + f.chats.length, 0);
+    box.innerHTML = !total
+      ? '<p class="arc-none">nothing archived · right-click a chat or a folder in the chats list to archive it</p>'
+      : `<div class="arc-head"><span>${total} archived chat${total === 1 ? '' : 's'}</span><button type="button" class="arc-btn" data-act="all">unarchive all</button></div>` +
+        '<div class="arc-list">' +
+        folders.map((f) =>
+          `<div class="arc-folder"><div class="arc-f"><span title="${esc(f.cwd)}">${esc(f.label)}<i>${f.chats.length}</i></span>` +
+          `<button type="button" class="arc-btn" data-act="folder" data-cwd="${esc(f.cwd)}">unarchive folder</button></div>` +
+          f.chats.map((c) => `<div class="arc-c"><span title="${esc(c.title || '')}">${esc(c.title || 'untitled')}</span>` +
+            `<button type="button" class="arc-btn" data-act="chat" data-id="${esc(c.id)}">unarchive</button></div>`).join('') +
+          '</div>').join('') +
+        '</div>';
+    box.onclick = async (e) => {
+      const b = e.target.closest('.arc-btn');
+      if (!b) return;
+      const act = b.dataset.act;
+      const msg = act === 'all' ? { type: 'restoreAll' } : act === 'folder' ? { type: 'restoreFolder', cwd: b.dataset.cwd } : { type: 'restore', id: b.dataset.id };
+      renderArchive(await archiveCall(msg).catch(() => null));
+    };
   }
 
   // ---------- the token savers ----------

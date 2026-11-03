@@ -18,6 +18,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var lastWinOpen = ""
     private var split: ThemedSplitView!
     private var sidebarHost: NSView!
+    /// The chat list's narrowest width and the width it opens at (the one it had when it closed).
+    private var sidebarMin: NSLayoutConstraint!
+    private var sidebarPreferred: NSLayoutConstraint!
+    private var sidebarSliding = false
     private var fontSize: CGFloat
     private var cascade = 0
     private var lastVisibility = ""
@@ -27,7 +31,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     init(engine: RadarEngine) {
         self.engine = engine
-        UserDefaults.standard.register(defaults: ["sidebarHidden": true])
+        UserDefaults.standard.register(defaults: ["sidebarHidden": false])
         let saved = UserDefaults.standard.double(forKey: "terminalFontSize")
         // Until the user picks a size here, their iTerm2 one.
         fontSize = saved >= 9 ? CGFloat(saved) : ITermLook.current?.fontSize ?? 13
@@ -90,8 +94,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             copyId: {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString($0, forType: .string)
-            })))
+            },
+            close: { [weak self] in self?.toggleSidebar() })))
         sidebarHost = side
+        radar.handleArchive(ArchiveBridge(model: sidebar))
 
         let split = ThemedSplitView()
         split.isVertical = true
@@ -103,14 +109,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         self.split = split
         split.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(split)
-        let preferred = side.widthAnchor.constraint(equalToConstant: 280)
+        let preferred = side.widthAnchor.constraint(equalToConstant: Self.sidebarWidth)
         preferred.priority = .defaultLow
+        sidebarPreferred = preferred
+        sidebarMin = side.widthAnchor.constraint(greaterThanOrEqualToConstant: 210)
         NSLayoutConstraint.activate([
             split.topAnchor.constraint(equalTo: root.topAnchor),
             split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             split.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            side.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
+            sidebarMin,
             side.widthAnchor.constraint(lessThanOrEqualToConstant: 460),
             preferred,
         ])
@@ -849,10 +857,56 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: view options
 
+    /// The width the chat list had when it last closed: it opens at it again (its preferred width, which the split view
+    /// keeps to when nothing else decides).
+    private static var sidebarWidth: CGFloat {
+        let w = CGFloat(UserDefaults.standard.double(forKey: "sidebarWidth"))
+        return (210...460).contains(w) ? w : 280
+    }
+
+    /// The chat list slides open and shut, fading as it goes and the dashboard giving it room and taking it back, instead
+    /// of snapping. It opens to the width the split view itself gives it, so nothing jumps once the slide is over.
     func toggleSidebar() {
-        sidebarHost.isHidden.toggle()
-        split.adjustSubviews()
-        UserDefaults.standard.set(sidebarHost.isHidden, forKey: "sidebarHidden")
+        guard !sidebarSliding else { return }
+        let side: NSView = sidebarHost
+        let opening = side.isHidden
+        var target: CGFloat = 0
+        if opening {
+            // Measured shown, before anything is drawn; then it starts from nothing.
+            side.isHidden = false
+            split.adjustSubviews()
+            split.layoutSubtreeIfNeeded()
+            target = side.frame.width
+        } else {
+            sidebarPreferred.constant = side.frame.width
+            UserDefaults.standard.set(Double(side.frame.width), forKey: "sidebarWidth")
+        }
+        // While it slides, its width is the animation's alone.
+        sidebarMin.isActive = false
+        let width = side.widthAnchor.constraint(equalToConstant: opening ? 0 : side.frame.width)
+        width.isActive = true
+        side.alphaValue = opening ? 0 : 1
+        split.layoutSubtreeIfNeeded()
+        sidebarSliding = true
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.45
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.65, 0, 0.35, 1)
+            ctx.allowsImplicitAnimation = true
+            width.animator().constant = target
+            side.animator().alphaValue = opening ? 1 : 0
+            self.split.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                width.isActive = false
+                if !opening { side.isHidden = true }
+                side.alphaValue = 1
+                self.sidebarMin.isActive = true
+                self.split.adjustSubviews()
+                self.sidebarSliding = false
+                UserDefaults.standard.set(side.isHidden, forKey: "sidebarHidden")
+            }
+        })
     }
 
     func changeFont(by delta: CGFloat?) {

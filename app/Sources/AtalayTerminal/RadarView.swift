@@ -47,6 +47,11 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
             .appendingPathComponent("Resources/web")
     }
 
+    /// Settings' archived chats (web/cloud.js) go to the chats list (Sidebar.swift).
+    func handleArchive(_ bridge: ArchiveBridge) {
+        webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "archive")
+    }
+
     /// Source Control's requests (web/git.js) go to Git.swift.
     func handleGit(_ bridge: GitBridge) {
         webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "git")
