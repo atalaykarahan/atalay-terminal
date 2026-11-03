@@ -62,6 +62,22 @@ final class Session: Track {
     init(id: String) { self.id = id }
 }
 
+/// Another AI tool running in a terminal (Proc.otherAIs): a session on the dashboard without a transcript.
+final class OtherAI {
+    let id: String, tool: String, pid: Int32
+    var cwd = "", tty: String?, ppid: Int32 = 0
+    var cpu = 0.0, mem = 0
+    var busy = false, busyUntil = 0.0, statusSince = 0.0
+    var firstTs = 0.0, lastTs = 0.0, endedAt = 0.0
+    var hostTab: String?
+
+    init(id: String, tool: String, pid: Int32) {
+        self.id = id
+        self.tool = tool
+        self.pid = pid
+    }
+}
+
 final class SubAgent: Track {
     let key: String, id: String, sid: String
     var desc = "", type = "", bg = false

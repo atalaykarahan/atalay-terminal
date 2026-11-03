@@ -322,4 +322,25 @@ extension Proc {
             || path(pid)?.contains("/claude/versions/") == true
             || FileManager.default.fileExists(atPath: (CLAUDE_DIR as NSString).appendingPathComponent("sessions/\(pid).json"))
     }
+
+    /// AI coding tools besides Claude Code, by the command they run as (the program itself, or the script Node, Bun or
+    /// Python runs for one written in them), with the name the dashboard gives them. A running one is a session there
+    /// too, a planet like Claude's, without a transcript to read: its CPU tells when it works.
+    static let otherAIs: [String: String] = [
+        "codex": "Codex", "gemini": "Gemini", "opencode": "OpenCode", "aider": "Aider", "cursor-agent": "Cursor",
+        "amp": "Amp", "qwen": "Qwen Code", "crush": "Crush", "droid": "Droid", "copilot": "Copilot", "kiro-cli": "Kiro",
+        "grok": "Grok", "auggie": "Auggie", "cline": "Cline", "kimi": "Kimi", "kilocode": "Kilo Code", "plandex": "Plandex",
+        "agy": "Antigravity",
+    ]
+    private static let interpreters: Set<String> = ["node", "bun", "deno", "python", "python3", "Python"]
+
+    /// The AI tool `pid` is (its name in `otherAIs`), if it's one of them.
+    static func otherAI(_ pid: Int32) -> String? {
+        guard let name = name(pid) else { return nil }
+        if let tool = otherAIs[name] { return tool }
+        guard interpreters.contains(name) || name.hasPrefix("python"), let args = arguments(pid),
+              // The script, past the interpreter's options (`node --no-warnings …/bin/gemini`, `python -m aider`).
+              let script = args.dropFirst().first(where: { !$0.hasPrefix("-") }) else { return nil }
+        return otherAIs[((script as NSString).lastPathComponent as NSString).deletingPathExtension]
+    }
 }

@@ -1103,8 +1103,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         if hud.status == "terminal", let shell = detached?.shellPid { out.append((carId, shell, hud.terminalDir ?? cwd)) }
         for pane in extras {
             let shell = pane.shellPid
-            // Claude in a pane is a session on the orbit, not a car.
-            guard shell > 0, !Self.runsClaude(shell) else { continue }
+            // An AI in a pane (Claude, Codex…) is a session on the orbit, not a car.
+            guard shell > 0, !Self.runsAgent(shell) else { continue }
             out.append(("s:" + paneKey(pane), shell, pane.cwd))
         }
         return out
@@ -1120,10 +1120,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     private func paneKey(_ pane: ExtraPane) -> String { pane.link?.name ?? "pid\(pane.shellPid)" }
 
-    static func runsClaude(_ shell: Int32) -> Bool {
+    static func runsClaude(_ shell: Int32) -> Bool { runs(shell, Proc.isClaude) }
+
+    /// Claude or another AI tool (Proc.otherAIs) in the shell: a session on the orbit.
+    static func runsAgent(_ shell: Int32) -> Bool { runs(shell) { Proc.isClaude($0) || Proc.otherAI($0) != nil } }
+
+    private static func runs(_ shell: Int32, _ match: (Int32) -> Bool) -> Bool {
         var level = Proc.children(of: shell)
         for _ in 0..<4 where !level.isEmpty {
-            if level.contains(where: Proc.isClaude) { return true }
+            if level.contains(where: match) { return true }
             level = level.flatMap { Proc.children(of: $0) }
         }
         return false

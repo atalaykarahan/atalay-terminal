@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.15.3
+
+- Orbit: Codex, Antigravity (agy), Gemini, OpenCode, Aider, Cursor's agent, Copilot and the other AI coding tools are planets of their own when they run in a terminal, as Claude Code is: on their orbit while they work, parked while they wait for you; a click opens the tab they run in
+
 ## 0.15.2
 
 - Friends: a chat opens whole on the screen you're using (the dashboard's), not out of sight: with more than one display it could open where it was left on another one, behind a full-screen dashboard, or grow past the bottom of the screen; dragged off the edge, or a display unplugged, it comes back into view
@@ -79,6 +83,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 ## Next
 
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines
+- caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
 - Tabs: End Session in a window with tabs ends only the session of the tab in front, not the whole window
 - Big update · accounts: sign in, and a user's Macs and Windows PCs join one account: their hours and XP add up there, and their settings sync between them by default (as VS Code's Settings Sync), which Settings can turn off
 - Big update · extensions: users write extensions for the app as for VS Code, and add or remove them in Settings; first, research how VS Code does it (the extension API, the manifest, activation, the marketplace, how extensions are kept apart from the app)

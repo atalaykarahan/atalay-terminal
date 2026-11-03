@@ -350,7 +350,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 ])
             }
         }
-        // Closed tabs and panes, still running (Claude in one is a session on the orbit, not a car).
+        // Closed tabs and panes, still running (an AI in one, Claude or Codex…, is a session on the orbit, not a car).
         var gone = false
         for (name, link) in parked {
             guard let shell = link.shellPid else {
@@ -358,7 +358,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 gone = true
                 continue
             }
-            guard !ChatWindowController.runsClaude(shell) else { continue }
+            guard !ChatWindowController.runsAgent(shell) else { continue }
             let jobs = Proc.children(of: shell)
             let cwd = Proc.cwd(shell) ?? HOME
             let cpu = busy(shell, jobs, work: true)
@@ -484,6 +484,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Opens a saved or running conversation in its own window, in its project folder.
     func openSession(_ sid: String, fork: Bool = false) {
         let brief = briefs[sid]
+        // Another AI tool (Codex…) has no conversation to resume or copy here: a click opens the pane it runs in, when
+        // that's one of ours.
+        if sid.hasPrefix("ai:") {
+            guard !fork, let b = brief, b.live, let pid = b.pid else { return }
+            if let tab = b.tab, let c = chats[tab] {
+                c.show()
+                return c.focusPane(hosting: pid)
+            }
+            guard let name = Detached.sessionName(hosting: pid) else { return }
+            if parked[name] != nil { return reopenParked(name, own: true) }
+            if let c = chats.values.first(where: { $0.detached?.name == (Detached.extraInfo(name)?.parent ?? name) }) {
+                c.show()
+                c.focusPane(hosting: pid)
+            }
+            return
+        }
         if !fork {
             if let b = brief, b.live, let pid = b.pid {
                 // A live chat opens the window its process runs in. Another window here can hold an older copy of the

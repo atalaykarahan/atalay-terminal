@@ -54,6 +54,9 @@ final class RadarEngine {
     private var lastStateJSON = ""
     private var lastStateAt = 0.0
     private var cpuSeen: [Int32: (ns: UInt64, at: Double)] = [:]
+    /// Other AI tools running (Codex, Gemini…), by session id ("ai:<pid>:<start>").
+    private var others: [String: OtherAI] = [:]
+    private var otherCpu: [Int32: (ns: UInt64, at: Double)] = [:]
 
     init() {
         claudeDir = CLAUDE_DIR
@@ -827,7 +830,63 @@ final class RadarEngine {
             S.mem = Int(info.rss / 1_048_576)
         }
         cpuSeen = cpuSeen.filter { alivePids.contains($0.key) }
+        pollOthers()
         matchTabs()
+    }
+
+    /// The other AI tools running in terminals (Proc.otherAIs), each a session: busy while it works the CPU (its screen
+    /// redrawing as it streams, its tools starting), idle once it has been quiet for 10 seconds; one that quits shows as
+    /// ended for two minutes, so its window turns back into a terminal.
+    private func pollOthers() {
+        let me = getuid(), now = ProcessInfo.processInfo.systemUptime, ms = nowMs()
+        var found: [Int32: (tool: String, info: Proc.Info)] = [:]
+        for pid in Proc.all() {
+            guard let tool = Proc.otherAI(pid), let info = Proc.info(pid), info.uid == me, info.tty != nil else { continue }
+            found[pid] = (tool, info)
+        }
+        var seen = Set<String>()
+        // A launcher's child is the same session (Codex's Node script starts Codex's own binary).
+        for (pid, f) in found where found[f.info.ppid] == nil {
+            let id = "ai:\(pid):\(f.info.started)"
+            seen.insert(id)
+            let O: OtherAI
+            if let known = others[id] {
+                O = known
+            } else {
+                O = OtherAI(id: id, tool: f.tool, pid: pid)
+                O.firstTs = Double(f.info.started) / 1000
+                O.lastTs = ms
+                O.statusSince = ms
+                others[id] = O
+                stateDirty = true
+            }
+            if let prev = otherCpu[pid], now > prev.at, f.info.cpuTime >= prev.ns {
+                O.cpu = Double(f.info.cpuTime - prev.ns) / ((now - prev.at) * 1e9) * 100
+            }
+            otherCpu[pid] = (f.info.cpuTime, now)
+            O.mem = Int(f.info.rss / 1_048_576)
+            if O.cpu >= 1 { O.busyUntil = ms + 10_000 }
+            let busy = ms < O.busyUntil
+            if busy { O.lastTs = ms }
+            let cwd = Proc.cwd(pid) ?? O.cwd
+            if busy != O.busy || cwd != O.cwd || O.tty != f.info.tty || O.ppid != f.info.ppid {
+                if busy != O.busy { O.statusSince = ms }
+                O.busy = busy
+                O.cwd = cwd
+                O.tty = f.info.tty
+                O.ppid = f.info.ppid
+                stateDirty = true
+            }
+        }
+        for O in others.values where O.endedAt == 0 && !seen.contains(O.id) {
+            O.endedAt = ms
+            O.busy = false
+            stateDirty = true
+        }
+        let before = others.count
+        others = others.filter { $0.value.endedAt == 0 || ms - $0.value.endedAt < 120_000 }
+        if others.count != before { stateDirty = true }
+        otherCpu = otherCpu.filter { found[$0.key] != nil }
     }
 
     private func matchTabs() {
@@ -835,6 +894,11 @@ final class RadarEngine {
             let tab = S.live ? S.ppid.flatMap { appShells[$0] } : nil
             if tab != S.hostTab { stateDirty = true }
             S.hostTab = tab
+        }
+        for O in others.values {
+            let tab = O.endedAt == 0 ? appShells[O.ppid] : nil
+            if tab != O.hostTab { stateDirty = true }
+            O.hostTab = tab
         }
     }
 
@@ -958,6 +1022,35 @@ final class RadarEngine {
                 brief.actionLabel = p.l
                 brief.actionSince = p.t
             }
+            briefs.append(brief)
+        }
+        // The other AI tools, after Claude's (a window with both shows Claude): what Claude's sessions show, minus what
+        // only its transcript would tell.
+        for O in others.values {
+            if let ended = dismissed[O.id], ended == O.pid { continue }
+            let live = O.endedAt == 0
+            let status = live ? (O.busy ? "busy" : "idle") : "ended"
+            let host: String? = O.hostTab != nil ? "app" : (live ? "term" : nil)
+            let folder = (O.cwd as NSString).lastPathComponent
+            var item: [String: Any] = [
+                "id": O.id, "name": O.tool, "title": folder, "lastPrompt": "", "cwd": cwdLabel(O.cwd), "branch": "",
+                "model": O.tool, "effort": "", "status": status, "live": live,
+                "statusSince": live ? O.statusSince : O.endedAt, "cpu": O.cpu, "mem": O.mem, "kind": "", "entry": "",
+                "firstTs": O.firstTs, "lastTs": O.lastTs, "ctx": 0, "ctxMax": 0.0, "turnMs": 0.0,
+                "tok": ["in": 0, "out": 0, "cr": 0, "cw": 0], "cost": 0.0, "tools": 0, "errors": 0, "web": 0, "prompts": 0,
+                "byCat": [String: Int](), "pending": [[String: Any]](), "spark": [Int](repeating: 0, count: 30), "flags": [String](),
+                "agents": [[String: Any]](), "agentsRunning": 0,
+            ]
+            item["waitingFor"] = NSNull()
+            item["tty"] = orNull(O.tty)
+            item["pid"] = Int(O.pid)
+            item["host"] = orNull(host)
+            item["tab"] = orNull(O.hostTab)
+            list.append(item)
+            var brief = SessionBrief(id: O.id, name: O.tool, title: folder, status: status, waitingFor: nil, cwd: O.cwd, live: live,
+                                     pid: O.pid, host: host, tab: O.hostTab)
+            brief.model = O.tool
+            brief.statusSince = live ? O.statusSince : O.endedAt
             briefs.append(brief)
         }
         list.sort {
