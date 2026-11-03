@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
+        Mur47.registerFonts()
         buildMenu()
         controller = MainWindowController(engine: engine)
         controller.showWindow(nil)
