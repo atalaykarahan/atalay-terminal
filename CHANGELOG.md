@@ -7,7 +7,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 - Tabs: End Session in a window with tabs ends only the tab in front (its chat, its terminal or its panes), the other tabs keep running; the last one ends the window as before, and asks first when something still runs in it
 - Chat list: right-click a chat to rename it (↩ keeps the new name, Esc leaves it, an empty name brings back the original); its star and archive are in the same menu
-- Themes: Cyberpunk (neon yellow, cyan and magenta on black) and SynthWave '84 (Robb Owen's VS Code theme, its neon text glowing everywhere as its "Neon Dreams" did: the terminals, the dashboard, the chats list)
+- Themes: Cyberpunk (neon yellow, cyan and magenta on black)
 - Updates: a bar shows how far the download has come, in the update window, on its button and in Settings ("updating 42%"), on the Mac and Windows
 - Settings · INTERFACE: the font (mono, system, rounded) and the text size (100% to 140%), for text that's hard to read
 - Orbit: a terminal's car ended with End Session stays gone (it blew up, then came back)
