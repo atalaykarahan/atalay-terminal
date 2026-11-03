@@ -100,7 +100,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
-- Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines
+- Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines. Cause (found 2026-11-04, reproduced headless with SwiftTerm + the relay + screen): screen 4.0 resizes a window bottom-anchored. Shrinking keeps the cursor's distance from the bottom, so with blank rows under the cursor (short output, after a clear) the output above it goes into screen's own history, which the view never shows, and only blank rows remain; growing pulls lines back in at the top. Fix to try: before a shrink, put the cursor on row max(0, old rows - new rows - blank rows under it) (screen then drops the blank bottom rows instead), apply the size, put the cursor back; the pty size has to wait for that (LocalProcessTerminalView.sizeChanged isn't open, so the relay holds it). Windows has no screen: check it there separately
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
 - Themes of your own: make a theme and keep up to 4 in slots; watching someone on the leaderboard, copy their theme into one of your 4 slots, as CS2 copies a crosshair: a copy of its own, so it stays as it was when its owner changes or deletes theirs
 - Big update · accounts: sign in, and a user's Macs and Windows PCs join one account: their hours and XP add up there, and their settings sync between them by default (as VS Code's Settings Sync), which Settings can turn off
