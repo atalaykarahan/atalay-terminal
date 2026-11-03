@@ -5,8 +5,9 @@
 <h1 align="center">Atalay's Terminal</h1>
 
 <p align="center">
-  A HUD for running many Claude Code sessions on a Mac or on Windows: every session on a live orbit map, each chat in
-  its own window that keeps running in the background, terminals as flying cars, and friends with messages and levels.
+  A HUD for running many AI coding sessions (Claude Code, Codex, Antigravity) on a Mac or on Windows: every session on a
+  live orbit map, each chat in its own window that keeps running in the background, terminals as flying cars, and
+  friends with messages and levels.
 </p>
 
 <p align="center">
@@ -25,6 +26,9 @@
 
 - **Every Claude Code session on one screen.** Busy, waiting for you and asking for approval each have their colour;
   subagents, tool calls, the files they touch, web research, tokens and spend (at API list prices) update live.
+- **Codex and Antigravity too.** Their sessions are planets of their own, read from their own logs: working, waiting
+  for your approval or your turn, what you asked and the command they run; Antigravity's subagents show as workers, as
+  Claude's do. Gemini, OpenCode, Aider, Cursor's agent, Copilot and other AI coding tools in a terminal are planets too.
 - **Each chat in its own window**, running in a detached session: close the window or quit the app and Claude keeps
   working; the window comes back with its history.
 - **Terminals** for dev servers and tests fly around the orbit as cars and park when they're idle.
@@ -35,11 +39,12 @@
   week.
 
 macOS 13 or later, Apple Silicon and Intel; Windows 10 or 11, 64-bit (the Windows app is in [`windows/`](windows/)).
-Works with Claude Code; not affiliated with Anthropic.
+Works with Claude Code, Codex and Antigravity; not affiliated with Anthropic, OpenAI or Google.
 
 ## Privacy
 
-- The dashboard reads Claude Code's own files on your Mac (`~/.claude`: the session list and transcripts), read only.
+- The dashboard reads Claude Code's own files on your Mac (`~/.claude`: the session list and transcripts), and Codex's
+  and Antigravity's own logs (`~/.codex/sessions`, `~/.gemini/antigravity-cli`), read only.
   None of it leaves your Mac: no prompts, no code, no transcripts, no file names, no token counts.
 - The app talks to its server only for the social parts, feedback and updates: your hacker name and tag, the app and
   macOS version, whether you're working each minute (for XP) and your time zone, your friends, requests, messages and

@@ -3,7 +3,7 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
-## Unreleased
+## 0.16.0
 
 - Tabs: End Session in a window with tabs ends only the tab in front (its chat, its terminal or its panes), the other tabs keep running; the last one ends the window as before, and asks first when something still runs in it
 - Chat list: right-click a chat to rename it (↩ keeps the new name, Esc leaves it, an empty name brings back the original); its star and archive are in the same menu
