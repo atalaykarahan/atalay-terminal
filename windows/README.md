@@ -69,7 +69,7 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/git.js` | Source Control's requests: the repos, diffs, history, commit, push | Git.swift |
 | `src/cloud.js` | the API: hacker name, heartbeat (XP), friends and messages, the live socket, notifications | Cloud, Social, ClientKey |
 | `src/themes.js` | the themes: every colour token from a palette, into each page | Themes.swift |
-| `src/runaways.js` | the process list: what burns a core where nobody sees it (DANGER), what closed terminals left running (amber cars), what runs in the app's terminals (their cars) | Runaways, MainWindowController |
+| `src/runaways.js` | the process list: what burns a core where nobody sees it (DANGER), what closed terminals left running (amber cars), what runs in the app's terminals (their cars), the AI tools besides Claude running in a terminal (Codex, Gemini…: planets) | Runaways, MainWindowController, RadarEngine |
 | `src/savers.js` | the token savers, rtk and caveman, on for Claude Code and Codex (`scripts/fetch-rtk.js` gets rtk for the build) | TokenSavers |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
 | `src/chatlist.js`, `pages/chats.*` | the chats list beside the dashboard (a view of its own in the dashboard window): every saved chat by project, favourites, the archive (Settings lists it) | Sidebar.swift |

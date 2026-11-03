@@ -43,6 +43,9 @@ function aiTool(p) {
 
 const SHELLS = '^(pwsh|powershell|cmd|bash|sh|zsh|fish|node|python[0-9.]*|ruby|perl|php|java|deno|bun|claude)(\\.exe)?$';
 const SHELL_RE = new RegExp(SHELLS, 'i');
+// An AI tool counts when it runs in a terminal, as the Mac's has a tty: a shell or a terminal app among its parents.
+// One an editor runs in the background (the Codex extension's codex.exe in VS Code) is no session of anyone's.
+const TERMINAL_RE = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|WindowsTerminal|wezterm-gui|alacritty|mintty|ConEmuC?(64)?|tabby|hyper|warp)$/i;
 
 // The folder a process is in: its current directory, read from its process parameters (x64 layout; a 32-bit process, or
 // one this user can't read, has none).
@@ -327,8 +330,9 @@ function createRunaways({ onChange, onRead }) {
     /** % of a core the processes under `roots` used over the last reading. */
     busy,
     /**
-     * The other AI tools running (aiTool), each once: a launcher's child that's the same tool (Codex's Node script starts
-     * its own codex.exe) isn't another, nor one Claude runs. [{ pid, started, tool, cwd, pct, chain (its parents) }]
+     * The other AI tools running in a terminal (aiTool, TERMINAL_RE), each once: a launcher's child that's the same tool
+     * (Codex's Node script starts its own codex.exe) isn't another, nor one Claude runs. Its CPU is all it runs: the
+     * launcher only waits while its child works. [{ pid, started, tool, cwd, pct, chain (its parents) }]
      */
     ais() {
       const found = new Map();
@@ -342,8 +346,8 @@ function createRunaways({ onChange, onRead }) {
         if (!p.orphan && found.has(p.ppid)) continue;
         const chain = [];
         for (let q = !p.orphan && table.get(p.ppid); q && chain.length < 12; q = !q.orphan && table.get(q.ppid)) chain.push(q);
-        if (chain.some((q) => /^claude$/i.test(q.name))) continue;
-        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: p.pct || 0, chain: chain.map((q) => q.pid) });
+        if (chain.some((q) => /^claude$/i.test(q.name)) || !chain.some((q) => TERMINAL_RE.test(q.name))) continue;
+        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: busy([pid]), chain: chain.map((q) => q.pid) });
       }
       return out;
     },

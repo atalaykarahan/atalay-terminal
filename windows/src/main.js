@@ -728,9 +728,13 @@ function endSession(sid) {
   }
   // Running outside the app: its process ends.
   if (live && live.pid) {
-    try {
-      process.kill(live.pid);
-    } catch {}
+    // Another AI tool ends with all it started: Codex's launcher alone would leave its codex.exe running.
+    if (live.ai) runaways.endLeft(live.pid, Number(sid.split(':')[2]));
+    else {
+      try {
+        process.kill(live.pid);
+      } catch {}
+    }
   }
   engine.dismiss(sid, live && live.pid);
   return true;
