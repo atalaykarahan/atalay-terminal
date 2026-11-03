@@ -147,36 +147,6 @@ window.Cloud = (() => {
   }
   // The token saver's question, once (TokenSavers.swift asks the page at a launch that ships rtk): the app's own window
   // first; rtk is set up, and anything macOS then asks for, only after "turn on".
-  function askSaver() {
-    if (!SAVERS || modal) return;
-    modal = 'saver';
-    tellModal(true);
-    root.className = 'on';
-    root.innerHTML = `
-      <div class="pk hk sav crt-on">
-        <div class="pk-border"></div>
-        <div class="pk-title"><img class="hk-logo" src="logo.png" alt=""><b>TOKEN SAVER</b></div>
-        <div class="hk-body sav-body">
-          <b class="sav-big">~33%</b>
-          <p class="sav-sub">fewer tokens for Claude and Codex</p>
-          <p class="sav-line">with <b>rtk</b> · shorter command output, same work</p>
-          <p class="hk-status sav-status"></p>
-        </div>
-        <div class="pk-foot"><span class="pk-sel"></span><button class="pk-cancel">not now</button><button class="pk-ok sav-go">turn on</button></div>
-      </div>`;
-    q('.pk-cancel').onclick = () => {
-      saversCall({ type: 'set', on: false }).catch(() => {});
-      close();
-    };
-    q('.sav-go').onclick = async () => {
-      q('.sav-go').disabled = q('.pk-cancel').disabled = true;
-      q('.sav-status').textContent = 'setting up rtk…';
-      const st = await saversCall({ type: 'set', on: true }).catch(() => null);
-      close();
-      toast(st && st.on ? 'rtk is on · Claude Code and Codex save tokens from now on' : "couldn't set up rtk");
-    };
-  }
-
   // While it downloads and installs: the progress, and no way out (the app restarts at the end).
   function renderUpdateModal() {
     if (modal !== 'update') return;
@@ -323,9 +293,11 @@ window.Cloud = (() => {
               <button type="button" class="hk-sw act" role="switch" aria-checked="true" title="Show my active time to friends"><i></i></button></div>
             <div class="hk-row"><span>show my name on the leaderboard<small>off: you keep your place as Anonymous, and nobody can add you from there</small></span>
               <button type="button" class="hk-sw brd" role="switch" aria-checked="true" title="Show my name on the leaderboard"><i></i></button></div>
-            ${SAVERS ? `<div class="hk-h">TOKEN SAVER</div>
-            <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code and Codex<small class="ts-note">…</small></span>
-              <button type="button" class="hk-sw ts" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>` : ''}
+            ${SAVERS ? `<div class="hk-h">TOKEN SAVERS</div>
+            <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code and Codex<small class="ts-note" data-which="rtk">…</small></span>
+              <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
+            <div class="hk-row ts-row"><span>caveman · short answers from Claude Code and Codex<small class="ts-note" data-which="caveman">…</small></span>
+              <button type="button" class="hk-sw ts" data-which="caveman" role="switch" aria-checked="false" title="Turn caveman on or off"><i></i></button></div>` : ''}
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
@@ -458,30 +430,38 @@ window.Cloud = (() => {
     if (which === 'settings') renderSaver();
   }
 
-  // ---------- the token saver ----------
-  // rtk, which the Mac app ships and sets up for Claude Code and Codex (TokenSavers.swift): on or off, and what it saved.
+  // ---------- the token savers ----------
+  // rtk and caveman, which the Mac app ships and turns on for Claude Code and Codex (TokenSavers.swift): a switch each,
+  // and what rtk saved.
   const SAVERS = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.savers);
   const saversCall = (msg) => window.webkit.messageHandlers.savers.postMessage(msg);
   const compact = (n) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
-  function showSaver(st) {
-    const sw = q('.hk-sw.ts'), note = q('.ts-note');
-    if (!sw || !st) return;
-    sw.setAttribute('aria-checked', st.on ? 'true' : 'false');
-    sw.disabled = !st.available || st.theirs;
-    sw.title = st.theirs ? 'Your own rtk: change it with rtk itself' : 'Turn rtk on or off';
-    note.textContent = !st.available ? 'not in this build'
-      : st.saved != null ? `${st.theirs ? 'your own rtk · ' : ''}saved ${compact(st.saved)} tokens so far, ${Math.round(st.pct)}% of what ${compact(st.commands)} commands printed`
-      : st.on ? 'on · nothing saved yet' : 'off · Claude Code and Codex read commands\' output in full';
+  const SAVER_OFF = { rtk: "off · Claude Code and Codex read commands' output in full", caveman: 'off · full-length answers' };
+  function showSavers(all) {
+    if (!all) return;
+    for (const which of ['rtk', 'caveman']) {
+      const st = all[which], sw = q(`.hk-sw.ts[data-which="${which}"]`), note = q(`.ts-note[data-which="${which}"]`);
+      if (!st || !sw || !note) continue;
+      sw.setAttribute('aria-checked', st.on ? 'true' : 'false');
+      sw.disabled = !st.available || st.theirs;
+      sw.title = st.theirs ? `Your own ${which}: change it there` : `Turn ${which} on or off`;
+      note.textContent = !st.available ? 'not in this build'
+        : st.saved != null ? `${st.theirs ? 'your own rtk · ' : ''}saved ${compact(st.saved)} tokens so far, ${Math.round(st.pct)}% of what ${compact(st.commands)} commands printed`
+        : st.theirs ? `your own ${which} · on`
+        : st.on ? (which === 'caveman' ? 'on · about two thirds fewer output tokens, from the next chat' : 'on · nothing saved yet') : SAVER_OFF[which];
+    }
   }
   async function renderSaver() {
     if (!SAVERS || !q('.hk-sw.ts')) return;
-    showSaver(await saversCall({ type: 'state' }).catch(() => null));
-    q('.hk-sw.ts').onclick = async (e) => {
-      const sw = e.currentTarget, on = sw.getAttribute('aria-checked') !== 'true';
-      sw.disabled = true;
-      q('.ts-note').textContent = on ? 'setting up rtk…' : 'taking rtk off…';
-      showSaver(await saversCall({ type: 'set', on }).catch(() => null));
-    };
+    showSavers(await saversCall({ type: 'state' }).catch(() => null));
+    root.querySelectorAll('.hk-sw.ts').forEach((sw) => {
+      sw.onclick = async () => {
+        const which = sw.dataset.which, on = sw.getAttribute('aria-checked') !== 'true';
+        sw.disabled = true;
+        q(`.ts-note[data-which="${which}"]`).textContent = on ? `turning ${which} on…` : `turning ${which} off…`;
+        showSavers(await saversCall({ type: 'set', which, on }).catch(() => null));
+      };
+    });
   }
 
   // ---------- shortcuts ----------
@@ -860,7 +840,7 @@ window.Cloud = (() => {
       : '<span class="lb-spark off" title="keeps their active time to themselves"></span>';
     return (
       `<div class="lb-row${u.me ? ' me' : ''}${u.pos <= 3 ? ' top' : ''}${fire ? ' fire' : ''}" data-id="${esc(u.id)}" style="--rc:${r.color}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
-      `${fire ? '<canvas class="fire-card"></canvas>' : ''}<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${tagged(u)}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
+      `${fire ? '<canvas class="fire-card"></canvas>' : ''}<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${u.working ? '<i class="lb-live" title="working now"></i>' : ''}${tagged(u)}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
       `${u.me && u.anon ? '<em class="lb-hid" title="Others see you as Anonymous">hidden</em>' : ''}</span>` +
       `<small>${esc(r.name)}${u.last24 ? ` · ${Xp.dur(u.last24)} in 24h` : ''}${active === null ? '' : ` · ${Xp.dur(active)} this week`}</small></div>${spark}` +
       `<span class="lb-score">${boardBy === 'week' ? `+${Xp.num(u.week)}` : Xp.num(u.xp)} XP</span><span class="lb-act">${boardButton(u, 'act')}</span></div>`
@@ -872,7 +852,9 @@ window.Cloud = (() => {
     const head =
       `<div class="lb-head"><div class="lb-seg"><button type="button" data-by="week" class="${boardBy === 'week' ? 'on' : ''}">THIS WEEK</button>` +
       `<button type="button" data-by="all" class="${boardBy === 'all' ? 'on' : ''}">ALL TIME</button></div>` +
-      `<span class="lb-note">${boardBy === 'week' ? 'XP earned over the last 7 days' : 'XP ever'} · click someone for their week</span></div>`;
+      // How many are at work right now (the green dots), so nobody works alone.
+      `<span class="lb-note">${board?.working ? `<b class="lb-now"><i class="lb-live"></i>${board.working} working now</b> · ` : ''}` +
+      `${boardBy === 'week' ? 'XP earned over the last 7 days' : 'XP ever'} · click someone for their week</span></div>`;
     if (!board || board.error) {
       const why = !board ? (S.reachable ? 'loading…' : "can't reach the server · the leaderboard comes back with the connection") : errorText(board.error);
       return setHTML(el, `${head}<div class="mn-empty">${why}</div>`);
@@ -1267,5 +1249,5 @@ window.Cloud = (() => {
   refresh();
   Social.loadNotes();
 
-  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView, askSaver };
+  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView };
 })();

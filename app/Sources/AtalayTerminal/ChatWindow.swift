@@ -628,6 +628,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private let selectionBadge = NSTextField(labelWithString: "")
     /// The glass's tint: the terminal's background, a little warmer (the accent) at the top left.
     private let warmTint = CAGradientLayer()
+    /// The window's see-through background (windowOpacity), a view of its own under everything: the CRT effect squeezes
+    /// the container's sublayers, not its own background, which stayed full size while the window powered off.
+    private let backdrop = NSView()
     private var themeWatch: NSObjectProtocol?
     private var copiedUntil = Date.distantPast
     /// Out of the way while the dashboard shows a menu (see stepAside).
@@ -716,8 +719,14 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     }
 
     /// The theme's colours on what the window draws itself.
+    /// How much of what's behind shows through the window, terminals included: plainly, no frost (a blur over it read as
+    /// a frosted pane, not a see-through terminal). 90% opaque keeps the text easy to read.
+    static let windowOpacity: CGFloat = 0.9
+
     private func paintTheme() {
         let bg = Theme.terminalBg
+        backdrop.wantsLayer = true
+        backdrop.layer?.backgroundColor = bg.withAlphaComponent(Self.windowOpacity).cgColor
         warmTint.colors = zip([bg.blended(withFraction: 0.12, of: Theme.accent) ?? bg, bg, bg], [0.3, 0.22, 0.3] as [CGFloat])
             .map { $0.withAlphaComponent($1).cgColor }
         selectionBadge.textColor = Theme.accent
@@ -746,14 +755,6 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         container.wantsLayer = true
         container.layer?.cornerRadius = 12
         container.layer?.masksToBounds = true
-
-        let glass = NSVisualEffectView()
-        glass.material = .hudWindow
-        glass.blendingMode = .behindWindow
-        glass.state = .active
-        // Only the frost shows what's behind: the 26% of sharp, unblurred dashboard that came through before put text
-        // under the terminal's text.
-        glass.alphaValue = 0.97
 
         let tint = NSView()
         let warm = warmTint
@@ -798,7 +799,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         tabBar.onSelect = { [weak self] in self?.selectTab($0) }
         tabBar.onClose = { [weak self] in self?.closeTab($0) }
         tabBar.onDrag = { [weak self] in self?.dragTab($0, $1) }
-        for v in [glass, tint, header, tabBar, paneArea, ticker, selectionBadge, border, flash] as [NSView] {
+        for v in [backdrop, tint, header, tabBar, paneArea, ticker, selectionBadge, border, flash] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
@@ -811,7 +812,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         mount(terminal)
         paneTop = paneArea.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6)
         paneTopUnderTabs = paneArea.topAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 5)
-        for v in [glass, tint, border, flash] as [NSView] { pin(v, to: container) }
+        for v in [backdrop, tint, border, flash] as [NSView] { pin(v, to: container) }
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: container.topAnchor),
             header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -1091,24 +1092,35 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     private func extra(of tv: ChatTerminalView) -> ExtraPane? { extras.first { $0.terminal === tv } }
 
+    /// The car of the window's own terminal on the orbit. Cars go by their session's name, which stays the same while it
+    /// lives: a tab closed into a car, and a car opened into a window of its own, keep the car they had.
+    var carId: String { "s:" + (detached?.name ?? id) }
+
     /// The window's terminals with no Claude in them, for the orbit's cars: its own when it's a terminal, and every tab
-    /// and split pane besides (a dev server in the tab next to a chat). `id` is what the orbit opens again
-    /// (MainWindowController.openTerminal): the window's id, then `#` and the pane's for a pane.
+    /// and split pane besides (a dev server in the tab next to a chat).
     func plainShells() -> [(id: String, shell: Int32, cwd: String)] {
         var out: [(id: String, shell: Int32, cwd: String)] = []
-        if hud.status == "terminal", let shell = detached?.shellPid { out.append((id, shell, hud.terminalDir ?? cwd)) }
+        if hud.status == "terminal", let shell = detached?.shellPid { out.append((carId, shell, hud.terminalDir ?? cwd)) }
         for pane in extras {
             let shell = pane.shellPid
             // Claude in a pane is a session on the orbit, not a car.
             guard shell > 0, !Self.runsClaude(shell) else { continue }
-            out.append((id + "#" + paneKey(pane), shell, pane.cwd))
+            out.append(("s:" + paneKey(pane), shell, pane.cwd))
         }
         return out
     }
 
+    /// The pane whose car is `id`, its own or a tab's or split's, when it's in this window.
+    private func terminal(forCar id: String) -> ChatTerminalView? {
+        if id == carId { return terminal }
+        return extras.first { "s:" + paneKey($0) == id }?.terminal
+    }
+
+    func hasCar(_ id: String) -> Bool { terminal(forCar: id) != nil }
+
     private func paneKey(_ pane: ExtraPane) -> String { pane.link?.name ?? "pid\(pane.shellPid)" }
 
-    private static func runsClaude(_ shell: Int32) -> Bool {
+    static func runsClaude(_ shell: Int32) -> Bool {
         var level = Proc.children(of: shell)
         for _ in 0..<4 where !level.isEmpty {
             if level.contains(where: Proc.isClaude) { return true }
@@ -1117,10 +1129,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         return false
     }
 
-    /// The orbit opened this window for one of its panes (`key` from plainShells; nil: the window's own): its tab comes to
-    /// the front and the keyboard goes to it, so a window split five ways opens on the pane that was clicked.
-    func focusPane(_ key: String?) {
-        reveal(key.flatMap { k in extras.first { paneKey($0) == k }?.terminal } ?? terminal)
+    /// The orbit opened this window for one of its cars: that pane's tab comes to the front and the keyboard goes to it,
+    /// so a window split five ways opens on the pane that was clicked.
+    func focusCar(_ id: String) {
+        if let tv = terminal(forCar: id) { reveal(tv) }
     }
 
     /// The same for the pane a process runs in (a Claude session clicked on the orbit): the one whose shell it's under.
@@ -1395,8 +1407,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             if hide() { manager?.closed(id) }
             return
         }
-        if panes.contains(where: \.busy), !confirmClose("Close this tab?") { return }
-        for pane in panes { close(pane, undoable: panes.count == 1) }
+        for pane in panes { close(pane) }
     }
 
     /// ⌘]/⌘[: the next or previous pane in the shown tab; false with only one.
@@ -1475,32 +1486,22 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         return true
     }
 
-    /// ⌘W: a pane besides this window's own closes (asking first if something runs in it), as in iTerm2. False for the
-    /// window's own pane: the window itself closes then (hides; its chat keeps running).
+    /// ⌘W: a pane besides this window's own closes, as in iTerm2. False for the window's own pane: the window itself
+    /// closes then (hides; its chat keeps running).
     func closeFocusedPane() -> Bool {
         guard let pane = extra(of: focusedTerminal) else { return false }
-        if pane.busy, !confirmClose("Close this pane?") { return true }
-        close(pane, undoable: true)
+        close(pane)
         return true
     }
 
-    private func confirmClose(_ title: String) -> Bool {
-        let a = NSAlert()
-        a.messageText = title
-        a.informativeText = "Something is still running there; closing stops it."
-        a.alertStyle = .warning
-        a.addButton(withTitle: "Close")
-        a.addButton(withTitle: "Cancel")
-        return a.runModal() == .alertFirstButtonReturn
-    }
-
-    /// Closes a pane: its shell stops, after a few seconds when `undoable` (⇧⌘T brings it back until then).
-    private func close(_ pane: ExtraPane, undoable: Bool) {
+    /// Closes a pane as a window closes: what runs in it goes on, a car on the orbit until it's opened again (a click,
+    /// ⇧⌘T) or the window's End Session ends it. A pane without a session of its own (screen couldn't start) just stops.
+    private func close(_ pane: ExtraPane) {
         if zoomed { _ = toggleZoom() }
         let folder = pane.currentFolder
         removePaneView(pane.terminal)
         extras.removeAll { $0 === pane }
-        if undoable, let name = pane.link?.name {
+        if let name = pane.link?.name {
             pane.detach()
             manager?.closedPane(of: self, session: name, kind: pane.kind, cwd: folder)
         } else {
@@ -1626,11 +1627,15 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         // The dashboard drops the session now, while the window powers off, so it can't be clicked open again; a
         // terminal's car blows up on the orbit at the same moment.
         manager?.dismiss(sessionId: sessionId, pid: hud.brief?.live == true ? hud.brief?.pid : nil)
-        manager?.terminalEnding(id)
+        manager?.terminalEnding(carId)
         if let original { manager?.dismiss(sessionId: manager?.sessionId(of: original.claude), pid: original.claude) }
         let finish = { [weak self] in
             guard let self else { return }
-            if let detached = self.detached { Detached.quit(detached.name) }
+            if let detached = self.detached {
+                Detached.quit(detached.name)
+                // Its tabs and panes closed earlier, still running, end with it.
+                self.manager?.endParked(of: detached.name)
+            }
             self.endPanes()
             self.terminal.terminate()
             if let original { ITerm.end(original) }

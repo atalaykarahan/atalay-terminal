@@ -129,20 +129,35 @@ enum Detached {
         try? FileManager.default.removeItem(at: historyDir.appendingPathComponent(name + ".txt"))
     }
 
-    /// Ends the session: screen closes it, then the shell and everything in it get a hangup. screen alone left
-    /// the shell running (login started it), an orphan holding a pty after every ended chat.
+    /// Ends the session (End Session, a pane's shell ending): screen closes it, then the shell and everything in it get a
+    /// hangup. screen alone left the shell running (login started it), an orphan holding a pty after every ended chat.
+    /// What shrugs off the hangup (a dev server run through npm kept its port for hours) gets TERM three seconds later
+    /// and KILL two after that: an ended session leaves nothing behind.
     static func quit(_ name: String) {
         forgetHistory(name)
         let shell = shellPid(name)
+        var tree: [(pid: Int32, started: UInt64)] = []
+        if let shell { collect(shell, into: &tree) }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: screen)
         p.arguments = ["-S", name, "-X", "quit"]
         try? p.run()
         guard let shell else { return }
         hangUp(shell)
+        let alive = { tree.filter { t in Proc.info(t.pid)?.started == t.started } }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
-            if kill(shell, 0) == 0 { kill(shell, SIGKILL) }
+            for t in alive() { kill(t.pid, SIGTERM) }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                for t in alive() { kill(t.pid, SIGKILL) }
+            }
         }
+    }
+
+    /// A process and everything under it, deepest first, with when each started (a later process with the same pid is
+    /// never touched).
+    private static func collect(_ pid: Int32, into tree: inout [(pid: Int32, started: UInt64)]) {
+        for child in Proc.children(of: pid) { collect(child, into: &tree) }
+        if let info = Proc.info(pid) { tree.append((pid, info.started)) }
     }
 
     /// SIGHUP to a process and its descendants, deepest first.

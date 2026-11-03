@@ -233,6 +233,10 @@
 .lb-pos { color: var(--dim); font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
 .lb-row.top .lb-pos { color: var(--amber); text-shadow: 0 0 8px rgba(var(--amber-rgb), 0.6); }
 .lb-who { display: flex; flex-direction: column; min-width: 0; }
+/* working now (the API: at work in the last three minutes): a green dot by the name, and how many in the header */
+.lb-live { display: inline-block; flex: none; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px rgba(var(--green-rgb), 0.8); vertical-align: middle; animation: lb-live 2s ease-in-out infinite; }
+@keyframes lb-live { 50% { opacity: 0.45; } }
+.lb-now { color: var(--green); font-weight: 700; }
 .lb-who b { color: var(--hi); font-weight: 700; white-space: nowrap; }
 .lb-who b i { color: var(--accent-soft); font-style: normal; font-weight: 400; opacity: 0.85; }
 .lb-who small { overflow: hidden; color: var(--dim); white-space: nowrap; text-overflow: ellipsis; }
@@ -364,11 +368,3 @@
 .ksw-how .ks-key { box-sizing: border-box; width: 172px; min-width: 0; }
 .ks-key.fixed { display: inline-flex; align-items: center; justify-content: center; color: var(--txt); cursor: default; }
 .ks-key.fixed:hover { border-color: var(--line); }
-
-/* the token saver's question (cloud.js askSaver): one big number, one line */
-.pk.sav { width: min(380px, 92vw); }
-.sav-body { padding-top: 22px; text-align: center; }
-.sav-big { display: block; color: var(--accent); font-size: 52px; font-weight: 800; line-height: 1; text-shadow: 0 0 22px rgba(var(--accent-rgb), 0.5); }
-.sav-sub { margin: 8px 0 4px; color: var(--hi); font-size: 1.1em; }
-.sav-line { margin: 0 0 6px; color: var(--dim); }
-.sav-line b { color: var(--accent); }

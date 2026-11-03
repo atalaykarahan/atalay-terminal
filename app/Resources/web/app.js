@@ -134,18 +134,8 @@ function setVisibility(visible, focused) {
   document.documentElement.classList.toggle('paused', !visible);
   map('activity', visible, focused);
 }
-// Once the dashboard is past its boot screen (a question asked at launch waits for it).
-function afterBoot(fn) {
-  const b = $('boot');
-  if (!b || b.classList.contains('gone')) return fn();
-  const t = setInterval(() => {
-    if (!b.classList.contains('gone')) return;
-    clearInterval(t);
-    fn();
-  }, 300);
-}
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open(), askTokenSaver: () => afterBoot(() => window.Cloud?.askSaver()) };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
 }
 

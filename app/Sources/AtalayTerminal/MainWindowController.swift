@@ -230,12 +230,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 // Everything comes back hidden, so a launch doesn't throw windows on screen: chats are hexagons on the
                 // orbit and in the sidebar, terminals flying (or parked) cars, and a click on one opens its window.
                 // A window's tabs and split panes (sessions named after the window's) go back into it.
-                let panes = running.compactMap { s in Detached.extraInfo(s.name).map { (s, $0) } }
-                for s in running where Detached.extraInfo(s.name) == nil && !self.chats.values.contains(where: { $0.detached?.name == s.name }) {
+                // Closed tabs opened into windows of their own come back as windows.
+                self.standalone.formIntersection(running.map(\.name))
+                self.saveStandalone()
+                let panes = running.compactMap { s in self.standalone.contains(s.name) ? nil : Detached.extraInfo(s.name).map { (s, $0) } }
+                for s in running where (Detached.extraInfo(s.name) == nil || self.standalone.contains(s.name))
+                    && !self.chats.values.contains(where: { $0.detached?.name == s.name }) {
                     self.openWindow(cwd: s.cwd, claudeArgs: s.claude ? [] : nil, sessionId: s.sessionId, title: s.title,
                                     detached: DetachedLink(name: s.name), show: false, restored: true)
                 }
-                for (s, info) in panes where !self.chats.values.contains(where: { c in c.extras.contains { $0.link?.name == s.name } }) {
+                // A parked one stays a car on the orbit.
+                for (s, info) in panes where self.parked[s.name] == nil && !self.chats.values.contains(where: { c in c.extras.contains { $0.link?.name == s.name } }) {
                     if let c = self.chats.values.first(where: { $0.detached?.name == info.parent }) {
                         c.adoptPane(session: s.name, kind: info.kind, cwd: s.cwd, focus: false)
                     } else {
@@ -337,6 +342,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 ])
             }
         }
+        // Closed tabs and panes, still running (Claude in one is a session on the orbit, not a car).
+        var gone = false
+        for (name, link) in parked {
+            guard let shell = link.shellPid else {
+                parked[name] = nil
+                gone = true
+                continue
+            }
+            guard !ChatWindowController.runsClaude(shell) else { continue }
+            let jobs = Proc.children(of: shell)
+            let cwd = Proc.cwd(shell) ?? HOME
+            let cpu = busy(shell, jobs, work: true)
+            list.append([
+                "id": "s:" + name, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
+                "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
+                "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+            ])
+        }
+        if gone { saveParked() }
         for l in runaways.left {
             let cpu = busy(l.pid, [l.pid], work: false)
             list.append([
@@ -461,6 +485,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                     c.show()
                     return c.focusPane(hosting: pid)
                 }
+                // A tab or split pane closed with Claude running in it comes back into its window.
+                if let name = Detached.sessionName(hosting: pid), parked[name] != nil { return reopenParked(name, own: true) }
                 // A tab or split pane's session goes by its window's.
                 if let name = Detached.sessionName(hosting: pid),
                    let c = chats.values.first(where: { $0.detached?.name == (Detached.extraInfo(name)?.parent ?? name) }) {
@@ -662,9 +688,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// session lives on for a few seconds, like iTerm2's.
     private enum Closed {
         case window(String)
-        case pane(window: String, session: String, kind: PaneKind, cwd: String, until: Date, quit: DispatchWorkItem)
+        case pane(window: String, session: String, kind: PaneKind, cwd: String)
     }
     private var closedItems: [Closed] = []
+
+    /// Tabs and split panes closed with ⌘W or their ×, still running as a closed window's chat does: each is a car on the
+    /// orbit (Claude in one, a session), and a click brings it back into its window. The window's End Session ends them.
+    /// Kept across launches, so they don't come back into their windows by themselves.
+    private lazy var parked: [String: DetachedLink] = Dictionary(
+        (UserDefaults.standard.stringArray(forKey: "parkedPanes") ?? []).map { ($0, DetachedLink(name: $0)) }, uniquingKeysWith: { a, _ in a })
+    private func saveParked() { UserDefaults.standard.set(Array(parked.keys), forKey: "parkedPanes") }
+
+    /// Parked panes opened from their car: windows of their own from then on, after a restart too (their sessions are still
+    /// named after the window they were a tab of).
+    private lazy var standalone = Set(UserDefaults.standard.stringArray(forKey: "standalonePanes") ?? [])
+    private func saveStandalone() { UserDefaults.standard.set(Array(standalone), forKey: "standalonePanes") }
 
     func closed(_ id: String) {
         closedItems.removeAll { if case .window(id) = $0 { return true } else { return false } }
@@ -672,9 +710,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func closedPane(of window: ChatWindowController, session: String, kind: PaneKind, cwd: String) {
-        let quit = DispatchWorkItem { Detached.quit(session) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: quit)
-        remember(.pane(window: window.id, session: session, kind: kind, cwd: cwd, until: Date().addingTimeInterval(4.8), quit: quit))
+        parked[session] = DetachedLink(name: session)
+        saveParked()
+        remember(.pane(window: window.id, session: session, kind: kind, cwd: cwd))
+        pushTerminals()
+    }
+
+    /// A parked pane opened again: from its car, in a window of its own (`own`); with ⇧⌘T, back into its window when that's
+    /// still here.
+    private func reopenParked(_ name: String, own: Bool) {
+        guard let link = parked.removeValue(forKey: name) else { return }
+        saveParked()
+        let cwd = link.shellPid.flatMap(Proc.cwd) ?? HOME
+        if !own, let info = Detached.extraInfo(name), let c = chats.values.first(where: { $0.detached?.name == info.parent && !$0.hud.exited }) {
+            c.show()
+            c.adoptPane(session: name, kind: info.kind, cwd: cwd, focus: true)
+        } else {
+            standalone.insert(name)
+            saveStandalone()
+            let claude = link.shellPid.map(ChatWindowController.runsClaude) ?? false
+            openWindow(cwd: cwd, claudeArgs: claude ? [] : nil, sessionId: nil, title: (cwd as NSString).lastPathComponent,
+                       detached: DetachedLink(name: name))
+        }
+        pushTerminals()
+    }
+
+    /// End Session of a window: its parked tabs and panes end with it.
+    func endParked(of window: String) {
+        for name in parked.keys where Detached.extraInfo(name)?.parent == window {
+            parked[name] = nil
+            Detached.quit(name)
+        }
+        saveParked()
     }
 
     private func remember(_ item: Closed) {
@@ -688,12 +755,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             switch item {
             case let .window(id):
                 if let c = chats[id], !c.isShown, !c.hud.exited { return c.show() }
-            case let .pane(window, session, kind, cwd, until, quit):
-                guard Date() < until, let c = chats[window], !c.hud.exited else { continue }
-                quit.cancel()
-                c.show()
-                c.adoptPane(session: session, kind: kind, cwd: cwd, focus: true)
-                return
+            case let .pane(_, session, _, _):
+                guard parked[session] != nil else { continue }
+                return reopenParked(session, own: false)
             }
         }
         NSSound.beep()
@@ -706,12 +770,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// A car on the orbit was clicked: its window comes up with that very pane in front (its tab shown, the keyboard in
-    /// it), not whichever was used last.
+    /// it), not whichever was used last; a closed tab's car opens in a window of its own.
     private func openTerminal(_ id: String) {
-        let parts = id.split(separator: "#", maxSplits: 1).map(String.init)
-        guard let c = parts.first.flatMap({ chats[$0] }) else { return }
-        c.show()
-        c.focusPane(parts.count > 1 ? parts[1] : nil)
+        if let c = chats.values.first(where: { $0.hasCar(id) }) {
+            c.show()
+            return c.focusCar(id)
+        }
+        if id.hasPrefix("s:") { reopenParked(String(id.dropFirst(2)), own: true) }
     }
 
     /// A terminal ended with its End button: its car explodes on the orbit now, not at the next terminals update.

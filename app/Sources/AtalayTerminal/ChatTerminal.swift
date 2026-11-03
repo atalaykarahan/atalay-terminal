@@ -375,7 +375,10 @@ enum TerminalFactory {
 
     /// The theme's colours (ThemeStore): when a terminal is made, and again when the theme changes.
     static func paint(_ tv: ChatTerminalView) {
-        tv.nativeBackgroundColor = Theme.terminalBg
+        // See-through: the window's own background is the terminal's (ChatWindowController.windowOpacity), so the
+        // header and every pane share one opacity. SwiftTerm keeps a terminal's opacity in its background colour's
+        // alpha: the theme's colour as it is made the terminals solid (how the see-through went with the themes).
+        tv.nativeBackgroundColor = Theme.terminalBg.withAlphaComponent(0)
         tv.nativeForegroundColor = Theme.text
         tv.caretColor = Theme.terminalCursor
         tv.caretTextColor = Theme.terminalCaretText
@@ -396,10 +399,6 @@ enum TerminalFactory {
         // colours are the app's own (Theme.ansi).
         let look = ITermLook.current
         tv.font = look?.fontName.flatMap { NSFont(name: $0, size: fontSize) } ?? Theme.mono(fontSize)
-        // Glass window, but text first: readable terminals stay around 80% opaque over a blurred background (10–20%
-        // see-through); at 28% the busy dashboard behind made the text tiring to read. With the window's warm tint
-        // and frost this lands near that (ChatWindowController.buildLayout).
-        tv.backgroundOpacity = 0.6
         // Text never fades into its background (iTerm2's "minimum contrast", WCAG AA): light text on a line Claude's
         // diff paints green or red is darkened just enough to read.
         tv.minimumContrastRatio = 4.5
@@ -471,6 +470,8 @@ enum TerminalFactory {
         env["TERM_PROGRAM"] = "AtalaysTerminal"
         if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
         if env["HOME"] == nil { env["HOME"] = HOME }
+        // The app's rtk (TokenSavers), last, so one of the user's own comes first.
+        env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin") + ":" + TokenSavers.binDir.path
         return env
     }
 }

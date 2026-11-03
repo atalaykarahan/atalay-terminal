@@ -127,9 +127,6 @@ final class ExtraPane: NSObject, LocalProcessTerminalViewDelegate {
 
     var currentFolder: String { (shellPid > 0 ? Proc.cwd(shellPid) : nil) ?? cwd }
 
-    /// Whether something runs in its shell (closing it would stop that).
-    var busy: Bool { shellPid > 0 && !Proc.children(of: shellPid).isEmpty }
-
     /// Lets go of the session without ending it (the app quits, or ⇧⌘T may bring it back), keeping its scrollback for
     /// the pane that attaches next.
     func detach() {

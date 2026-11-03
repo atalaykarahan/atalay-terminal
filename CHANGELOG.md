@@ -3,6 +3,18 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.14.0
+
+- Friends: "is now online" notices are back, as on Steam: a friend who comes online after ten minutes or more away (a dropped connection, a restart for an update or a short sleep doesn't say it again)
+- Leaderboard: a green dot by everyone at work right now (the last three minutes) and how many are at the top, so nobody works alone; never for someone invisible or who keeps their active time to themselves
+- Token savers: rtk (shorter command output) and caveman (short answers) ship in the app and are on from the first launch for Claude Code and Codex, with no question; Settings has a switch for each (one you set up yourself stays yours)
+- Tabs: a tab or split pane closed with ⌘W or its × keeps running, as a closed window does: it stays a car on the orbit (the same one, no blast) and a click opens it in a window of its own (⇧⌘T puts it back in its tab); End Session ends the window and all of them, and whatever shrugs off the hangup (a dev server holding its port) is ended too
+- Chats: the windows are see-through again, plainly and without the frost, 90% opaque, header and terminals alike (they had turned solid with the themes)
+
+## 0.13.1 (Windows only)
+
+- Updates: "update now" pressed while the new version is still downloading installs it as soon as the download ends (it stayed on "downloading…" with no way out); a failed download or installer start says so and gives the button back
+
 ## 0.13.0
 
 - Shortcuts: change any of the app's keyboard shortcuts in the main menu's new SHORTCUTS tab: click one and press the new keys (↺ brings it back); on top, the shortcut wheel's card: the four-finger click, and a second way you set, keys or a mouse button with ⌃ ⌥ ⇧ ⌘
@@ -53,7 +65,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
-- Token saver: in the app since 0.13.0 (the question once, Settings' switch and what it saved), on once rtk is in the build: run app/scripts/fetch-rtk.sh once on the Mac that builds
+- Updates (must be in the next version): a progress bar while an update downloads and installs, on Windows and the Mac; on Windows one looked frozen and with nothing moving there was no telling whether it was
 - Chats: group chats, several friends in one conversation (users asked for it)
 - Anime mode: a funny mode for the whole app, with anime girls and the like, and sound effects where they shout "uwu"
 - Skins: sexy skins (requested)

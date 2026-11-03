@@ -12,15 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         controller = MainWindowController(engine: engine)
         controller.showWindow(nil)
-        // Once, when this build ships rtk: whether to save tokens with it (TokenSavers). The staging build asks at every
-        // launch, to see the question (so does --token-saver-question).
-        let staging = Bundle.main.bundleIdentifier?.hasSuffix(".staging") == true
-        let askAnyway = staging || CommandLine.arguments.contains("--token-saver-question")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6.5) { [weak self] in
-            guard let self, TokenSavers.shouldAsk(force: askAnyway) else { return }
-            self.controller.showDashboard()
-            self.controller.radar.push("askTokenSaver", "null")
-        }
+        // The token savers this build ships go on by themselves the first time (Settings turns them off).
+        TokenSavers.autoStart()
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         installMonitors()
