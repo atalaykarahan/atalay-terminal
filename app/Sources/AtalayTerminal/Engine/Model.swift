@@ -77,6 +77,9 @@ final class OtherAI {
     var log: String?, logOffset: UInt64 = 0, logChecked = 0.0
     var turnOpen: Bool?
     var call: (id: String, p: Pending)?
+    /// Its own record says it waits for the user (Antigravity's step WAITING: a permission).
+    var waitsForUser = false
+    var title = ""
     var prompt = "", model = "", ctx = 0, ctxMax = 0.0
 
     init(id: String, tool: String, pid: Int32) {

@@ -351,6 +351,79 @@ function codexCall(name, p, at) {
   return { n: 'Bash', c: 'bash', l: clip(command || name, 120), t: at };
 }
 
+// The lines a tool's log (O.log) got since the last look, parsed (from its last 2 MB when it's long).
+function readNewLines(O) {
+  let st;
+  try {
+    st = fs.statSync(O.log);
+  } catch {
+    return [];
+  }
+  if (st.size <= (O.logOffset || 0)) return [];
+  const from = Math.max(O.logOffset || 0, st.size > 2 << 20 ? st.size - (2 << 20) : 0);
+  const buf = Buffer.alloc(st.size - from);
+  const fd = fs.openSync(O.log, 'r');
+  try {
+    fs.readSync(fd, buf, 0, buf.length, from);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const end = buf.lastIndexOf(0x0a);
+  if (end < 0) return [];
+  O.logOffset = from + end + 1;
+  const out = [];
+  for (const line of buf.subarray(0, end).toString('utf8').split('\n')) {
+    try {
+      out.push(JSON.parse(line));
+    } catch {}
+  }
+  return out;
+}
+
+// node:sqlite (Electron's Node has it); without it, Antigravity's planets keep their CPU-made status.
+let sqlite = null;
+try {
+  sqlite = require('node:sqlite');
+} catch {}
+
+// Antigravity's newest conversation in `cwd` (its folders are file:// addresses, decoded to compare): read-only while
+// Antigravity has the database open (its write-ahead log beside it), else as it stands (a read-only reader can't open it
+// the usual way once the log is merged in and gone).
+function agyConversation(root, cwd) {
+  const file = path.join(root, 'conversation_summaries.db');
+  if (!sqlite || !fs.existsSync(file)) return null;
+  const { fileURLToPath, pathToFileURL } = require('url');
+  const same = (uri) => {
+    try {
+      const p = path.resolve(fileURLToPath(uri));
+      return process.platform === 'win32' ? p.toLowerCase() === path.resolve(cwd).toLowerCase() : p === path.resolve(cwd);
+    } catch {
+      return false;
+    }
+  };
+  for (const open of [() => new sqlite.DatabaseSync(file, { readOnly: true }), () => new sqlite.DatabaseSync(new URL(`${pathToFileURL(file).href}?immutable=1`), { readOnly: true })]) {
+    let db = null;
+    try {
+      db = open();
+      const rows = db.prepare('SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 ORDER BY last_modified_time DESC LIMIT 40').all();
+      for (const r of rows) {
+        let uris = [];
+        try {
+          uris = JSON.parse(r.workspace_uris);
+        } catch {}
+        if (Array.isArray(uris) && uris.some(same)) return r;
+      }
+      return null;
+    } catch {
+    } finally {
+      try {
+        if (db) db.close();
+      } catch {}
+    }
+  }
+  return null;
+}
+
 // The newest Codex log of the last week begun in `cwd` and written since `since` (ms).
 function codexLog(cwd, since) {
   const root = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'sessions');
@@ -1064,7 +1137,7 @@ class RadarEngine {
     for (const O of this.others.values()) {
       if (O.endedAt > 0) continue;
       out.push({
-        sessionId: O.id, pid: O.pid, cwd: O.cwd, status: this.otherStatus(O).status, name: O.tool, title: O.prompt || baseName(O.cwd),
+        sessionId: O.id, pid: O.pid, cwd: O.cwd, status: this.otherStatus(O).status, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
         host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
       });
     }
@@ -2032,6 +2105,7 @@ class RadarEngine {
         this.stateDirty = true;
       }
       if (O.tool === 'Codex' && a.cwd) this.readCodexLog(O, a.cwd, a.started, now);
+      if (O.tool === 'Antigravity' && a.cwd) this.readAntigravity(O, a.cwd, now);
       if (a.pct >= 1) O.busyUntil = now + 10_000;
       const busy = now < O.busyUntil;
       if (busy) O.lastTs = now;
@@ -2063,6 +2137,7 @@ class RadarEngine {
   otherStatus(O, now = Date.now()) {
     if (O.endedAt > 0) return { status: 'ended', waiting: null };
     if (O.turnOpen === false) return { status: 'idle', waiting: null };
+    if (O.turnOpen === true && O.waitsForUser) return { status: 'waiting', waiting: `approval: ${O.call ? O.call.p.l : 'a step'}` };
     if (O.turnOpen === true) {
       if (!O.command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
       return { status: 'busy', waiting: null };
@@ -2073,6 +2148,50 @@ class RadarEngine {
   // What it runs: a shell of its own right now, else the tool call its log has it on.
   otherRunning(O) {
     return O.command ? { n: 'Bash', c: 'bash', l: O.command, t: O.commandSince || Date.now() } : O.call ? O.call.p : null;
+  }
+
+  // Antigravity's own records (~/.gemini/antigravity-cli), as the Mac engine reads them: its newest conversation in this
+  // folder from conversation_summaries.db (its title and run status: RUNNING or BUSY while it works, IDLE once it's the
+  // user's turn), and that conversation's transcript.jsonl for the tool call it's on, a step WAITING for the user's
+  // permission, the prompt and the context. Its screen redrawing while the user types is no work.
+  readAntigravity(O, cwd, now) {
+    const root = path.join(HOME, '.gemini', 'antigravity-cli');
+    const row = agyConversation(root, cwd);
+    if (!row) return;
+    const open = /_(RUNNING|BUSY|CANCELING)$/.test(row.status || '');
+    if (O.turnOpen !== open || O.title !== row.title) {
+      O.turnOpen = open;
+      O.title = row.title || '';
+      this.stateDirty = true;
+    }
+    if (!open) {
+      O.call = null;
+      O.waitsForUser = false;
+    }
+    const file = path.join(root, 'brain', row.conversation_id, '.system_generated', 'logs', 'transcript.jsonl');
+    if (O.log !== file) {
+      O.log = file;
+      O.logOffset = 0;
+    }
+    for (const j of readNewLines(O)) {
+      const step = j.status || '';
+      const ts = parseISO(j.created_at) || now;
+      O.waitsForUser = step === 'WAITING';
+      if (j.type === 'USER_INPUT') {
+        O.prompt = clip(String(j.content || '').replace(/<\/?USER_REQUEST>/g, '').trim(), 200);
+        O.call = null;
+      } else if (j.type === 'PLANNER_RESPONSE') {
+        if (j.input_tokens != null) O.ctx = (Number(j.input_tokens) || 0) + (Number(j.cache_read_tokens) || 0);
+        const call = Array.isArray(j.tool_calls) && j.tool_calls[j.tool_calls.length - 1];
+        if (call) {
+          const args = call.args || {};
+          const line = String(args.CommandLine ?? args.Command ?? args.Prompt ?? args.AbsolutePath ?? call.name ?? 'tool').replace(/^"|"$/g, '');
+          const shell = call.name === 'run_command';
+          O.call = { id: '', p: { n: shell ? 'Bash' : call.name || 'tool', c: shell ? 'bash' : 'plan', l: clip(line, 120), t: ts } };
+        } else O.call = null;
+      } else if (['DONE', 'ERROR', 'CANCELED'].includes(step)) O.call = null;
+    }
+    this.stateDirty = true;
   }
 
   // Codex's own log (CODEX_HOME\sessions\<date>\rollout-….jsonl), as the Mac engine reads it: its turn open or over,
@@ -2290,7 +2409,7 @@ class RadarEngine {
       const { status, waiting } = this.otherStatus(O, now);
       const running = this.otherRunning(O);
       list.push({
-        id: O.id, name: O.tool, title: baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
+        id: O.id, name: O.tool, title: O.title || baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
         model: O.model || O.tool, effort: '', status, live, statusSince: live ? O.statusSince : O.endedAt,
         cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: 0,
         tok: { in: 0, out: 0, cr: 0, cw: 0 }, cost: 0, tools: 0, errors: 0, web: 0, prompts: 0,

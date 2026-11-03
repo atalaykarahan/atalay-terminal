@@ -1,5 +1,6 @@
 import CoreServices
 import Foundation
+import SQLite3
 
 /// Reads ~/.claude live: the session registry (who is running, busy/idle/waiting) and the
 /// transcripts (every prompt, tool call, result and token count). Read-only; runs on its own queue.
@@ -895,6 +896,7 @@ final class RadarEngine {
                 stateDirty = true
             }
             if O.tool == "Codex", !cwd.isEmpty { readCodexLog(O, cwd: cwd, since: Double(f.info.started) / 1_000_000, now: ms) }
+            if O.tool == "Antigravity", !cwd.isEmpty { readAntigravity(O, cwd: cwd) }
             if busy != O.busy || cwd != O.cwd || O.tty != f.info.tty || O.ppid != f.info.ppid {
                 if busy != O.busy { O.statusSince = ms }
                 O.busy = busy
@@ -981,6 +983,92 @@ final class RadarEngine {
                 if O.call?.id == p["call_id"] as? String { O.call = nil }
             default:
                 break
+            }
+        }
+        stateDirty = true
+    }
+
+    /// Antigravity's own records (~/.gemini/antigravity-cli): its conversation in this folder, newest first, from
+    /// conversation_summaries.db (its title and its run status: RUNNING or BUSY while it works, IDLE once it's the user's
+    /// turn), and that conversation's transcript.jsonl for what it's on: the tool call it waits on, a step WAITING for the
+    /// user's permission, the prompt and the context. Its screen redrawing while the user types is no work.
+    private func readAntigravity(_ O: OtherAI, cwd: String) {
+        let root = HOME + "/.gemini/antigravity-cli"
+        let sql = "SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 "
+            + "ORDER BY last_modified_time DESC LIMIT 40"
+        // Read-only while Antigravity has it open (its write-ahead log beside it); once it has closed it (the log merged in
+        // and gone) a read-only reader can't open it that way, and reads it as it stands.
+        var db: OpaquePointer?, stmt: OpaquePointer?
+        for mode in ["mode=ro", "immutable=1"] {
+            let url = "file:" + (root + "/conversation_summaries.db").addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)! + "?" + mode
+            if sqlite3_open_v2(url, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
+               sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK { break }
+            sqlite3_finalize(stmt)
+            stmt = nil
+            sqlite3_close(db)
+            db = nil
+        }
+        guard let db, let stmt else { return }
+        defer {
+            sqlite3_finalize(stmt)
+            sqlite3_close(db)
+        }
+        sqlite3_busy_timeout(db, 200)
+        // Its newest conversation in this folder (a folder as a file:// address, as Antigravity writes it).
+        let here = URL(fileURLWithPath: cwd).standardizedFileURL.path
+        let text = { (i: Int32) in sqlite3_column_text(stmt, i).map { String(cString: $0) } ?? "" }
+        var row: (id: String, title: String, status: String)?
+        while row == nil, sqlite3_step(stmt) == SQLITE_ROW {
+            let uris = (try? JSONSerialization.jsonObject(with: Data(text(3).utf8)) as? [String]) ?? []
+            if uris.contains(where: { URL(string: $0)?.standardizedFileURL.path == here }) { row = (text(0), text(1), text(2)) }
+        }
+        guard let (id, title, status) = row else { return }
+        let open = status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY") || status.hasSuffix("_CANCELING")
+        if O.turnOpen != open || O.title != title {
+            O.turnOpen = open
+            O.title = title
+            stateDirty = true
+        }
+        if !open { O.call = nil; O.waitsForUser = false }
+        // Its transcript, read on from where it was (a new conversation: from the start).
+        let path = root + "/brain/" + id + "/.system_generated/logs/transcript.jsonl"
+        if O.log != path {
+            O.log = path
+            O.logOffset = 0
+        }
+        guard let st = fileStat(path), st.size > O.logOffset, let fh = FileHandle(forReadingAtPath: path) else { return }
+        defer { try? fh.close() }
+        let from = max(O.logOffset, st.size > 2 << 20 ? st.size - (2 << 20) : 0)
+        try? fh.seek(toOffset: from)
+        let data = fh.readDataToEndOfFile()
+        guard let lastBreak = data.lastIndex(of: 0x0A) else { return }
+        O.logOffset = from + UInt64(lastBreak - data.startIndex + 1)
+        for line in data[data.startIndex...lastBreak].split(separator: 0x0A) {
+            guard let j = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+            let kind = j["type"] as? String ?? "", step = j["status"] as? String ?? ""
+            let ts = parseISO(j["created_at"] as? String)
+            O.waitsForUser = step == "WAITING"
+            switch kind {
+            case "USER_INPUT":
+                let said = (j["content"] as? String ?? "").replacingOccurrences(of: #"</?USER_REQUEST>"#, with: "", options: .regularExpression)
+                O.prompt = clip(said.trimmingCharacters(in: .whitespacesAndNewlines), 200)
+                O.call = nil
+            case "PLANNER_RESPONSE":
+                if let n = j["input_tokens"] as? NSNumber { O.ctx = n.intValue + int(j["cache_read_tokens"]) }
+                // A reply that calls tools: they run (or wait) next.
+                if let call = (j["tool_calls"] as? [[String: Any]])?.last {
+                    let name = call["name"] as? String ?? "tool"
+                    let args = call["args"] as? [String: Any] ?? [:]
+                    let line = (args["CommandLine"] ?? args["Command"] ?? args["Prompt"] ?? args["AbsolutePath"]).map { "\($0)" } ?? name
+                    let shell = name == "run_command"
+                    O.call = ("", Pending(n: shell ? "Bash" : name, c: shell ? "bash" : "plan",
+                                          l: clip(line.trimmingCharacters(in: CharacterSet(charactersIn: "\"")), 120), t: ts))
+                } else {
+                    O.call = nil
+                }
+            default:
+                // A tool's own step: done, it no longer waits; still running or waiting, it does.
+                if step == "DONE" || step == "ERROR" || step == "CANCELED" { O.call = nil }
             }
         }
         stateDirty = true
@@ -1171,10 +1259,13 @@ final class RadarEngine {
             let running = O.command.map { Pending(n: "Bash", c: "bash", l: $0, t: O.commandSince) } ?? O.call?.p
             var status = "ended", waiting: String?
             if live, let open = O.turnOpen {
-                // Its log has the turn: over is the user's turn; a tool call that runs nothing and burns nothing for a few
-                // seconds waits for the user's approval.
+                // Its log has the turn: over is the user's turn; a step waiting for the user, or a tool call that runs
+                // nothing and burns nothing for a few seconds, waits for the user's approval.
                 if !open {
                     status = "idle"
+                } else if O.waitsForUser {
+                    status = "waiting"
+                    waiting = "approval: " + (O.call?.p.l ?? "a step")
                 } else if O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 {
                     status = "waiting"
                     waiting = "approval: " + call.p.l
@@ -1187,7 +1278,7 @@ final class RadarEngine {
             let host: String? = O.hostTab != nil ? "app" : (live ? "term" : nil)
             let folder = (O.cwd as NSString).lastPathComponent
             var item: [String: Any] = [
-                "id": O.id, "name": O.tool, "title": folder, "lastPrompt": O.prompt, "cwd": cwdLabel(O.cwd), "branch": "",
+                "id": O.id, "name": O.tool, "title": O.title.isEmpty ? folder : O.title, "lastPrompt": O.prompt, "cwd": cwdLabel(O.cwd), "branch": "",
                 "model": O.model.isEmpty ? O.tool : O.model, "effort": "", "status": status, "live": live,
                 "statusSince": live ? O.statusSince : O.endedAt, "cpu": O.cpu, "mem": O.mem, "kind": "", "entry": "",
                 "firstTs": O.firstTs, "lastTs": O.lastTs, "ctx": O.ctx, "ctxMax": O.ctxMax, "turnMs": 0.0,
@@ -1202,7 +1293,7 @@ final class RadarEngine {
             item["host"] = orNull(host)
             item["tab"] = orNull(O.hostTab)
             list.append(item)
-            var brief = SessionBrief(id: O.id, name: O.tool, title: O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
+            var brief = SessionBrief(id: O.id, name: O.tool, title: !O.title.isEmpty ? O.title : O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
                                      cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab)
             brief.model = O.model.isEmpty ? O.tool : O.model
             brief.ctx = O.ctx
