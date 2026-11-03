@@ -496,7 +496,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 c.show()
                 return c.focusPane(hosting: pid)
             }
-            guard let name = Detached.sessionName(hosting: pid) else { return }
+            // Running outside the app: its terminal (iTerm2's session, Terminal's tab) comes to the front.
+            guard let name = Detached.sessionName(hosting: pid) else { return ITerm.reveal(pid: pid) }
             if parked[name] != nil { return reopenParked(name, own: true) }
             if let c = chats.values.first(where: { $0.detached?.name == (Detached.extraInfo(name)?.parent ?? name) }) {
                 c.show()

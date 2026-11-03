@@ -888,6 +888,13 @@ final class RadarEngine {
             let busy = ms < O.busyUntil
             if busy { O.lastTs = ms }
             let cwd = Proc.cwd(pid) ?? O.cwd
+            let command = Self.runningCommand(under: pid)
+            if command != O.command {
+                O.command = command
+                O.commandSince = ms
+                stateDirty = true
+            }
+            if O.tool == "Codex", !cwd.isEmpty { readCodexLog(O, cwd: cwd, since: Double(f.info.started) / 1_000_000, now: ms) }
             if busy != O.busy || cwd != O.cwd || O.tty != f.info.tty || O.ppid != f.info.ppid {
                 if busy != O.busy { O.statusSince = ms }
                 O.busy = busy
@@ -906,6 +913,118 @@ final class RadarEngine {
         others = others.filter { $0.value.endedAt == 0 || ms - $0.value.endedAt < 120_000 }
         if others.count != before { stateDirty = true }
         otherCpu = otherCpu.filter { measured.contains($0.key) }
+    }
+
+    private static let shellNames: Set<String> = ["sh", "bash", "zsh", "fish", "dash"]
+
+    /// The command a tool has a shell run right now (`zsh -lc "npm test"`), from its child processes.
+    private static func runningCommand(under pid: Int32) -> String? {
+        var level = Proc.children(of: pid), found: String?
+        for _ in 0..<3 where !level.isEmpty {
+            for p in level {
+                guard let name = Proc.name(p), shellNames.contains(name), let args = Proc.arguments(p),
+                      let i = args.firstIndex(where: { ["-c", "-lc", "-ic"].contains($0) }), i + 1 < args.count else { continue }
+                found = args[i + 1]
+            }
+            level = level.flatMap { Proc.children(of: $0) }
+        }
+        return found.map { clip($0.replacingOccurrences(of: "\n", with: " "), 120) }
+    }
+
+    /// Codex's own log (~/.codex/sessions/<date>/rollout-….jsonl): its turn open or over, the tool call it's on, the
+    /// prompt, the context and the model. Matched to the process by its folder and start, looked for again every 30 s
+    /// until found; read on from where it was.
+    private func readCodexLog(_ O: OtherAI, cwd: String, since: Double, now: Double) {
+        if O.log == nil, now - O.logChecked > 30_000 {
+            O.logChecked = now
+            if let path = Self.codexLog(cwd: cwd, since: since) {
+                O.log = path
+                O.logOffset = 0
+            }
+        }
+        guard let path = O.log, let st = fileStat(path), st.size > O.logOffset,
+              let fh = FileHandle(forReadingAtPath: path) else { return }
+        defer { try? fh.close() }
+        // A long log: its last 2 MB tell enough.
+        let from = max(O.logOffset, st.size > 2 << 20 ? st.size - (2 << 20) : 0)
+        try? fh.seek(toOffset: from)
+        let data = fh.readDataToEndOfFile()
+        guard let lastBreak = data.lastIndex(of: 0x0A) else { return }
+        O.logOffset = from + UInt64(lastBreak - data.startIndex + 1)
+        for line in data[data.startIndex...lastBreak].split(separator: 0x0A) {
+            guard let j = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let p = j["payload"] as? [String: Any] else { continue }
+            let ts = parseISO(j["timestamp"] as? String)
+            switch (j["type"] as? String, p["type"] as? String) {
+            case ("event_msg", "task_started"):
+                O.turnOpen = true
+                O.call = nil
+            case ("event_msg", "task_complete"), ("event_msg", "turn_aborted"):
+                O.turnOpen = false
+                O.call = nil
+            case ("event_msg", "item_completed"):
+                let item = p["item"] as? [String: Any]
+                if item?["type"] as? String == "UserMessage",
+                   let text = (item?["content"] as? [[String: Any]])?.compactMap({ $0["text"] as? String }).first {
+                    O.prompt = clip(text, 200)
+                }
+            case ("event_msg", "token_count"):
+                let info = p["info"] as? [String: Any]
+                if let last = info?["last_token_usage"] as? [String: Any] { O.ctx = int(last["input_tokens"]) }
+                if let window = info?["model_context_window"] as? NSNumber { O.ctxMax = window.doubleValue }
+            case ("event_msg", "thread_settings_applied"):
+                if let m = (p["thread_settings"] as? [String: Any])?["model"] as? String { O.model = m }
+            case ("response_item", let kind?) where kind.hasSuffix("_call") && !kind.hasSuffix("_output"):
+                let name = p["name"] as? String ?? kind
+                O.call = (p["call_id"] as? String ?? "", Self.codexCall(name: name, p: p, at: ts))
+            case ("response_item", let kind?) where kind.hasSuffix("_call_output"):
+                if O.call?.id == p["call_id"] as? String { O.call = nil }
+            default:
+                break
+            }
+        }
+        stateDirty = true
+    }
+
+    /// A Codex tool call as a pending tool: its shell command, or the files it patches.
+    private static func codexCall(name: String, p: [String: Any], at: Double) -> Pending {
+        let input = (p["input"] as? String) ?? (p["arguments"] as? String) ?? ""
+        if name.contains("patch") { return Pending(n: "Edit", c: "edit", l: "apply patch", t: at) }
+        // `tools.exec_command({"cmd":"…"})`, or the older shell call's {"command":["bash","-lc","…"]}.
+        var command = ""
+        if let r = input.range(of: #""cmd"\s*:\s*"((?:[^"\\]|\\.)*)""#, options: .regularExpression) {
+            command = String(input[r]).replacingOccurrences(of: #"^"cmd"\s*:\s*""#, with: "", options: .regularExpression)
+            command = String(command.dropLast()).replacingOccurrences(of: "\\\"", with: "\"")
+        } else if let data = input.data(using: .utf8), let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let parts = j["command"] as? [String] {
+            command = parts.last ?? ""
+        }
+        return Pending(n: "Bash", c: "bash", l: clip(command.isEmpty ? name : command, 120), t: at)
+    }
+
+    /// The newest Codex log of the last week begun in `cwd` and written since `since` (seconds).
+    private static func codexLog(cwd: String, since: Double) -> String? {
+        let root = (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? HOME + "/.codex") + "/sessions"
+        let fm = FileManager.default
+        var found: (path: String, mtime: Double)?
+        let day = DateFormatter()
+        day.dateFormat = "yyyy/MM/dd"
+        for back in 0..<7 {
+            let dir = root + "/" + day.string(from: Date().addingTimeInterval(Double(-back) * 86_400))
+            for name in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where name.hasSuffix(".jsonl") {
+                let path = dir + "/" + name
+                guard let mtime = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                      mtime.timeIntervalSince1970 >= since - 5, mtime.timeIntervalSince1970 > found?.mtime ?? 0,
+                      let fh = FileHandle(forReadingAtPath: path) else { continue }
+                let head = fh.readData(ofLength: 64 << 10)
+                try? fh.close()
+                guard let first = head.split(separator: 0x0A).first,
+                      let j = try? JSONSerialization.jsonObject(with: Data(first)) as? [String: Any],
+                      (j["payload"] as? [String: Any])?["cwd"] as? String == cwd else { continue }
+                found = (path, mtime.timeIntervalSince1970)
+            }
+        }
+        return found?.path
     }
 
     private func matchTabs() {
@@ -1048,28 +1167,53 @@ final class RadarEngine {
         for O in others.values {
             if let ended = dismissed[O.id], ended == O.pid { continue }
             let live = O.endedAt == 0
-            let status = live ? (O.busy ? "busy" : "idle") : "ended"
+            // What it runs: a shell of its own right now, else the tool call its log has it on.
+            let running = O.command.map { Pending(n: "Bash", c: "bash", l: $0, t: O.commandSince) } ?? O.call?.p
+            var status = "ended", waiting: String?
+            if live, let open = O.turnOpen {
+                // Its log has the turn: over is the user's turn; a tool call that runs nothing and burns nothing for a few
+                // seconds waits for the user's approval.
+                if !open {
+                    status = "idle"
+                } else if O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 {
+                    status = "waiting"
+                    waiting = "approval: " + call.p.l
+                } else {
+                    status = "busy"
+                }
+            } else if live {
+                status = O.busy || O.command != nil ? "busy" : "idle"
+            }
             let host: String? = O.hostTab != nil ? "app" : (live ? "term" : nil)
             let folder = (O.cwd as NSString).lastPathComponent
             var item: [String: Any] = [
-                "id": O.id, "name": O.tool, "title": folder, "lastPrompt": "", "cwd": cwdLabel(O.cwd), "branch": "",
-                "model": O.tool, "effort": "", "status": status, "live": live,
+                "id": O.id, "name": O.tool, "title": folder, "lastPrompt": O.prompt, "cwd": cwdLabel(O.cwd), "branch": "",
+                "model": O.model.isEmpty ? O.tool : O.model, "effort": "", "status": status, "live": live,
                 "statusSince": live ? O.statusSince : O.endedAt, "cpu": O.cpu, "mem": O.mem, "kind": "", "entry": "",
-                "firstTs": O.firstTs, "lastTs": O.lastTs, "ctx": 0, "ctxMax": 0.0, "turnMs": 0.0,
+                "firstTs": O.firstTs, "lastTs": O.lastTs, "ctx": O.ctx, "ctxMax": O.ctxMax, "turnMs": 0.0,
                 "tok": ["in": 0, "out": 0, "cr": 0, "cw": 0], "cost": 0.0, "tools": 0, "errors": 0, "web": 0, "prompts": 0,
-                "byCat": [String: Int](), "pending": [[String: Any]](), "spark": [Int](repeating: 0, count: 30), "flags": [String](),
-                "agents": [[String: Any]](), "agentsRunning": 0,
+                "byCat": [String: Int](), "pending": running.map { [$0.dict] } ?? [[String: Any]](),
+                "spark": [Int](repeating: 0, count: 30), "flags": [String](), "agents": [[String: Any]](), "agentsRunning": 0,
             ]
-            item["waitingFor"] = NSNull()
+            if let running { item["last"] = running.dict }
+            item["waitingFor"] = orNull(waiting)
             item["tty"] = orNull(O.tty)
             item["pid"] = Int(O.pid)
             item["host"] = orNull(host)
             item["tab"] = orNull(O.hostTab)
             list.append(item)
-            var brief = SessionBrief(id: O.id, name: O.tool, title: folder, status: status, waitingFor: nil, cwd: O.cwd, live: live,
-                                     pid: O.pid, host: host, tab: O.hostTab)
-            brief.model = O.tool
+            var brief = SessionBrief(id: O.id, name: O.tool, title: O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
+                                     cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab)
+            brief.model = O.model.isEmpty ? O.tool : O.model
+            brief.ctx = O.ctx
+            brief.ctxMax = O.ctxMax
             brief.statusSince = live ? O.statusSince : O.endedAt
+            if let running {
+                brief.actionName = running.n
+                brief.actionCat = running.c
+                brief.actionLabel = running.l
+                brief.actionSince = running.t
+            }
             briefs.append(brief)
         }
         list.sort {

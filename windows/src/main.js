@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 const { fileURLToPath } = require('url');
 
 const { createEngine } = require('./engine');
@@ -690,11 +691,26 @@ function showChat(id) {
   return true;
 }
 
+/** The window of a process running outside the app, to the front: its own or the first of its parents' that has one. */
+function revealOutside(pid) {
+  if (process.platform !== 'win32' || !(pid > 0)) return;
+  const own = runaways.ais().find((a) => a.pid === pid);
+  const ids = [pid, ...((own && own.chain) || [])].filter((n) => Number.isInteger(n) && n > 0);
+  const script = `$s = New-Object -ComObject WScript.Shell; foreach ($id in @(${ids.join(',')})) { if ($s.AppActivate([int]$id)) { break } }`;
+  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10_000 }, () => {});
+}
+
 function openSession(sid, fork) {
   if (!sid) return false;
   const live = engine.live().find((s) => s.sessionId === sid);
-  // Another AI tool (Codex…) has no conversation to resume or copy: a click shows the window it runs in, when it's ours.
-  if (sid.startsWith('ai:')) return !fork && !!live && !!live.tab && chats.has(live.tab) && terminals.has(live.tab) && showChat(live.tab);
+  // Another AI tool (Codex…) has no conversation to resume or copy: a click shows the window it runs in, ours, or else
+  // the terminal's outside the app (Windows Terminal, VS Code…), the first of its parents with a window.
+  if (sid.startsWith('ai:')) {
+    if (fork || !live) return false;
+    if (live.tab && chats.has(live.tab) && terminals.has(live.tab)) return showChat(live.tab);
+    revealOutside(live.pid);
+    return true;
+  }
   if (!fork) {
     for (const [id, c] of chats) if (c.sessionId === sid && terminals.has(id)) return showChat(id);
     // Running in one of the app's windows that doesn't know it yet: a terminal Claude was started in, a chat back from

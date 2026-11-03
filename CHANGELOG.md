@@ -15,6 +15,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Context: the gauge follows /autocompact within seconds (it kept the model's 1M until Claude's next reply)
 - Token savers: the switches work for an rtk or caveman you set up yourself too (off takes it out of Claude Code's and Codex's settings, on puts it back as it was), and the app keeps them current: an rtk older than the app's is replaced by the app's where it lies (not one Homebrew keeps), and Claude Code updates the caveman plugin by itself (auto-update on for its marketplace)
 - Orbit: Codex shows as working while its own program works (npm's Codex launcher only waits on it), and End Session on another AI tool outside the app ends all it started, as on Windows
+- Orbit: the other AI tools show what they do: the command they have a shell run, and for Codex its turn from its own log (working, waiting for your approval, your turn), what you asked it and how full its context is; a click on one running outside the app brings its terminal forward (iTerm2's session or Terminal's tab; on Windows its window)
 - Leaderboard: THIS WEEK counts from Monday (each player's own), as the weekly goal does, not the last 7 days; the time beside a name too
 
 ## 0.15.3

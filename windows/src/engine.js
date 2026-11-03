@@ -329,6 +329,65 @@ function resultMeta(tr) {
 
 // ---------- time ----------
 // Parses "2026-10-24T19:41:07.123Z" into epoch milliseconds, as UTC whatever the suffix (as the Mac engine does).
+// A Codex tool call as a pending tool: its shell command, or the files it patches.
+function codexCall(name, p, at) {
+  if (/patch/.test(name)) return { n: 'Edit', c: 'edit', l: 'apply patch', t: at };
+  const input = typeof p.input === 'string' ? p.input : typeof p.arguments === 'string' ? p.arguments : '';
+  // `tools.exec_command({"cmd":"…"})`, or the older shell call's {"command":["bash","-lc","…"]}.
+  let command = '';
+  const m = /"cmd"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(input);
+  if (m) {
+    try {
+      command = JSON.parse(`"${m[1]}"`);
+    } catch {
+      command = m[1];
+    }
+  } else {
+    try {
+      const j = JSON.parse(input);
+      if (Array.isArray(j.command)) command = String(j.command[j.command.length - 1] || '');
+    } catch {}
+  }
+  return { n: 'Bash', c: 'bash', l: clip(command || name, 120), t: at };
+}
+
+// The newest Codex log of the last week begun in `cwd` and written since `since` (ms).
+function codexLog(cwd, since) {
+  const root = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'sessions');
+  const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  let found = null;
+  for (let back = 0; back < 7; back++) {
+    const d = new Date(Date.now() - back * 86_400_000);
+    const dir = path.join(root, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+    let names = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.endsWith('.jsonl')) continue;
+      const file = path.join(dir, name);
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        continue;
+      }
+      if (st.mtimeMs < since - 5000 || (found && st.mtimeMs <= found.mtime)) continue;
+      try {
+        const fd = fs.openSync(file, 'r');
+        const head = Buffer.alloc(Math.min(st.size, 64 << 10));
+        fs.readSync(fd, head, 0, head.length, 0);
+        fs.closeSync(fd);
+        const meta = JSON.parse(head.toString('utf8').split('\n')[0]);
+        if (meta && meta.payload && meta.payload.cwd && same(meta.payload.cwd, cwd)) found = { file, mtime: st.mtimeMs };
+      } catch {}
+    }
+  }
+  return found ? found.file : null;
+}
+
 function parseISO(s) {
   if (typeof s !== 'string' || s.length < 20) return 0;
   const num = (a, b) => Number(s.slice(a, b));
@@ -1005,7 +1064,7 @@ class RadarEngine {
     for (const O of this.others.values()) {
       if (O.endedAt > 0) continue;
       out.push({
-        sessionId: O.id, pid: O.pid, cwd: O.cwd, status: this.otherStatus(O), name: O.tool, title: baseName(O.cwd),
+        sessionId: O.id, pid: O.pid, cwd: O.cwd, status: this.otherStatus(O).status, name: O.tool, title: O.prompt || baseName(O.cwd),
         host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
       });
     }
@@ -1967,6 +2026,12 @@ class RadarEngine {
       }
       O.cpu = a.pct;
       O.chain = a.chain;
+      if ((a.command || null) !== (O.command || null)) {
+        O.command = a.command || null;
+        O.commandSince = now;
+        this.stateDirty = true;
+      }
+      if (O.tool === 'Codex' && a.cwd) this.readCodexLog(O, a.cwd, a.started, now);
       if (a.pct >= 1) O.busyUntil = now + 10_000;
       const busy = now < O.busyUntil;
       if (busy) O.lastTs = now;
@@ -1993,8 +2058,89 @@ class RadarEngine {
     this.publishState();
   }
 
-  otherStatus(O) {
-    return O.endedAt > 0 ? 'ended' : O.busy ? 'busy' : 'idle';
+  // Its status: ended, or what its log says (Codex: over is the user's turn; a tool call that runs nothing and burns
+  // nothing for a few seconds waits for the user's approval), else busy while it works the CPU or runs a command.
+  otherStatus(O, now = Date.now()) {
+    if (O.endedAt > 0) return { status: 'ended', waiting: null };
+    if (O.turnOpen === false) return { status: 'idle', waiting: null };
+    if (O.turnOpen === true) {
+      if (!O.command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
+      return { status: 'busy', waiting: null };
+    }
+    return { status: O.busy || O.command ? 'busy' : 'idle', waiting: null };
+  }
+
+  // What it runs: a shell of its own right now, else the tool call its log has it on.
+  otherRunning(O) {
+    return O.command ? { n: 'Bash', c: 'bash', l: O.command, t: O.commandSince || Date.now() } : O.call ? O.call.p : null;
+  }
+
+  // Codex's own log (CODEX_HOME\sessions\<date>\rollout-….jsonl), as the Mac engine reads it: its turn open or over,
+  // the tool call it's on, the prompt, the context and the model. Matched to the process by folder and start, looked for
+  // again every 30 s until found; read on from where it was.
+  readCodexLog(O, cwd, started, now) {
+    if (!O.log && now - (O.logChecked || 0) > 30_000) {
+      O.logChecked = now;
+      const found = codexLog(cwd, started);
+      if (found) {
+        O.log = found;
+        O.logOffset = 0;
+      }
+    }
+    if (!O.log) return;
+    let st;
+    try {
+      st = fs.statSync(O.log);
+    } catch {
+      return;
+    }
+    if (st.size <= (O.logOffset || 0)) return;
+    const from = Math.max(O.logOffset || 0, st.size > 2 << 20 ? st.size - (2 << 20) : 0);
+    const fd = fs.openSync(O.log, 'r');
+    const buf = Buffer.alloc(st.size - from);
+    try {
+      fs.readSync(fd, buf, 0, buf.length, from);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const end = buf.lastIndexOf(0x0a);
+    if (end < 0) return;
+    O.logOffset = from + end + 1;
+    for (const line of buf.subarray(0, end).toString('utf8').split('\n')) {
+      let j;
+      try {
+        j = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const p = j && j.payload;
+      if (!p || typeof p !== 'object') continue;
+      const ts = parseISO(j.timestamp) || now;
+      if (j.type === 'event_msg') {
+        if (p.type === 'task_started') {
+          O.turnOpen = true;
+          O.call = null;
+        } else if (p.type === 'task_complete' || p.type === 'turn_aborted') {
+          O.turnOpen = false;
+          O.call = null;
+        } else if (p.type === 'item_completed' && p.item && p.item.type === 'UserMessage') {
+          const text = (p.item.content || []).map((c) => c && c.text).find(Boolean);
+          if (text) O.prompt = clip(text, 200);
+        } else if (p.type === 'token_count' && p.info) {
+          if (p.info.last_token_usage) O.ctx = Number(p.info.last_token_usage.input_tokens) || 0;
+          if (p.info.model_context_window) O.ctxMax = Number(p.info.model_context_window) || 0;
+        } else if (p.type === 'thread_settings_applied' && p.thread_settings && p.thread_settings.model) {
+          O.model = String(p.thread_settings.model);
+        }
+      } else if (j.type === 'response_item' && typeof p.type === 'string') {
+        if (p.type.endsWith('_call_output')) {
+          if (O.call && O.call.id === p.call_id) O.call = null;
+        } else if (p.type.endsWith('_call')) {
+          O.call = { id: p.call_id || '', p: codexCall(p.name || p.type, p, ts) };
+        }
+      }
+    }
+    this.stateDirty = true;
   }
 
   // A live session whose Claude process is one the app started, or under one, runs in the app's own window.
@@ -2141,14 +2287,17 @@ class RadarEngine {
     for (const O of this.others.values()) {
       if (this.dismissed.has(O.id) && this.dismissed.get(O.id) === O.pid) continue;
       const live = O.endedAt === 0;
+      const { status, waiting } = this.otherStatus(O, now);
+      const running = this.otherRunning(O);
       list.push({
-        id: O.id, name: O.tool, title: baseName(O.cwd), lastPrompt: '', cwd: cwdLabel(O.cwd), branch: '',
-        model: O.tool, effort: '', status: this.otherStatus(O), live, statusSince: live ? O.statusSince : O.endedAt,
-        cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: 0, ctxMax: 0, turnMs: 0,
+        id: O.id, name: O.tool, title: baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
+        model: O.model || O.tool, effort: '', status, live, statusSince: live ? O.statusSince : O.endedAt,
+        cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: 0,
         tok: { in: 0, out: 0, cr: 0, cw: 0 }, cost: 0, tools: 0, errors: 0, web: 0, prompts: 0,
-        byCat: {}, pending: [], spark: new Array(30).fill(0), flags: [], agents: [], agentsRunning: 0,
-        waitingFor: null, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
+        byCat: {}, pending: running ? [running] : [], spark: new Array(30).fill(0), flags: [], agents: [], agentsRunning: 0,
+        waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
         tab: typeof O.hostTab === 'string' ? O.hostTab : null,
+        ...(running && { last: running }),
       });
     }
     list.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.lastTs - a.lastTs);

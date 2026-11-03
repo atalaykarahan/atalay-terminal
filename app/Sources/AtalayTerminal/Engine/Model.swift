@@ -70,6 +70,14 @@ final class OtherAI {
     var busy = false, busyUntil = 0.0, statusSince = 0.0
     var firstTs = 0.0, lastTs = 0.0, endedAt = 0.0
     var hostTab: String?
+    /// A shell it runs right now (any tool, from its child processes), and since when.
+    var command: String?, commandSince = 0.0
+    /// What its own log tells (Codex's): the turn open or over (nil: no log), the tool call it waits on, the prompt, the
+    /// context and the model.
+    var log: String?, logOffset: UInt64 = 0, logChecked = 0.0
+    var turnOpen: Bool?
+    var call: (id: String, p: Pending)?
+    var prompt = "", model = "", ctx = 0, ctxMax = 0.0
 
     init(id: String, tool: String, pid: Int32) {
         self.id = id

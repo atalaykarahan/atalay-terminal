@@ -347,7 +347,7 @@ function createRunaways({ onChange, onRead }) {
         const chain = [];
         for (let q = !p.orphan && table.get(p.ppid); q && chain.length < 12; q = !q.orphan && table.get(q.ppid)) chain.push(q);
         if (chain.some((q) => /^claude$/i.test(q.name)) || !chain.some((q) => TERMINAL_RE.test(q.name))) continue;
-        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: busy([pid]), chain: chain.map((q) => q.pid) });
+        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: busy([pid]), chain: chain.map((q) => q.pid), command: shellCommand(pid) });
       }
       return out;
     },
@@ -356,6 +356,22 @@ function createRunaways({ onChange, onRead }) {
       wanted = [...new Set(pids)].filter((p) => p > 0);
     },
   };
+
+  // The command a tool has a shell run right now (`powershell -Command "npm test"`, `cmd /c …`, `bash -c …`), from the
+  // processes under it.
+  function shellCommand(pid) {
+    let level = kids.get(pid) || [], found = null;
+    for (let depth = 0; depth < 3 && level.length; depth++) {
+      for (const c of level) {
+        const p = table.get(c);
+        if (!p || !/^(powershell|pwsh|cmd|bash|sh|zsh)$/i.test(p.name)) continue;
+        const m = /\s(?:-Command|-c|-lc|\/c)\s+(.+)$/i.exec(p.cmd || '');
+        if (m) found = m[1].replace(/^"(.*)"$/, '$1');
+      }
+      level = level.flatMap((c) => kids.get(c) || []);
+    }
+    return found ? found.slice(0, 120) : null;
+  }
 
   function busy(roots) {
     let pct = 0;
