@@ -2,7 +2,10 @@
 // Atalay's Terminal for Windows: the Mac app's dashboard (app/Resources/web, unchanged) in Electron. This file is the
 // Mac app's MainWindowController and AppDelegate: the windows, the line between the pages and the parts that feed them
 // (engine.js, cloud.js, git.js, themes.js, terminals.js), the keys and the updates.
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, screen, powerMonitor, nativeTheme, net, clipboard, nativeImage } = require('electron');
+const {
+  app, BaseWindow, BrowserWindow, WebContentsView, webContents, ipcMain, dialog, Menu, shell, screen, powerMonitor, nativeTheme, net,
+  clipboard, nativeImage,
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -17,6 +20,7 @@ const { createTerminals, which } = require('./terminals');
 const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
 const { createSavers } = require('./savers');
+const { createChatList } = require('./chatlist');
 
 let autoUpdater = null;
 try {
@@ -61,7 +65,9 @@ const settings = (() => {
 })();
 
 // ---------- the parts ----------
-let dash = null; // the dashboard window
+// The dashboard window: the chats list beside the dashboard's page, as the Mac's split view has them (two views, so
+// each page is as wide as its part of the window).
+let dash = null, dashView = null, chatsView = null;
 const boots = new Map(); // webContents id -> what its preload asks for before the page loads
 const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt }
 const panels = { notices: null, chats: new Map() }; // the messages panels: the corner's notices, friends' chats
@@ -70,8 +76,11 @@ const themes = createThemes({
   webDir: WEB,
   settings,
   onChange(css) {
-    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('atl:theme', css);
-    if (dash) dash.setBackgroundColor(themes.color('--bg'));
+    for (const id of boots.keys()) {
+      const wc = webContents.fromId(id);
+      if (wc && !wc.isDestroyed()) wc.send('atl:theme', css);
+    }
+    if (dash) for (const w of [dash, dashView, chatsView]) w.setBackgroundColor(themes.color('--bg'));
   },
 });
 
@@ -141,9 +150,18 @@ const engine = createEngine({
     matchChats();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
     badge();
+    pushChats();
   },
   onEvents: (json) => toDash(`events(${json})`),
+  // The saved conversations, for the chats list.
+  onHistory(items) {
+    chatlist.setItems(items);
+    pushChats();
+  },
 });
+
+// The chats list beside the dashboard: what it lists, with the stars and the archive (src/chatlist.js).
+const chatlist = createChatList({ settings });
 
 const git = createGit({
   folders: () => [...engine.gitSessions(), ...engine.gitSources(), ...terminals.cwds()],
@@ -155,19 +173,27 @@ const git = createGit({
     return r.response;
   },
   // Under the button that asked (`at`: the page's pixels), as Source Control's menus open on the Mac.
-  menu: (items, at) =>
-    new Promise((resolve) => {
-      let picked = null;
-      const build = (list) =>
-        (list || []).map((i) => (i.separator || i.type === 'separator' ? { type: 'separator' } : {
-          label: i.title || i.label, enabled: i.enabled !== false, submenu: i.items ? build(i.items) : undefined,
-          click: i.items ? undefined : () => (picked = i.id),
-        }));
-      const pos = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: at.x, y: at.y } : {};
-      Menu.buildFromTemplate(build(items)).popup({ window: dash || undefined, ...pos, callback: () => resolve(picked) });
-    }),
+  menu: (items, at) => popupMenu(items, at, dashView),
   trash: (p) => shell.trashItem(p),
 });
+
+/**
+ * A native menu of `items` ({ id, title } or { separator: true }, `items` for a submenu) at `at`, a point in the page of
+ * `view` (one of the dashboard window's two), resolving to the id of the item picked, or null.
+ */
+function popupMenu(items, at, view) {
+  return new Promise((resolve) => {
+    let picked = null;
+    const build = (list) =>
+      (Array.isArray(list) ? list : []).map((i) => (i.separator || i.type === 'separator' ? { type: 'separator' } : {
+        label: String(i.title || i.label || ''), enabled: i.enabled !== false, submenu: i.items ? build(i.items) : undefined,
+        click: i.items ? undefined : () => (picked = i.id),
+      }));
+    const off = view ? view.getBounds() : { x: 0, y: 0 };
+    const pos = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: Math.round(at.x + off.x), y: Math.round(at.y + off.y) } : {};
+    Menu.buildFromTemplate(build(items)).popup({ window: dash || undefined, ...pos, callback: () => resolve(picked) });
+  });
+}
 
 const cloud = createCloud({
   apiBase: process.env.ATALAY_API_URL || 'https://terminal-api.atalaykarahan.com',
@@ -219,11 +245,19 @@ const runaways = createRunaways({
 });
 
 // ---------- pushing to the pages ----------
+// A window's page, or a view's (the dashboard window's two).
+function pageOf(win) {
+  if (!win || (typeof win.isDestroyed === 'function' && win.isDestroyed())) return null;
+  const wc = win.webContents;
+  return wc && !wc.isDestroyed() ? wc : null;
+}
 function run(win, js) {
-  if (win && !win.isDestroyed()) win.webContents.executeJavaScript(`${js}; true`).catch(() => {});
+  const wc = pageOf(win);
+  if (wc) wc.executeJavaScript(`${js}; true`).catch(() => {});
 }
 function send(win, channel, data) {
-  if (win && !win.isDestroyed()) win.webContents.send(channel, data);
+  const wc = pageOf(win);
+  if (wc) wc.send(channel, data);
 }
 // What a messages panel is told before its page reports "ready" waits for it, as on the Mac: a friend's chat opened
 // with a click would otherwise stay empty, and the notices would miss the XP and events of the app's first seconds.
@@ -233,7 +267,7 @@ function runPanel(win, js) {
   if (waiting) waiting.push(js);
   else run(win, js);
 }
-const toDash = (call) => run(dash, `window.__radar && window.__radar.${call}`);
+const toDash = (call) => run(dashView, `window.__radar && window.__radar.${call}`);
 const toNotices = (call) => runPanel(panels.notices, `window.__messages && __messages.${call}`);
 
 // The page's Cloud state, with the Windows app's own updates in it (they come from GitHub releases, not the API).
@@ -280,28 +314,213 @@ function bootFor(webContents, extra = {}) {
 
 function createDashboard() {
   const area = screen.getPrimaryDisplay().workArea;
-  dash = new BrowserWindow({
+  const bg = themes.color('--bg');
+  dash = new BaseWindow({
     width: Math.min(1480, area.width), height: Math.min(900, area.height), minWidth: 980, minHeight: 600,
-    title: "Atalay's Terminal", backgroundColor: themes.color('--bg'), show: false, autoHideMenuBar: true,
+    title: "Atalay's Terminal", backgroundColor: bg, show: false, autoHideMenuBar: true,
     ...(PROBE ? { x: -32000, y: -32000, frame: false, width: 1480, height: 900 } : {}),
-    webPreferences: webPrefs(),
   });
-  bootFor(dash.webContents);
-  dash.loadFile(path.join(WEB, 'index.html'));
-  dash.once('ready-to-show', () => (PROBE ? dash.showInactive() : dash.show()));
-  const visibility = () => toDash(`visibility(${dash.isVisible() && !dash.isMinimized()}, ${dash.isFocused()})`);
-  for (const ev of ['focus', 'blur', 'minimize', 'restore', 'show', 'hide']) dash.on(ev, visibility);
-  dash.webContents.on('render-process-gone', () => setTimeout(() => dash && !dash.isDestroyed() && dash.reload(), 500));
-  // Links in the page open in the browser, never inside the app.
-  dash.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  dash.on('closed', () => {
-    dash = null;
+  const win = dash;
+  // The app's menu and its keys (Ctrl+N, Ctrl+K, Ctrl+Q…), as the other windows have them.
+  if (process.platform !== 'darwin' && Menu.getApplicationMenu()) win.setMenu(Menu.getApplicationMenu());
+  dashView = new WebContentsView({ webPreferences: webPrefs() });
+  chatsView = new WebContentsView({ webPreferences: webPrefs() });
+  const views = [dashView, chatsView];
+  for (const v of views) {
+    v.setBackgroundColor(bg);
+    win.contentView.addChildView(v);
+    bootFor(v.webContents);
+    // Links in the pages open in the browser, never inside the app.
+    v.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:/.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    v.webContents.on('render-process-gone', () => setTimeout(() => !v.webContents.isDestroyed() && v.webContents.reload(), 500));
+    // Ctrl+B, the Mac's ⌘B: the chats list slides open or shut (in the terminals it stays the shell's).
+    v.webContents.on('before-input-event', (e, input) => {
+      if (input.type === 'keyDown' && input.control && !input.alt && !input.shift && !input.meta && input.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        toggleChats();
+      }
+    });
+  }
+  chatsView.setVisible(chatsList.shown);
+  layout();
+  for (const ev of ['resize', 'maximize', 'unmaximize', 'restore', 'enter-full-screen', 'leave-full-screen']) win.on(ev, layout);
+  dashView.webContents.loadFile(path.join(WEB, 'index.html'));
+  chatsView.webContents.loadFile(path.join(__dirname, '..', 'pages', 'chats.html'));
+  // Shown once the dashboard's page is there (no empty window first), or a few seconds on whatever happens.
+  let shown = false;
+  const show = () => {
+    if (shown || win.isDestroyed()) return;
+    shown = true;
+    if (PROBE) return win.showInactive();
+    win.show();
+    dashView.webContents.focus();
+  };
+  dashView.webContents.once('did-finish-load', show);
+  setTimeout(show, 4000);
+  const visibility = () => toDash(`visibility(${win.isVisible() && !win.isMinimized()}, ${win.isFocused()})`);
+  for (const ev of ['focus', 'blur', 'minimize', 'restore', 'show', 'hide']) win.on(ev, visibility);
+  // The level-up waits for the app to be in front (the notices' "focus"): the app's focus events are BrowserWindows'.
+  win.on('focus', tellFocus);
+  win.on('blur', () => setImmediate(tellFocus));
+  win.on('closed', () => {
+    // A window's views don't go with it: their pages close here.
+    for (const v of views) if (!v.webContents.isDestroyed()) v.webContents.close();
+    if (dash === win) dash = dashView = chatsView = null;
+    clearInterval(chatsList.timer);
+    chatsList.timer = null;
+    chatsList.slide = null;
+    chatsJSON = '';
     badged = 0;
     quitIfIdle();
   });
+}
+
+// ---------- the chats list beside the dashboard (the Mac's sidebar) ----------
+// Open from the start, at the width it had when it was last closed (narrowest 210, widest 460); Ctrl+B or its × slides
+// it open and shut, fading, while the dashboard gives it room and takes it back.
+const CHATS_MIN = 210, CHATS_MAX = 460;
+const chatsWidth = (w) => (Number.isFinite(w) ? Math.round(Math.min(CHATS_MAX, Math.max(CHATS_MIN, w))) : 280);
+const chatsList = { shown: settings.get('sidebarHidden') !== true, width: chatsWidth(settings.get('sidebarWidth')), slide: null, timer: null };
+
+function layout() {
+  if (!dash || dash.isDestroyed()) return;
+  const [w, h] = dash.getContentSize();
+  const side = Math.round(chatsList.slide != null ? chatsList.slide : chatsList.shown ? chatsList.width : 0);
+  chatsView.setBounds({ x: 0, y: 0, width: side, height: h });
+  dashView.setBounds({ x: side, y: 0, width: Math.max(0, w - side), height: h });
+}
+
+// CSS's cubic-bezier(0.65, 0, 0.35, 1), the Mac's slide: progress (0…1) -> how far along.
+const slideCurve = (() => {
+  const [x1, y1, x2, y2] = [0.65, 0, 0.35, 1];
+  const at = (a, b, s) => 3 * a * s * (1 - s) ** 2 + 3 * b * s * s * (1 - s) + s ** 3;
+  return (t) => {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      if (at(x1, x2, mid) < t) lo = mid;
+      else hi = mid;
+    }
+    return at(y1, y2, (lo + hi) / 2);
+  };
+})();
+
+function toggleChats() {
+  if (!dash || chatsList.timer) return;
+  const opening = !chatsList.shown;
+  const from = opening ? 0 : chatsList.width, to = opening ? chatsList.width : 0;
+  if (opening) chatsView.setVisible(true);
+  run(chatsView, `window.__chats && __chats.fade(${opening})`);
+  const t0 = Date.now();
+  chatsList.slide = from;
+  layout();
+  chatsList.timer = setInterval(() => {
+    const t = Math.min(1, (Date.now() - t0) / 450);
+    chatsList.slide = from + (to - from) * slideCurve(t);
+    if (t >= 1) {
+      clearInterval(chatsList.timer);
+      chatsList.timer = null;
+      chatsList.slide = null;
+      chatsList.shown = opening;
+      if (!opening && chatsView) chatsView.setVisible(false);
+      settings.set('sidebarHidden', !opening);
+    }
+    layout();
+  }, 16);
+}
+
+let chatsJSON = '', chatsVersion = -1;
+function pushChats(force) {
+  if (!chatsView) return;
+  const live = chatlist.setLive(engine.live());
+  // A chat with a window of the app, shown or not: "in a window".
+  const open = chatlist.setOpen([...chats.values()].map((c) => c.sessionId).filter(Boolean));
+  if (!force && !live && !open && chatlist.version() === chatsVersion) return;
+  chatsVersion = chatlist.version();
+  const json = JSON.stringify(chatlist.snapshot());
+  if (json === chatsJSON && !force) return;
+  chatsJSON = json;
+  run(chatsView, `window.__chats && __chats.update(${json})`);
+}
+
+// The chats list's requests (pages/chats.js).
+function handleChats(msg) {
+  const dir = () => {
+    const d = String(msg.cwd || '');
+    return d && fs.existsSync(d) ? d : null;
+  };
+  switch (msg.type) {
+    case 'ready':
+      pushChats(true);
+      return true;
+    case 'open':
+      return openSession(String(msg.id || ''), false);
+    case 'fork':
+      return openSession(String(msg.id || ''), true);
+    case 'newTerminal': {
+      const d = dir();
+      if (d) openChatWindow({ cwd: d, claudeArgs: null, title: path.basename(d) });
+      return true;
+    }
+    case 'reveal': {
+      const d = dir();
+      if (d) shell.openPath(d);
+      return true;
+    }
+    case 'copyId':
+      if (typeof msg.id === 'string' && msg.id) clipboard.writeText(msg.id);
+      return true;
+    case 'favorite':
+      chatlist.toggleFavorite(String(msg.id || ''));
+      break;
+    case 'archive':
+      chatlist.toggleArchived(String(msg.id || ''));
+      break;
+    case 'folders':
+      for (const k of Array.isArray(msg.keys) ? msg.keys : []) chatlist.setFolder(String(k || ''), msg.on === true);
+      break;
+    case 'menu':
+      return popupMenu(msg.items, msg.at, chatsView);
+    case 'close':
+      toggleChats();
+      return true;
+    // Dragged wider or narrower: kept for the next time it opens (and the next launch) once the drag is over.
+    case 'width':
+      if (!chatsList.shown || chatsList.timer) return true;
+      chatsList.width = chatsWidth(Number(msg.w));
+      layout();
+      if (msg.done) settings.set('sidebarWidth', chatsList.width);
+      return true;
+    default:
+      throw new Error('unknown request');
+  }
+  pushChats(true);
+  return true;
+}
+
+// Settings' archived chats (web/cloud.js's "archived chats · manage"): the list by folder, and taking a chat, a folder
+// or all of them back out.
+function handleArchive(msg) {
+  switch (msg.type) {
+    case 'list':
+      break;
+    case 'restore':
+      chatlist.restore(String(msg.id || ''));
+      break;
+    case 'restoreFolder':
+      chatlist.setFolder(String(msg.cwd || ''), false);
+      break;
+    case 'restoreAll':
+      chatlist.restoreAll();
+      break;
+    default:
+      throw new Error('unknown request');
+  }
+  pushChats();
+  return { folders: chatlist.archivedList() };
 }
 
 // The Mac's Dock badge: how many chats need the user (a question, a permission), here as a number on the dashboard's
@@ -314,7 +533,7 @@ async function badge() {
   badged = n;
   if (!n) return dash.setOverlayIcon(null, '');
   const label = n > 9 ? '9+' : String(n);
-  const url = await dash.webContents
+  const url = await dashView.webContents
     .executeJavaScript(
       `(() => { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d');
         g.fillStyle = '#e5484d'; g.beginPath(); g.arc(16, 16, 16, 0, Math.PI * 2); g.fill();
@@ -332,6 +551,8 @@ function showDashboard() {
   if (dash.isMinimized()) dash.restore();
   dash.show();
   dash.focus();
+  // The keys go to the dashboard's page unless the chats list has them (its search).
+  if (!chatsView.webContents.isFocused()) dashView.webContents.focus();
 }
 
 // ---------- the dashboard's requests (the "radar" handler) ----------
@@ -648,7 +869,7 @@ function panelWindow(role, friend) {
 
 // The level-up waits for the app to be in front (the notices' "focus"), as on the Mac.
 function tellFocus() {
-  toNotices(`focus(${!!BrowserWindow.getFocusedWindow()})`);
+  toNotices(`focus(${!!BaseWindow.getFocusedWindow()})`);
 }
 app.on('browser-window-focus', tellFocus);
 // Going from one of the app's windows to another blurs the first before the second has focus.
@@ -888,6 +1109,10 @@ ipcMain.handle('atl:post', async (e, name, body) => {
         if (body.type === 'openChat') return openFriendChat(body.id);
         if (body.type === 'state') return cloudState();
         return await cloud.handle(body);
+      case 'chats':
+        return await handleChats(body);
+      case 'archive':
+        return handleArchive(body);
       // Settings' token savers: their state with what rtk saved, and the switches.
       case 'savers':
         if (body.type === 'state') return await savers.state();
@@ -932,8 +1157,17 @@ function buildMenu() {
     {
       label: 'View',
       submenu: [
-        { label: 'Reload Dashboard', accelerator: 'CmdOrCtrl+R', click: () => dash && dash.reload() },
-        { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
+        // Its key is caught by the dashboard window itself (createDashboard): in a terminal Ctrl+B stays the shell's.
+        {
+          label: 'Chats List', accelerator: 'CmdOrCtrl+B', registerAccelerator: false,
+          click: () => {
+            showDashboard();
+            toggleChats();
+          },
+        },
+        { label: 'Reload Dashboard', accelerator: 'CmdOrCtrl+R', click: () => dashView && dashView.webContents.reload() },
+        // The page that has the keys: the dashboard window's two are views, which the role doesn't reach.
+        { label: 'Toggle Developer Tools', accelerator: 'CmdOrCtrl+Shift+I', click: (_i, _w, wc) => wc && wc.toggleDevTools() },
         { type: 'separator' },
         { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { type: 'separator' }, { role: 'togglefullscreen' },
       ],
@@ -960,6 +1194,8 @@ app.whenReady().then(() => {
   setInterval(() => {
     toDash(`idle(${powerMonitor.getSystemIdleTime().toFixed(1)})`);
     pushTerminals();
+    // A chat window opened or ended between the engine's states: the list says "in a window" or stops saying it.
+    pushChats();
   }, 2000);
   // The token savers this build ships go on by themselves the first time (Settings turns them off).
   savers.autoStart();
@@ -999,22 +1235,24 @@ app.on('window-all-closed', () => {
 async function probe() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const shot = async (win, name) => {
-    if (!win || win.isDestroyed()) return;
-    const img = await Promise.race([win.webContents.capturePage(), wait(5000).then(() => null)]);
+    const wc = pageOf(win);
+    if (!wc) return;
+    const img = await Promise.race([wc.capturePage(), wait(5000).then(() => null)]);
     if (!img) return console.log('probe: no picture of', name);
     fs.mkdirSync(PROBE, { recursive: true });
     fs.writeFileSync(path.join(PROBE, `${name}.png`), img.toPNG());
     console.log('probe: shot', name);
   };
   await wait(9000);
-  await run(dash, "document.getElementById('boot')?.remove()");
-  await shot(dash, 'dashboard');
+  await run(dashView, "document.getElementById('boot')?.remove()");
+  await shot(dashView, 'dashboard');
+  await shot(chatsView, 'chats');
   for (const step of (process.env.ATL_PROBE_STEPS || '').split(';;').filter(Boolean)) {
     const [name, js] = step.split('|');
     console.log('probe: step', name);
-    if (js) await Promise.race([dash.webContents.executeJavaScript(js).catch((e) => console.log('probe step', name, e.message)), wait(3000)]);
+    if (js) await Promise.race([dashView.webContents.executeJavaScript(js).catch((e) => console.log('probe step', name, e.message)), wait(3000)]);
     await wait(2500);
-    await shot(dash, name);
+    await shot(dashView, name);
   }
   if (process.env.ATL_PROBE_TERMINAL) {
     const id = openChatWindow({ cwd: os.homedir(), claudeArgs: null, title: 'probe' });

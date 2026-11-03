@@ -1,0 +1,91 @@
+/* The chats list beside the dashboard (the Mac's SidebarView), in the theme's colours (the app inserts the theme's
+   tokens, Themes). */
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden;
+  border-right: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.13);
+  background: rgb(var(--panel-rgb, 44, 22, 4)); color: var(--txt, #f5ebe0);
+  font: 11px "Cascadia Mono", Consolas, monospace; cursor: default; user-select: none;
+  /* It fades as it slides open and shut (the app moves it, at the same pace). */
+  transition: opacity 450ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+body.hidden { opacity: 0; }
+svg { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+button { display: flex; align-items: center; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.fill { flex: 1; min-width: 0; }
+.n { color: var(--dim2); font-size: 9px; }
+.x { color: var(--dim); font-size: 9px; }
+.x svg { stroke-width: 2.2; }
+.x:hover { color: var(--hi); }
+
+#top { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0; white-space: nowrap; }
+.tag { height: 19px; padding: 0 8px; background: var(--accent); color: var(--ink); font-size: 10.5px; font-weight: 700; line-height: 19px; }
+#count { overflow: hidden; color: var(--dim); font-size: 9.5px; text-overflow: ellipsis; }
+#key { color: var(--dim2); font-size: 9.5px; }
+
+#search {
+  display: flex; align-items: center; gap: 6px; height: 26px; margin: 10px; padding: 0 8px; box-sizing: border-box;
+  border: 1px solid rgba(var(--accent-rgb), 0.13); border-radius: 4px; background: rgba(0, 0, 0, 0.25); color: var(--dim);
+}
+#search:focus-within { border-color: rgba(var(--accent-rgb), 0.32); }
+#lens { display: flex; font-size: 10px; }
+#q { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--txt); font: inherit; user-select: text; }
+#q::placeholder { color: var(--dim2); }
+
+#bulk { display: flex; align-items: center; gap: 8px; padding: 0 10px 6px; }
+#bulk[hidden] { display: none; }
+#picked { color: var(--accent-soft); font-size: 10px; font-weight: 600; white-space: nowrap; }
+#bulkArchive { height: 18px; padding: 0 8px; border-radius: 3px; background: var(--accent); color: var(--ink); font-size: 10px; font-weight: 600; }
+
+#list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 12px; }
+
+/* FAVORITES, at the top */
+.sec { display: flex; align-items: center; gap: 6px; padding: 10px 10px 3px; }
+.sec svg { color: rgba(var(--accent-rgb), 0.85); fill: currentColor; font-size: 9.5px; }
+.sec b { color: var(--accent-soft); font-size: 10px; font-weight: 600; }
+
+/* A folder: a click picks it for archiving several at once; its buttons show on hover. */
+.head { display: flex; align-items: center; gap: 6px; margin: 6px 6px 0; padding: 4px 4px 3px; border-radius: 4px; }
+.head.sel { background: rgba(var(--accent-rgb), 0.16); }
+.head > svg { color: rgba(var(--accent-rgb), 0.8); font-size: 9.5px; }
+/* Cut at its start, so the folder's own name stays. */
+.lbl { min-width: 0; overflow: hidden; color: var(--accent-soft); font-size: 10px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.head button { color: var(--dim); font-size: 9.5px; }
+.head button:hover { color: var(--hi); }
+.head .farc { opacity: 0; pointer-events: none; }
+.head .plus { color: var(--accent); font-size: 9px; opacity: 0.35; }
+.head .plus svg { stroke-width: 2.2; }
+.head:hover .farc { opacity: 1; pointer-events: auto; }
+.head:hover .plus { opacity: 1; }
+
+/* A chat */
+.row { display: flex; align-items: center; gap: 8px; margin: 1px 6px 0; padding: 4px 8px 4px 14px; border-radius: 4px; }
+.row:hover { background: rgba(var(--accent-rgb), 0.06); }
+.row.open { background: rgba(var(--accent-rgb), 0.1); }
+.txt { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
+.t, .m { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.t { color: var(--txt); font-size: 11px; }
+.t.live { color: var(--hi); }
+.m { color: var(--dim); font-size: 9px; }
+.m.warn { color: var(--warn); }
+/* Its star and archive button show on hover (a starred one keeps its star); laid out always, so nothing moves. */
+.row button { color: var(--dim); font-size: 10px; opacity: 0; pointer-events: none; }
+.row:hover button, .row .star.on { opacity: 1; pointer-events: auto; }
+.row button:hover { color: var(--hi); }
+.row .star.on { color: var(--amber); }
+.row .star.on svg { fill: currentColor; }
+.more { padding: 3px 0 3px 26px; color: var(--dim); font-size: 9.5px; }
+.more:hover { color: var(--hi); }
+
+/* The status light: working (the accent), your turn (cyan), needs you (blinking), ended (hollow). */
+.dot { width: 7px; height: 7px; flex: none; box-sizing: border-box; border-radius: 50%; background: var(--st); box-shadow: 0 0 1px var(--st); }
+.dot.hollow { border: 1px solid var(--st); background: transparent; box-shadow: none; animation: none; }
+.s-busy { --st: var(--accent); animation: glow 0.9s ease-in-out infinite alternate; }
+.s-idle { --st: var(--cyan); }
+.s-waiting { --st: var(--warn); animation: glow 0.5s ease-in-out infinite alternate, blink 0.5s ease-in-out infinite alternate; }
+.s-ended { --st: var(--ended); }
+@keyframes glow { to { box-shadow: 0 0 5px var(--st); } }
+@keyframes blink { from { opacity: 0.35; } to { opacity: 1; } }
+
+/* Its right edge: drag to make it wider or narrower. */
+#grip { position: fixed; top: 0; right: 0; bottom: 0; width: 5px; cursor: col-resize; }

@@ -71,6 +71,7 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/runaways.js` | the process list: what burns a core where nobody sees it (DANGER), what closed terminals left running (amber cars), what runs in the app's terminals (their cars) | Runaways, MainWindowController |
 | `src/savers.js` | the token savers, rtk and caveman, on for Claude Code and Codex (`scripts/fetch-rtk.js` gets rtk for the build) | TokenSavers |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
+| `src/chatlist.js`, `pages/chats.*` | the chats list beside the dashboard (a view of its own in the dashboard window): every saved chat by project, favourites, the archive (Settings lists it) | Sidebar.swift |
 | `pages/terminal.*` | a chat or terminal window: xterm.js and its header | ChatWindow |
 
 ### The session host
@@ -92,6 +93,7 @@ chats run in the app, through node-pty, and end with it.
   on the orbit, as a closed tab does on the Mac; a click opens it again, End Session ends it and all it runs.
 - No four-finger click (Mac trackpads only): Ctrl and the middle mouse button (or Ctrl+K) open the shortcut wheel,
   Ctrl+N a new terminal and Ctrl+W closes the window, in the terminal windows too (where they'd otherwise go to the
-  shell).
+  shell). Ctrl+B (⌘B) opens and closes the chats list in the dashboard window only: in a terminal it stays the shell's
+  (and Claude's, which runs a command in the background with it).
 - No iTerm2: a chat started in another terminal shows on the dashboard and can be opened as a copy.
 - Updates come from the releases repo's `windows` release (above), not from the API's offer, which is the Mac app's.

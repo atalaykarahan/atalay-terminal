@@ -467,6 +467,8 @@ async function parseTail(fp, start, size) {
 const SKIP_TYPES = ['attachment', 'file-history-snapshot', 'progress', 'queue-operation', 'permission-mode', 'atis-latch'].map((t) => Buffer.from(`"type":"${t}"`));
 const DATA_KEY = Buffer.from('"data":"');
 const CWD_KEY = Buffer.from('"cwd":"');
+const AI_TITLE = Buffer.from('"type":"ai-title"');
+const LAST_PROMPT = Buffer.from('"type":"last-prompt"');
 
 function skipped(data, off, end) {
   const head = data.subarray(off, Math.min(end, off + 600));
@@ -583,6 +585,92 @@ function readFirstCwd(fp) {
         fs.closeSync(fd);
       } catch {}
     }
+  }
+}
+
+// A saved conversation for the chats list (the Mac's readTail): where it started, its title and its last prompt. The
+// first record with a cwd is read from the head in steps, up to 8 MB (a resumed or compacted conversation can open with
+// records that have none, well past the first 64 KB; stopping short resumed the chat in its last folder instead); the
+// title and the last prompt from the tail, else from the head. False when the file couldn't be read.
+async function readChat(item) {
+  let fh;
+  try {
+    fh = await fsp.open(item.path, 'r');
+  } catch {
+    return false;
+  }
+  const size = item.size;
+  const read = async (from, count) => {
+    const buf = Buffer.allocUnsafe(Math.max(0, Math.min(count, size - from)));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, from);
+    return buf.subarray(0, bytesRead);
+  };
+  const lines = (data, from) => {
+    const parts = [];
+    for (let off = 0; off < data.length; ) {
+      let nl = data.indexOf(10, off);
+      if (nl < 0) nl = data.length;
+      if (nl > off) parts.push(data.subarray(off, nl));
+      off = nl + 1;
+    }
+    if (from > 0) parts.shift();
+    return parts;
+  };
+  const parse = (line) => {
+    try {
+      const rec = JSON.parse(line.toString('utf8'));
+      return isObj(rec) ? rec : null;
+    } catch {
+      return null;
+    }
+  };
+  const scan = (list) => {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (item.title && item.lastPrompt && item.cwd) return;
+      const head = list[i].subarray(0, 800);
+      const isTitle = head.indexOf(AI_TITLE) >= 0, isPrompt = head.indexOf(LAST_PROMPT) >= 0;
+      if (!isTitle && !isPrompt && (item.cwd || head.indexOf(CWD_KEY) < 0)) continue;
+      const rec = parse(list[i]);
+      if (!rec) continue;
+      // The list sits on the dashboard, which may be on a stream: no credentials, as everywhere on it.
+      if (isTitle && !item.title && typeof rec.aiTitle === 'string') item.title = clip(redact(rec.aiTitle), 90);
+      if (isPrompt && !item.lastPrompt && typeof rec.lastPrompt === 'string') item.lastPrompt = clip(redact(rec.lastPrompt), 160);
+      if (!item.cwd && typeof rec.cwd === 'string') item.cwd = rec.cwd;
+    }
+  };
+  try {
+    item.cwd = '';
+    item.title = '';
+    item.lastPrompt = '';
+    let rest = null;
+    for (let off = 0; !item.cwd && off < Math.min(size, 8 << 20); ) {
+      const chunk = await read(off, 256 << 10);
+      if (!chunk.length) break;
+      off += chunk.length;
+      const data = rest ? Buffer.concat([rest, chunk]) : chunk;
+      const nl = data.lastIndexOf(10);
+      if (nl < 0) {
+        rest = data;
+        continue;
+      }
+      rest = data.subarray(nl + 1);
+      for (const line of lines(data.subarray(0, nl), 0)) {
+        if (line.subarray(0, 800).indexOf(CWD_KEY) < 0) continue;
+        const rec = parse(line);
+        if (rec && typeof rec.cwd === 'string') {
+          item.cwd = rec.cwd;
+          break;
+        }
+      }
+    }
+    const tail = size > 96 << 10 ? size - (96 << 10) : 0;
+    scan(lines(await read(tail, 96 << 10), tail));
+    if (!item.title && !item.lastPrompt && size > 96 << 10) scan(lines(await read(0, 96 << 10), 0));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await fh.close().catch(() => {});
   }
 }
 
@@ -777,7 +865,7 @@ class RadarEngine {
     this.userSettings = path.join(this.claudeDir, 'settings.json');
     this.limitsFile = opts.limitsFile || null;
     this.isAppPid = typeof opts.isAppPid === 'function' ? opts.isAppPid : null;
-    this.handlers = { onInit: opts.onInit, onState: opts.onState, onEvents: opts.onEvents };
+    this.handlers = { onInit: opts.onInit, onState: opts.onState, onEvents: opts.onEvents, onHistory: opts.onHistory };
 
     this.started = false;
     this.stopped = false;
@@ -824,6 +912,11 @@ class RadarEngine {
     this.stateDirty = true;
     this.lastStateJSON = '';
     this.lastStateAt = 0;
+    // The chats list's saved conversations by session id (scanHistory), and the scan's own bookkeeping.
+    this.history = new Map();
+    this.historyBusy = false;
+    this.historyAgain = false;
+    this.historyTimer = null;
   }
 
   // ----- public API -----
@@ -840,6 +933,7 @@ class RadarEngine {
     this.timers = [];
     clearTimeout(this.regTimer);
     clearTimeout(this.flushTimer);
+    clearTimeout(this.historyTimer);
     for (const k of Object.keys(this.watchers)) {
       try {
         this.watchers[k]?.close();
@@ -902,7 +996,7 @@ class RadarEngine {
       if (!S.live || S.pid == null) continue;
       out.push({
         sessionId: S.id, pid: S.pid, cwd: S.cwd, status: this.shownStatus(S, bySession.get(S.id) || [], now),
-        name: S.name || S.id.slice(0, 8), host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null,
+        name: S.name || S.id.slice(0, 8), title: S.title || '', host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null,
       });
     }
     return out;
@@ -961,6 +1055,7 @@ class RadarEngine {
     this.pollProcesses();
     console.log(`engine: indexed ${files.size} transcripts in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     if (this.initWanted) this.sendInit();
+    this.scanHistory(true).catch(report);
     this.startWatch();
     this.lastScan = Date.now();
     for (const k of ['registry', 'recent', 'scan']) this.lastRun[k] = Date.now();
@@ -978,6 +1073,7 @@ class RadarEngine {
       this.maybeNewDay();
       this.startWatch();
     });
+    this.every(120, () => this.scanHistory(false));
   }
 
   every(seconds, fn) {
@@ -1035,7 +1131,11 @@ class RadarEngine {
       } catch {}
     };
     watch('projects', this.projects, { recursive: true }, (_event, name) => {
-      if (name && String(name).endsWith('.jsonl')) this.pumpSoon(path.join(this.projects, String(name)));
+      if (!name || !String(name).endsWith('.jsonl')) return;
+      const fp = path.join(this.projects, String(name));
+      // A transcript the engine wasn't reading: a new chat, or an old one resumed, for the chats list.
+      if (!this.cursors.has(this.cursorKey(fp))) this.historySoon();
+      this.pumpSoon(fp);
     });
     watch('registry', this.registry, {}, () => this.registryChanged());
   }
@@ -1052,6 +1152,79 @@ class RadarEngine {
         report(e);
       }
     }, 50);
+  }
+
+  // ----- the chats list (the Mac's scanHistory) -----
+
+  // A new transcript: the list scans again a little later, once its first records (cwd, prompt) are written.
+  historySoon() {
+    if (this.historyTimer || this.stopped) return;
+    this.historyTimer = setTimeout(() => {
+      this.historyTimer = null;
+      this.scanHistory(false).catch(report);
+    }, 8000);
+  }
+
+  // Every saved conversation (a transcript right under a project's folder), read again only when it changed. The list
+  // gets the ones with a folder and a title or prompt, newest first. A scan asked for while one runs follows it.
+  async scanHistory(force) {
+    if (this.historyBusy) {
+      this.historyAgain = true;
+      return;
+    }
+    this.historyBusy = true;
+    try {
+      do {
+        this.historyAgain = false;
+        let changed = force;
+        force = false;
+        const present = new Set();
+        let dirs = [];
+        try {
+          dirs = await fsp.readdir(this.projects, { withFileTypes: true });
+        } catch {}
+        for (const d of dirs) {
+          if (this.stopped) return;
+          if (!d.isDirectory()) continue;
+          const dir = path.join(this.projects, d.name);
+          let names = [];
+          try {
+            names = await fsp.readdir(dir);
+          } catch {
+            continue;
+          }
+          for (const n of names) {
+            if (!n.endsWith('.jsonl')) continue;
+            const sid = n.slice(0, -6);
+            present.add(sid);
+            const fp = path.join(dir, n);
+            const st = await fsp.stat(fp).catch(() => null);
+            if (!st) continue;
+            const old = this.history.get(sid);
+            if (old && old.mtime === st.mtimeMs && old.size === st.size) continue;
+            const item = { id: sid, path: fp, cwd: '', mtime: st.mtimeMs, size: st.size, title: '', lastPrompt: '' };
+            // Unreadable for a moment (Claude writing it): kept as it was, and read again next time.
+            if (!(await readChat(item))) continue;
+            this.history.set(sid, item);
+            changed = true;
+          }
+        }
+        for (const sid of this.history.keys()) {
+          if (present.has(sid)) continue;
+          this.history.delete(sid);
+          changed = true;
+        }
+        if (changed && !this.stopped) {
+          const items = [...this.history.values()]
+            .filter((i) => i.cwd && (i.title || i.lastPrompt))
+            .sort((a, b) => b.mtime - a.mtime)
+            .map(({ id, cwd, mtime, size, title, lastPrompt }) => ({ id, cwd, mtime, size, title, lastPrompt }));
+          this.call('onHistory', items);
+        }
+      } while (this.historyAgain && !this.stopped);
+    } finally {
+      this.historyBusy = false;
+    }
   }
 
   maybeNewDay() {

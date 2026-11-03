@@ -8,7 +8,7 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 const boot = ipcRenderer.sendSync('atl:boot') || {};
 
 const handlers = {};
-for (const name of ['radar', 'cloud', 'git', 'theme', 'overlay', 'messages', 'savers']) {
+for (const name of ['radar', 'cloud', 'git', 'theme', 'overlay', 'messages', 'savers', 'chats', 'archive']) {
   handlers[name] = { postMessage: (body) => ipcRenderer.invoke('atl:post', name, body) };
 }
 contextBridge.exposeInMainWorld('webkit', { messageHandlers: handlers });

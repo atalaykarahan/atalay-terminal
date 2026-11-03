@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chats</title>
+<link rel="stylesheet" href="chats.css">
+</head>
+<body>
+<header id="top">
+  <span class="tag">chats</span>
+  <span id="count"></span>
+  <span class="fill"></span>
+  <span id="key">Ctrl+B</span>
+  <button id="close" class="x" type="button" title="Close the chats list"></button>
+</header>
+<label id="search"><span id="lens"></span><input id="q" type="text" placeholder="search: title, prompt, folder" spellcheck="false" autocomplete="off"></label>
+<div id="bulk" hidden>
+  <span id="picked"></span>
+  <span class="fill"></span>
+  <button id="bulkArchive" type="button">archive</button>
+  <button id="bulkClear" class="x" type="button" title="Clear the selection"></button>
+</div>
+<main id="list"></main>
+<div id="grip"></div>
+<script src="chats.js"></script>
+</body>
+</html>
