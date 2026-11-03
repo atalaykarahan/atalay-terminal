@@ -13,9 +13,10 @@ const { createEngine } = require('./engine');
 const { createGit } = require('./git');
 const { createCloud } = require('./cloud');
 const { createThemes } = require('./themes');
-const { createTerminals } = require('./terminals');
+const { createTerminals, which } = require('./terminals');
 const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
+const { createSavers } = require('./savers');
 
 let autoUpdater = null;
 try {
@@ -74,7 +75,22 @@ const themes = createThemes({
   },
 });
 
+// The token savers (rtk, caveman), shipped next to the dashboard's files; run from the sources, rtk is the one
+// scripts/fetch-rtk.js put in vendor/ and caveman the Mac app's.
+const savers = createSavers({
+  settings,
+  ownDir: path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'atalay-terminal'),
+  bundled: app.isPackaged
+    ? { rtk: path.join(process.resourcesPath, 'bin', 'rtk.exe'), caveman: path.join(process.resourcesPath, 'caveman') }
+    : { rtk: path.join(__dirname, '..', 'vendor', 'rtk', 'rtk.exe'), caveman: path.join(__dirname, '..', '..', 'app', 'Resources', 'caveman') },
+  claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+  codexDir: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+  which,
+  usable: process.platform === 'win32' && !PROBE,
+});
+
 const terminals = createTerminals({
+  extraPath: savers.binDir,
   onData: (id, data) => send(chats.get(id)?.win, 'term:data', data),
   onExit(id) {
     const c = chats.get(id);
@@ -324,6 +340,7 @@ function handleRadar(msg) {
     case 'ready':
       engine.requestInit();
       pushCloud();
+      pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
       return true;
     case 'open':
@@ -333,7 +350,10 @@ function handleRadar(msg) {
     case 'newTerminal':
       return showOverlay('Overlay.newTerminal()');
     case 'openTerminal':
+      // A car: its window comes up in front, a closed one too (its terminal ran on out of sight).
       return chats.get(msg.id) && showChat(msg.id);
+    case 'endLeftover':
+      return runaways.endLeft(msg.pid, msg.started);
     case 'endSession':
       return endSession(msg.sid);
     case 'endRunaway':
@@ -404,15 +424,11 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Once its first seconds are over a chat says what it is even if nothing else changes (chatInfo).
   if (claude) setTimeout(() => chats.get(id) === c && send(win, 'term:info', chatInfo(id, c)), 15_500);
-  // Closing a chat's window only hides it: Claude keeps going and the dashboard brings it back. Closing a terminal
-  // ends its shell, as a terminal app's window does. Quitting closes them all: their sessions were seen to just before
-  // (the host's go on).
+  // Closing a window (Ctrl+W, its ×) only hides it, as on the Mac: what runs in it goes on, Claude as a session on the
+  // orbit and a terminal as the same car it was (no blast), and a click there brings the window back. End Session ends
+  // it. Quitting closes them all: their sessions were seen to just before (the host's go on).
   win.on('close', (e) => {
-    if (quitting) return;
-    if (!c.claude || !terminals.has(id)) {
-      terminals.kill(id);
-      return;
-    }
+    if (quitting || !terminals.has(id)) return;
     e.preventDefault();
     win.hide();
   });
@@ -451,13 +467,37 @@ function openSession(sid, fork) {
   return true;
 }
 
+/**
+ * End Session, as on the Mac: the window goes and everything that runs in it ends, gently first (the host hangs the
+ * session up, then ends what's still there three seconds on, a dev server that shrugged it off included). The dashboard
+ * drops its session now and its car blows up now, not when the processes are gone.
+ */
+function endTerminal(id) {
+  const c = chats.get(id);
+  const t = terminals.list().find((x) => x.id === id);
+  const tree = t && t.pid ? runaways.tree(t.pid) : [];
+  // What it ran is on its way out: one that outlives the shell by a second or two isn't a car left behind.
+  for (const p of tree) ending.set(p.pid, Date.now() + 10_000);
+  // Without the host's help (a terminal running in the app, an older host), what the shell started apart from its
+  // console is ended here once the rest has had its time.
+  if (!terminals.end(id) && tree.length) setTimeout(() => runaways.fresh().then(() => runaways.kill(tree)), 3000);
+  if (c && c.sessionId) {
+    const live = engine.live().find((s) => s.sessionId === c.sessionId);
+    engine.dismiss(c.sessionId, live && live.pid);
+  }
+  toDash(`terminalGone(${JSON.stringify(id)})`);
+  if (c) {
+    if (c.win && !c.win.isDestroyed()) c.win.destroy();
+    chats.delete(id);
+  }
+  quitIfIdle();
+}
+
 function endSession(sid) {
   const live = engine.live().find((s) => s.sessionId === sid);
   for (const [id, c] of chats) {
     if (c.sessionId === sid || (live && live.tab === id)) {
-      terminals.kill(id);
-      if (!c.win.isDestroyed()) c.win.destroy();
-      chats.delete(id);
+      endTerminal(id);
       return true;
     }
   }
@@ -469,6 +509,58 @@ function endSession(sid) {
   }
   engine.dismiss(sid, live && live.pid);
   return true;
+}
+
+// ---------- the orbit's cars ----------
+// Every terminal of the app with no Claude in it is a car of its own (a chat whose Claude exited too), a closed one
+// included, until End Session: what runs in it (its first job and the CPU that job's processes use) decides how it
+// flies. What a closed terminal left running is an amber car (runaways.left) that ends with a click.
+let terminalsJSON = '';
+const ending = new Map(); // pid -> until when it's an ended terminal's process, not a car left behind
+function pushTerminals(force) {
+  const live = engine.live(), list = [], jobs = [];
+  for (const [pid, until] of ending) if (until < Date.now()) ending.delete(pid);
+  for (const t of terminals.list()) {
+    const c = chats.get(t.id);
+    // Claude in it is a session on the orbit, not a car.
+    if (!c || !t.pid || live.some((s) => s.tab === t.id) || (c.claude && chatInfo(t.id, c).status !== 'terminal')) continue;
+    const kids = runaways.children(t.pid);
+    if (kids.some((k) => /^claude$/i.test(k.name))) continue;
+    const job = kids[0];
+    if (job) jobs.push(job.pid);
+    // The folder the job runs in (PowerShell's cd doesn't move the shell's own), else the one the terminal opened in.
+    const cwd = (job && job.cwd) || c.cwd || os.homedir();
+    list.push({
+      id: t.id, cwd: tildify(cwd), dir: path.basename(cwd) || cwd, cmd: job ? commandLabel(job.cmd || job.name) : '', running: !!job,
+      cpu: Math.round(runaways.busy(kids.map((k) => k.pid))),
+    });
+  }
+  for (const l of runaways.left()) {
+    if (ending.has(l.pid)) continue;
+    list.push({
+      id: `left:${l.pid}:${l.started}`, cwd: tildify(l.cwd), dir: l.cwd ? path.basename(l.cwd) || l.cwd : l.name, cmd: commandLabel(l.cmd),
+      running: true, cpu: Math.round(l.cpu), left: true, pid: l.pid, started: l.started,
+    });
+  }
+  // Their folders come with the next reading.
+  runaways.want(jobs);
+  list.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const json = JSON.stringify(list);
+  if (json === terminalsJSON && !force) return;
+  terminalsJSON = json;
+  toDash(`terminals(${json})`);
+}
+
+/** A process's command line as a car's label: `"C:\…\node.exe" "C:\…\npm-cli.js" run dev` -> "npm run dev". */
+function commandLabel(cmd) {
+  // A path is cut to its last part; a switch (/c) stays as it is.
+  const words = (String(cmd).match(/"[^"]*"|\S+/g) || []).map((w) => w.replace(/^"|"$/g, '')).filter(Boolean)
+    .map((w) => (/\\|.\//.test(w) ? path.win32.basename(w) : w));
+  if (words.length) words[0] = words[0].replace(/\.(exe|cmd|bat)$/i, '');
+  if (/^node(js)?$/i.test(words[0] || '') && words.length > 1) words.shift();
+  if (/^np[mx]-cli\.js$/i.test(words[0] || '')) words[0] = words[0].slice(0, 3).toLowerCase();
+  const label = words.join(' ');
+  return label.length > 48 ? `${label.slice(0, 47)}…` : label;
 }
 
 // The terminal pages' lines to their shells.
@@ -497,10 +589,7 @@ ipcMain.on('term:resize', (e, { cols, rows }) => {
 });
 ipcMain.on('term:end', (e) => {
   const found = chatOf(e);
-  if (!found) return;
-  terminals.kill(found[0]);
-  found[1].win.destroy();
-  chats.delete(found[0]);
+  if (found) endTerminal(found[0]);
 });
 ipcMain.on('term:copy', (e, text) => {
   if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);
@@ -799,6 +888,14 @@ ipcMain.handle('atl:post', async (e, name, body) => {
         if (body.type === 'openChat') return openFriendChat(body.id);
         if (body.type === 'state') return cloudState();
         return await cloud.handle(body);
+      // Settings' token savers: their state with what rtk saved, and the switches.
+      case 'savers':
+        if (body.type === 'state') return await savers.state();
+        if (body.type === 'set' && savers.known(body.which)) {
+          await savers.set(body.which, body.on === true);
+          return await savers.state();
+        }
+        throw new Error('unknown request');
       default:
         return null;
     }
@@ -841,7 +938,7 @@ function buildMenu() {
         { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { type: 'separator' }, { role: 'togglefullscreen' },
       ],
     },
-    { label: 'Window', submenu: [{ role: 'minimize' }, { label: 'End This Terminal', click: () => { const f = focusedChat(); if (f) { terminals.kill(f[0]); f[1].win.destroy(); chats.delete(f[0]); } } }] },
+    { label: 'Window', submenu: [{ role: 'minimize' }, { label: 'End This Terminal', click: () => { const f = focusedChat(); if (f) endTerminal(f[0]); } }] },
   ]));
 }
 
@@ -862,10 +959,10 @@ app.whenReady().then(() => {
   // The orbit's cinematic camera waits for minutes without input; the terminals ride the orbit as cars.
   setInterval(() => {
     toDash(`idle(${powerMonitor.getSystemIdleTime().toFixed(1)})`);
-    const cars = [...chats.entries()].filter(([id, c]) => !c.claude && terminals.has(id))
-      .map(([id, c]) => ({ id, cwd: tildify(c.cwd), dir: path.basename(c.cwd), cmd: '', running: false, cpu: 0 }));
-    toDash(`terminals(${JSON.stringify(cars)})`);
+    pushTerminals();
   }, 2000);
+  // The token savers this build ships go on by themselves the first time (Settings turns them off).
+  savers.autoStart();
   powerMonitor.on('resume', () => cloud.kick());
   // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
   // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.

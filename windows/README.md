@@ -68,7 +68,8 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/git.js` | Source Control's requests: the repos, diffs, history, commit, push | Git.swift |
 | `src/cloud.js` | the API: hacker name, heartbeat (XP), friends and messages, the live socket, notifications | Cloud, Social, ClientKey |
 | `src/themes.js` | the themes: every colour token from a palette, into each page | Themes.swift |
-| `src/runaways.js` | processes left burning a core where nobody sees them: the dashboard's DANGER alarm | Runaways |
+| `src/runaways.js` | the process list: what burns a core where nobody sees it (DANGER), what closed terminals left running (amber cars), what runs in the app's terminals (their cars) | Runaways, MainWindowController |
+| `src/savers.js` | the token savers, rtk and caveman, on for Claude Code and Codex (`scripts/fetch-rtk.js` gets rtk for the build) | TokenSavers |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
 | `pages/terminal.*` | a chat or terminal window: xterm.js and its header | ChatWindow |
 
@@ -87,7 +88,10 @@ chats run in the app, through node-pty, and end with it.
 
 - Closing the dashboard keeps the app going while a chat or terminal runs (starting the app again brings it back, as
   the Dock does on the Mac); with none, it quits.
-- No four-finger click (Mac trackpads only): Ctrl and the middle mouse button (or Ctrl+K) open the shortcut wheel and
-  Ctrl+N a new terminal, in the terminal windows too (where they'd otherwise go to the shell).
+- No tabs or split panes: every terminal is a window of its own. Closing one (Ctrl+W, its ×) keeps it running as a car
+  on the orbit, as a closed tab does on the Mac; a click opens it again, End Session ends it and all it runs.
+- No four-finger click (Mac trackpads only): Ctrl and the middle mouse button (or Ctrl+K) open the shortcut wheel,
+  Ctrl+N a new terminal and Ctrl+W closes the window, in the terminal windows too (where they'd otherwise go to the
+  shell).
 - No iTerm2: a chat started in another terminal shows on the dashboard and can be opened as a copy.
 - Updates come from the releases repo's `windows` release (above), not from the API's offer, which is the Mac app's.

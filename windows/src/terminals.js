@@ -49,11 +49,17 @@ const commandLine = (file, args) =>
  * as ChatTerminal.swift has it: started with `npm start` from a Claude session's shell or from Windows Terminal, the
  * app would otherwise hand those on to every chat.
  */
-function childEnvironment() {
+function childEnvironment(extraPath) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (/^(CLAUDECODE|CLAUDE_CODE_|WT_)/i.test(k) || /^(CLAUDE_PID|TERM_SESSION_ID|TERM_PROGRAM_VERSION)$/i.test(k)) continue;
     env[k] = v;
+  }
+  // The app's rtk (savers.js), last, so one of the user's own comes first. Windows spells the variable "Path" and
+  // takes it in any case: a second one beside it would leave which one wins to chance.
+  if (extraPath) {
+    const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+    env[key] = env[key] ? `${env[key]}${path.delimiter}${extraPath}` : extraPath;
   }
   // Claude's full-screen renderer keeps the whole conversation scrollable inside Claude; the classic one redraws by
   // clearing the screen, which takes the top of a long conversation out of the terminal's scrollback. A user who chose
@@ -76,8 +82,9 @@ function claudeTUI() {
 /**
  * `host`: where the session host is ({ name, dir, source }, see sessionhost.js), or null to run everything in the app.
  * Sessions are known by their window's id, which the host keeps, so a window opened at the next launch finds its own.
+ * `extraPath`: a folder the shells find programs in after their own (the app's rtk).
  */
-function createTerminals({ onData, onExit, host }) {
+function createTerminals({ onData, onExit, host, extraPath }) {
   const all = new Map(); // id -> { cwd, claude, title, pid, startedAt, lastIO, pty (only when it runs in the app) }
   const shell = shellFor();
   let link = null;
@@ -115,7 +122,7 @@ function createTerminals({ onData, onExit, host }) {
 
   function spawnHere(id, t, args, cols, rows) {
     if (!pty) throw new Error('node-pty is not available');
-    const p = pty.spawn(shell.file, args, { name: 'xterm-256color', cols, rows, cwd: t.cwd, env: childEnvironment(), useConpty: true });
+    const p = pty.spawn(shell.file, args, { name: 'xterm-256color', cols, rows, cwd: t.cwd, env: childEnvironment(extraPath), useConpty: true });
     t.pty = p;
     t.pid = p.pid;
     p.onData((data) => {
@@ -147,7 +154,7 @@ function createTerminals({ onData, onExit, host }) {
       return ready.then(async () => {
         if (!link) return spawnHere(id, t, args, cols, rows);
         const r = await link.request({
-          t: 'spawn', id, cmd: commandLine(shell.file, args), cwd: dir, env: childEnvironment(), cols, rows,
+          t: 'spawn', id, cmd: commandLine(shell.file, args), cwd: dir, env: childEnvironment(extraPath), cols, rows,
           meta: JSON.stringify({ cwd: dir, claude: t.claude, title }),
         });
         if (r.t !== 'spawned') {
@@ -213,6 +220,22 @@ function createTerminals({ onData, onExit, host }) {
           t.pty.kill();
         } catch {}
       } else if (link) link.send({ t: 'kill', id });
+    },
+    /**
+     * End Session: in the host, the session is hung up and what's still running three seconds on is ended, its job and
+     * all (true). An older host only kills, and a terminal running in the app ends at once (false): what its shell
+     * started apart from the console is the caller's to sweep up.
+     */
+    end(id) {
+      const t = all.get(id);
+      if (!t) return false;
+      if (t.pty || !link || !link.canEnd) {
+        this.kill(id);
+        return false;
+      }
+      all.delete(id);
+      link.send({ t: 'end', id });
+      return true;
     },
     killAll() {
       for (const id of [...all.keys()]) this.kill(id);

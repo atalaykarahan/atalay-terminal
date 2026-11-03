@@ -139,6 +139,8 @@ async function openHost({ name, dir, source }) {
     link.close();
     throw new Error(`the session host speaks version ${hello.v}, not ${PROTOCOL}`);
   }
+  // A host from before End Session ended gently keeps running the chats it has until they're all done.
+  link.canEnd = !!hello.end;
   return link;
 }
 

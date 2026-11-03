@@ -1,7 +1,7 @@
 {
   "name": "atalay-terminal",
   "productName": "Atalay's Terminal",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "A HUD for running many Claude Code sessions: every session on a live orbit map, each chat in its own window",
   "author": "atalay karahan",
   "license": "MIT",
@@ -11,7 +11,7 @@
     "start": "electron .",
     "staging": "node scripts/staging.js",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "dist": "electron-builder --win --publish never",
+    "dist": "node scripts/fetch-rtk.js && electron-builder --win --publish never",
     "release": "node scripts/release.js"
   },
   "dependencies": {
@@ -48,6 +48,14 @@
       {
         "from": "../app/Resources/web",
         "to": "web"
+      },
+      {
+        "from": "../app/Resources/caveman",
+        "to": "caveman"
+      },
+      {
+        "from": "vendor/rtk",
+        "to": "bin"
       }
     ],
     "asarUnpack": [

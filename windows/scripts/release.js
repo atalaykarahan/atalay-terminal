@@ -118,6 +118,10 @@ let auth = '';
   auth = token();
   if (!auth && !dry) fail('no GitHub token: set GH_TOKEN, or sign git in to github.com once (a push does)');
 
+  // rtk for the token saver (a pinned release, checked against its checksums): a release without it would leave its
+  // switch off for everyone.
+  cp.execFileSync(process.execPath, [path.join(__dirname, 'fetch-rtk.js')], { stdio: 'inherit' });
+  if (!fs.existsSync(path.join(root, 'vendor', 'rtk', 'rtk.exe'))) fail('no rtk in vendor/rtk, the token saver would be missing');
   // The key in fresh (masked, into the gitignored src/clientkey.js), then the build.
   cp.execFileSync(process.execPath, [path.join(__dirname, 'clientkey.js')], { stdio: 'inherit' });
   const builder = require('electron-builder');

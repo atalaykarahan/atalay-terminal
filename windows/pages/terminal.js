@@ -52,9 +52,9 @@
       term.clearSelection();
       return false;
     }
-    // Ctrl+N (a new terminal) and Ctrl+K (the shortcut wheel) are the app's, as ⌘N and ⌘K are on the Mac: left
-    // unhandled, they reach its menu instead of the shell.
-    if (!e.shiftKey && (k === 'n' || k === 'k')) return false;
+    // Ctrl+N (a new terminal), Ctrl+K (the shortcut wheel) and Ctrl+W (close the window: what runs in it goes on) are
+    // the app's, as ⌘N, ⌘K and ⌘W are on the Mac: left unhandled, they reach its menu instead of the shell.
+    if (!e.shiftKey && (k === 'n' || k === 'k' || k === 'w')) return false;
     return k !== 'v';
   });
   atl.on('term:data', (data) => term.write(data));

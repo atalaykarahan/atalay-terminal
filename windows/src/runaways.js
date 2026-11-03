@@ -1,22 +1,68 @@
 'use strict';
-// Runaway processes, as the Mac app's Runaways.swift finds them: one of yours left burning a CPU core where nobody sees
-// it, half a core or more for two minutes. On Windows that's a shell or a script runtime (PowerShell, cmd, bash, node,
-// python …) whose parent is gone: a process without a parent is everyday there (an app's launcher exits), so only those
-// count. Run from the sources elsewhere (a Mac): as on the Mac, a process of yours hanging off launchd, without a
-// terminal, that isn't an app. One long-lived PowerShell reads the processes every few seconds (`ps` elsewhere); the
-// dashboard sounds the alarm, and End ends one if it's still the same process.
+// The user's processes, read every few seconds, for three things the Mac app's Runaways.swift and MainWindowController
+// do with the kernel's process list:
+// - runaways: one of yours left burning a CPU core where nobody sees it, half a core or more for two minutes. On Windows
+//   that's a shell or a script runtime (PowerShell, cmd, bash, node, python …) whose parent is gone: a process without
+//   a parent is everyday there (an app's launcher exits), so only those count. The dashboard sounds the alarm, and End
+//   ends one if it's still the same process.
+// - what a closed terminal left running (Runaways.left): the same kind of process, its parent gone, burning or not (a dev
+//   server still holding its port after its terminal closed). The orbit shows each as an amber car; ending it is a click.
+// - what runs in the app's terminals (the orbit's cars): a shell's jobs, what they print as their command, the CPU they use.
+// One long-lived PowerShell reads the list when it's asked (a line on its input, every few seconds) and ends with its
+// input, so it never outlives the app; the folder a process runs in comes from the process itself, for the few that need
+// it. Run from the sources elsewhere (a Mac), `ps` finds the runaways, as on the Mac, and the rest stays empty.
 const { spawn, execFile } = require('child_process');
 
 const WIN = process.platform === 'win32';
 const SHELLS = '^(pwsh|powershell|cmd|bash|sh|zsh|fish|node|python[0-9.]*|ruby|perl|php|java|deno|bun|claude)(\\.exe)?$';
+const SHELL_RE = new RegExp(SHELLS, 'i');
+
+// The folder a process is in: its current directory, read from its process parameters (x64 layout; a 32-bit process, or
+// one this user can't read, has none).
+const CWD_READER = `
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class AtlCwd {
+  [StructLayout(LayoutKind.Sequential)] struct PBI { public IntPtr R1; public IntPtr Peb; public IntPtr R2; public IntPtr R3; public IntPtr Pid; public IntPtr R4; }
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int cls, ref PBI info, int size, out int ret);
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(int access, bool inherit, int pid);
+  [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr at, byte[] buf, IntPtr size, out IntPtr read);
+  [DllImport("kernel32.dll")] static extern bool IsWow64Process(IntPtr h, out bool wow);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  static byte[] Read(IntPtr h, IntPtr at, int n) { var b = new byte[n]; IntPtr got; return ReadProcessMemory(h, at, b, (IntPtr)n, out got) ? b : null; }
+  public static string Of(int pid) {
+    IntPtr h = OpenProcess(0x0410, false, pid);
+    if (h == IntPtr.Zero) return "";
+    try {
+      bool wow;
+      if (IntPtr.Size != 8 || (IsWow64Process(h, out wow) && wow)) return "";
+      var pbi = new PBI(); int ret;
+      if (NtQueryInformationProcess(h, 0, ref pbi, Marshal.SizeOf(pbi), out ret) != 0) return "";
+      var p = Read(h, pbi.Peb + 0x20, 8); if (p == null) return "";
+      var us = Read(h, (IntPtr)BitConverter.ToInt64(p, 0) + 0x38, 16); if (us == null) return "";
+      int len = BitConverter.ToUInt16(us, 0);
+      if (len <= 0 || len > 8192) return "";
+      var s = Read(h, (IntPtr)BitConverter.ToInt64(us, 8), len); if (s == null) return "";
+      var dir = Encoding.Unicode.GetString(s);
+      return dir.Length > 3 ? dir.TrimEnd('\\\\') : dir;
+    } catch { return ""; } finally { CloseHandle(h); }
+  }
+}`;
 
 function createRunaways({ onChange }) {
   const LINE = 50, SUSTAIN = 120_000, EVERY = 5000;
   const last = new Map(); // pid -> { started, cpu (ms of CPU in all), at }
   const over = new Map(); // pid -> since when it has been over the line
   let json = '[]', timer = null, sampler = null, stopped = false;
+  // The latest reading of every process (Windows): pid -> { pid, ppid, orphan, started, cpu, name, cwd, cmd, pct }.
+  let table = new Map();
+  let kids = new Map(); // pid -> its children's pids
+  let wanted = [];
+  let ask = () => {};
+  const waiting = []; // what waits for the next reading
 
-  // One reading: [{ pid, name, cmd, started (ms since 1970), cpu (ms of CPU in all) }], the candidates only.
+  // Runaways among one reading's candidates: [{ pid, name, cmd, started (ms since 1970), cpu (ms of CPU in all) }].
   function consider(list, at) {
     const items = [], seen = new Set();
     for (const p of list) {
@@ -45,41 +91,129 @@ function createRunaways({ onChange }) {
     }
   }
 
-  // ---------- Windows: one PowerShell, a line of JSON every few seconds ----------
+  // ---------- Windows: one PowerShell, the whole list when asked ----------
   function startWindows() {
     const script = [
       '$ErrorActionPreference = "SilentlyContinue"',
       '$me = (Get-Process -Id $PID).SessionId',
+      `try { Add-Type -TypeDefinition @'\n${CWD_READER}\n'@ } catch {}`,
       'while ($true) {',
+      '  $ask = [Console]::In.ReadLine()',
+      '  if ($ask -eq $null) { break }',
+      '  $want = @{}; foreach ($x in $ask.Split(",")) { $n = 0; if ([int]::TryParse($x, [ref]$n)) { $want[$n] = 1 } }',
       '  $all = Get-CimInstance Win32_Process -Filter "SessionId=$me" -Property ProcessId,ParentProcessId,Name,CommandLine,CreationDate,KernelModeTime,UserModeTime',
-      '  $ids = @{}; foreach ($p in $all) { $ids[[int]$p.ProcessId] = 1 }',
-      `  $out = foreach ($p in $all) { if ($p.Name -match '${SHELLS}' -and -not $ids.ContainsKey([int]$p.ParentProcessId)) {`,
-      '    [pscustomobject]@{ pid = [int]$p.ProcessId; name = ($p.Name -replace "\\.exe$", ""); cmd = [string]$p.CommandLine;',
-      '      started = [DateTimeOffset]::new($p.CreationDate).ToUnixTimeMilliseconds(); cpu = ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 10000 } } }',
-      '  [Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject @($out)))',
-      `  Start-Sleep -Milliseconds ${EVERY}`,
+      '  $born = @{}; foreach ($p in $all) { $born[[int]$p.ProcessId] = $p.CreationDate }',
+      '  $sb = New-Object System.Text.StringBuilder',
+      '  foreach ($p in $all) {',
+      '    $id = [int]$p.ProcessId; $pp = [int]$p.ParentProcessId',
+      '    if (-not $p.CreationDate) { continue }',
+      // A parent gone, or a later process that took its number: an orphan.
+      '    $orphan = (-not $born.ContainsKey($pp)) -or ($born[$pp] -gt $p.CreationDate)',
+      '    $cwd = ""',
+      `    if ($want.ContainsKey($id) -or ($orphan -and $p.Name -match '${SHELLS}')) { try { $cwd = [AtlCwd]::Of($id) } catch {} }`,
+      '    $c = [string]$p.CommandLine; if ($c.Length -gt 400) { $c = $c.Substring(0, 400) }',
+      '    $t = [DateTimeOffset]::new($p.CreationDate).ToUnixTimeMilliseconds()',
+      // Whole milliseconds: a fraction would be written with the PC's own decimal sign.
+      '    $cpu = [long](([double]$p.KernelModeTime + [double]$p.UserModeTime) / 10000)',
+      '    [void]$sb.Append("$id`t$pp`t$([int]$orphan)`t$t`t$cpu`t$($p.Name)`t$cwd`t$($c -replace "[`t`r`n]", " ")`n")',
+      '  }',
+      '  [void]$sb.Append("end`n")',
+      '  [Console]::Out.Write($sb.ToString())',
+      '  [Console]::Out.Flush()',
       '}',
     ].join('\n');
-    const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
     sampler = ps;
-    let buf = '';
+    ps.stdin.on('error', () => {});
+    let buf = '', rows = [];
     ps.stdout.on('data', (d) => {
       buf += d.toString('utf8');
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).trim();
+        const line = buf.slice(0, i).replace(/\r$/, '');
         buf = buf.slice(i + 1);
-        try {
-          const list = line ? JSON.parse(line) : [];
-          consider(Array.isArray(list) ? list : [list], Date.now());
-        } catch {}
+        if (line !== 'end') {
+          rows.push(line);
+          continue;
+        }
+        read(rows, Date.now());
+        rows = [];
       }
     });
+    ask = () => {
+      if (sampler === ps && ps.stdin.writable) ps.stdin.write(`${wanted.join(',')}\n`);
+    };
+    timer = setInterval(ask, EVERY);
+    ask();
     // It shouldn't end; if it does, it starts again in a while.
     ps.on('exit', () => {
+      clearInterval(timer);
       sampler = null;
       if (!stopped) setTimeout(() => !stopped && startWindows(), 30_000);
     });
+  }
+
+  function read(rows, at) {
+    const next = new Map(), children = new Map();
+    for (const row of rows) {
+      const f = row.split('\t');
+      if (f.length < 8) continue;
+      const p = {
+        pid: Number(f[0]), ppid: Number(f[1]), orphan: f[2] === '1', started: Number(f[3]), cpu: Number(f[4]), name: f[5].replace(/\.exe$/i, ''),
+        cwd: f[6], cmd: f.slice(7).join(' '), pct: 0,
+      };
+      if (!(p.pid > 0)) continue;
+      // % of a core since the last reading, for the cars' speed.
+      const prev = table.get(p.pid);
+      if (prev && prev.started === p.started && p.cpu >= prev.cpu && prev.at < at) p.pct = ((p.cpu - prev.cpu) / (at - prev.at)) * 100;
+      p.at = at;
+      next.set(p.pid, p);
+    }
+    for (const p of next.values()) {
+      const parent = !p.orphan && next.get(p.ppid);
+      if (!parent || parent.pid === p.pid) continue;
+      if (!children.has(p.ppid)) children.set(p.ppid, []);
+      children.get(p.ppid).push(p.pid);
+    }
+    table = next;
+    kids = children;
+    consider([...next.values()].filter((p) => p.orphan && SHELL_RE.test(p.name)), at);
+    for (const done of waiting.splice(0)) done();
+  }
+
+  /** The next reading, asked for now (what's ended a moment later is only ended if it's still the same process). */
+  function fresh() {
+    if (!sampler) return Promise.resolve();
+    return new Promise((resolve) => {
+      waiting.push(resolve);
+      setTimeout(resolve, 4000);
+      ask();
+    });
+  }
+
+  /** A process and everything under it, deepest first, with when each started. */
+  function tree(pid) {
+    const out = [], seen = new Set();
+    const walk = (p) => {
+      if (seen.has(p)) return;
+      seen.add(p);
+      for (const c of kids.get(p) || []) walk(c);
+      const t = table.get(p);
+      if (t) out.push({ pid: p, started: t.started });
+    };
+    walk(pid);
+    return out;
+  }
+
+  /** Ends, at once, what of `procs` the latest reading still has as the same process (pid and start). */
+  function kill(procs) {
+    for (const t of procs) {
+      const now = table.get(t.pid);
+      if (!now || now.started !== t.started) continue;
+      try {
+        process.kill(t.pid);
+      } catch {}
+    }
   }
 
   // ---------- elsewhere: ps ----------
@@ -133,7 +267,48 @@ function createRunaways({ onChange }) {
       }, 2000);
       return true;
     },
+    /**
+     * What closed terminals left running, for the orbit's amber cars: a shell or runtime whose parent is gone, that has
+     * run for a few seconds (not a launcher's step on its way) and isn't burning a core (that's a runaway's alarm) nor a
+     * Claude (that's a session on the orbit).
+     */
+    left() {
+      const burning = new Set(JSON.parse(json).map((r) => r.pid));
+      const out = [];
+      for (const p of table.values()) {
+        if (!p.orphan || !SHELL_RE.test(p.name) || /^claude$/i.test(p.name) || burning.has(p.pid) || Date.now() - p.started < 10_000) continue;
+        out.push({ pid: p.pid, started: p.started, name: p.name, cmd: p.cmd || p.name, cwd: p.cwd, cpu: busy([p.pid]) });
+      }
+      return out.sort((a, b) => a.started - b.started);
+    },
+    /** A left-behind process ended from its car: it and all it started, gently first (a window of its own is asked to
+     *  close, as taskkill does), at once two seconds later for what's still there. Only the process the page showed. */
+    endLeft(pid, started) {
+      const p = table.get(Number(pid));
+      if (!WIN || !p || Math.abs(p.started - Number(started)) > 1000) return false;
+      const all = tree(p.pid);
+      execFile('taskkill.exe', ['/PID', String(p.pid), '/T'], { windowsHide: true }, () => {});
+      setTimeout(() => fresh().then(() => kill(all)), 2000);
+      return true;
+    },
+    tree,
+    kill,
+    fresh,
+    /** A process's children, oldest first: [{ pid, name, cmd, cwd }]. */
+    children: (pid) => (kids.get(pid) || []).map((c) => table.get(c)).filter(Boolean).sort((a, b) => a.started - b.started),
+    /** % of a core the processes under `roots` used over the last reading. */
+    busy,
+    /** Processes whose folder the next reading should look up (the cars' jobs). */
+    want(pids) {
+      wanted = [...new Set(pids)].filter((p) => p > 0);
+    },
   };
+
+  function busy(roots) {
+    let pct = 0;
+    for (const r of roots) for (const t of tree(r)) pct += (table.get(t.pid) || {}).pct || 0;
+    return pct;
+  }
 }
 
 module.exports = { createRunaways };

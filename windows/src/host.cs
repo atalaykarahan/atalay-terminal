@@ -6,7 +6,8 @@
 // The app talks to it over a named pipe only this user can open, one JSON object per line (sessionhost.js). Each session
 // keeps the end of its output, so a window that attaches after a restart starts from what was on screen. The host ends
 // by itself a little after its last session, once no app is connected; every session's processes are in a job object
-// that ends them with the host.
+// that ends them with the host. Ending a session (End Session) hangs it up first, as closing a terminal window does, and
+// ends what's still there in three seconds with the job.
 //
 // C# 5 only: that's what .NET Framework's compiler takes.
 
@@ -57,6 +58,13 @@ static class Native
     public struct IO_COUNTERS { public ulong Reads, Writes, Others, ReadBytes, WriteBytes, OtherBytes; }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+    {
+        public long TotalUserTime, TotalKernelTime, ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
     {
         public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation; public IO_COUNTERS IoInfo;
@@ -67,7 +75,7 @@ static class Native
     public const int STARTF_USESTDHANDLES = 0x00000100;
     public static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
-    public const int JobObjectExtendedLimitInformation = 9;
+    public const int JobObjectBasicAccountingInformation = 1, JobObjectExtendedLimitInformation = 9;
     public const uint INFINITE = 0xFFFFFFFF;
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -103,6 +111,8 @@ static class Native
     public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool TerminateJobObject(IntPtr job, uint code);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info, int size, IntPtr returned);
 }
 
 static class Json
@@ -222,6 +232,15 @@ sealed class Session
     IntPtr pc, process, job;
     FileStream input, output;
     Thread reader;
+    // The pseudo console and the job are closed once: a resize or an end that comes as the shell exits must not use a
+    // handle that's gone. Not under Gate: closing the pseudo console can wait for its last output, which the reader
+    // hands over under Gate.
+    readonly object pcLock = new object(), jobLock = new object();
+    bool pcClosed, jobClosed;
+    // End Session: from when, and until when the programs have to stop by themselves.
+    int ending;
+    long endBy;
+    const int Grace = 3000;
 
     // The end of the output, for a window that attaches later; the terminal modes the program set (the cursor keys,
     // bracketed paste, the mouse, the alternate screen) go after it, as their sequences may be long cut off.
@@ -389,14 +408,43 @@ sealed class Session
         uint code;
         if (!Native.GetExitCodeProcess(process, out code)) code = 1;
         // Closing the pseudo console lets the rest of the output through and ends the reader.
-        Native.ClosePseudoConsole(pc);
+        ClosePc();
         reader.Join(5000);
         try { input.Dispose(); } catch { }
         try { output.Dispose(); } catch { }
         Native.CloseHandle(process);
+        // An ended session's programs have the rest of their three seconds to stop by themselves (a dev server closing
+        // its port), even when the shell went first.
+        while (Thread.VolatileRead(ref ending) == 1 && Now() < Interlocked.Read(ref endBy) && Active() > 0) Thread.Sleep(100);
         // Whatever the shell left running (a Claude it started) ends with the job.
-        Native.CloseHandle(job);
+        lock (jobLock)
+        {
+            if (!jobClosed) Native.CloseHandle(job);
+            jobClosed = true;
+        }
         Host.Ended(this, (int)code);
+    }
+
+    void ClosePc()
+    {
+        lock (pcLock)
+        {
+            if (pcClosed) return;
+            pcClosed = true;
+            Native.ClosePseudoConsole(pc);
+        }
+    }
+
+    // How many of the session's processes are still running.
+    int Active()
+    {
+        lock (jobLock)
+        {
+            Native.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info;
+            if (jobClosed || !Native.QueryInformationJobObject(job, Native.JobObjectBasicAccountingInformation, out info,
+                    Marshal.SizeOf(typeof(Native.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)), IntPtr.Zero)) return 0;
+            return (int)info.ActiveProcesses;
+        }
     }
 
     public void Write(string data)
@@ -416,11 +464,30 @@ sealed class Session
             if (cols == Cols && rows == Rows) return;
             Cols = cols;
             Rows = rows;
-            Native.ResizePseudoConsole(pc, Size(cols, rows));
         }
+        lock (pcLock) if (!pcClosed) Native.ResizePseudoConsole(pc, Size(cols, rows));
     }
 
-    public void Kill() { Native.TerminateJobObject(job, 1); }
+    public void Kill()
+    {
+        lock (jobLock) if (!jobClosed) Native.TerminateJobObject(job, 1);
+    }
+
+    // End Session: a hangup first, as closing a terminal window is (every program on the console gets its close event
+    // and can save and stop), then, three seconds on, the job ends what's still there: one that shrugged the hangup off,
+    // or one started apart from the console (a dev server holding its port).
+    public void End()
+    {
+        // The deadline first: a shell that goes at this very moment finds it set.
+        Interlocked.CompareExchange(ref endBy, Now() + Grace, 0);
+        if (Interlocked.Exchange(ref ending, 1) == 1) return;
+        new Thread(() =>
+        {
+            ClosePc();
+            while (Now() < Interlocked.Read(ref endBy) && Active() > 0) Thread.Sleep(100);
+            Kill();
+        }) { IsBackground = true }.Start();
+    }
 }
 
 static class Host
@@ -489,7 +556,8 @@ static class Host
         switch (t)
         {
             case "hello":
-                c.Send("{\"t\":\"hello\"" + reply + ",\"v\":1,\"pid\":" + System.Diagnostics.Process.GetCurrentProcess().Id + "}");
+                // "end": this host ends a session gently (an older one only has "kill").
+                c.Send("{\"t\":\"hello\"" + reply + ",\"v\":1,\"end\":1,\"pid\":" + System.Diagnostics.Process.GetCurrentProcess().Id + "}");
                 break;
             case "list":
             {
@@ -553,6 +621,10 @@ static class Host
             case "kill":
                 s = Find(id);
                 if (s != null) s.Kill();
+                break;
+            case "end":
+                s = Find(id);
+                if (s != null) s.End();
                 break;
         }
     }
