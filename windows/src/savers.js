@@ -226,6 +226,15 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     const named = own && own !== 'rtk' && path.isAbsolute(own) ? own : which('rtk');
     if (!named || !exists(bundled.rtk) || path.resolve(named) === path.resolve(ourRtk)) return;
     if (/[\\/](WinGet|scoop|chocolatey)[\\/]/i.test(named) || !/^rtk(\.exe)?$/i.test(path.basename(named))) return;
+    // What an earlier update moved aside (it was running, so it couldn't be deleted then) goes now.
+    const dir = path.dirname(named), aside = `${path.basename(named)}.old-`;
+    try {
+      for (const name of fs.readdirSync(dir).filter((n) => n.startsWith(aside))) {
+        try {
+          fs.unlinkSync(path.join(dir, name));
+        } catch {}
+      }
+    } catch {}
     const [theirsV, oursV] = [await rtkVersion(named), await rtkVersion(bundled.rtk)];
     if (!theirsV || !oursV || !older(theirsV, oursV)) return;
     try {

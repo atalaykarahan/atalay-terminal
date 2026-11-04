@@ -691,13 +691,35 @@ function showChat(id) {
   return true;
 }
 
-/** The window of a process running outside the app, to the front: its own or the first of its parents' that has one. */
+/**
+ * The window of a process running outside the app, to the front (restored when it's minimized): its own or the first of
+ * its parents' on screen, Windows Terminal's, VS Code's or a console's. Only a visible window counts: a shell in Windows
+ * Terminal also has a hidden console window, which would take the click and show nothing. Explorer ends the search (a
+ * shell started from the Start menu and handed to Windows Terminal has it as its parent): it would bring the desktop.
+ */
 function revealOutside(pid) {
   if (process.platform !== 'win32' || !(pid > 0)) return;
   const own = runaways.ais().find((a) => a.pid === pid);
   const ids = [pid, ...((own && own.chain) || [])].filter((n) => Number.isInteger(n) && n > 0);
-  const script = `$s = New-Object -ComObject WScript.Shell; foreach ($id in @(${ids.join(',')})) { if ($s.AppActivate([int]$id)) { break } }`;
-  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10_000 }, () => {});
+  const script = [
+    "Add-Type -Namespace Atl -Name Win -MemberDefinition '",
+    '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
+    '  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);',
+    `  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);'`,
+    `foreach ($id in @(${ids.join(',')})) {`,
+    '  $p = Get-Process -Id $id -ErrorAction SilentlyContinue',
+    '  if (-not $p) { continue }',
+    "  if ($p.ProcessName -eq 'explorer') { break }",
+    '  $h = $p.MainWindowHandle',
+    '  if ($h -eq [IntPtr]::Zero) { continue }',
+    '  if ([Atl.Win]::IsIconic($h)) { [void][Atl.Win]::ShowWindowAsync($h, 9) }',
+    '  if (-not [Atl.Win]::SetForegroundWindow($h)) { [void](New-Object -ComObject WScript.Shell).AppActivate([int]$id) }',
+    '  break',
+    '}',
+  ].join('\n');
+  // Encoded, so no quote in it is lost on the way to PowerShell.
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 15_000 }, () => {});
 }
 
 function openSession(sid, fork) {

@@ -63,6 +63,8 @@ function createAIColors({ settings, claudeDir, codexDir, home }) {
   }
 
   const isThemeLine = (line) => /^\s*theme\s*=/.test(line);
+  // Codex's config written back with the line ends it had (CRLF where Windows editors left them).
+  const eolOf = (text) => (/\r\n/.test(text) ? '\r\n' : '\n');
   const tuiSection = (lines) => {
     const start = lines.findIndex((l) => l.trim() === '[tui]');
     if (start < 0) return null;
@@ -99,7 +101,7 @@ function createAIColors({ settings, claudeDir, codexDir, home }) {
       if (lines.length && lines[lines.length - 1] !== '') lines.push('');
       lines.push('[tui]', 'theme = "ansi"', '');
     }
-    fs.writeFileSync(codexConfig, lines.join('\n'));
+    fs.writeFileSync(codexConfig, lines.join(eolOf(text)));
     return { prev, set: '"ansi"', madeSection: !sec };
   }
 
@@ -125,7 +127,7 @@ function createAIColors({ settings, claudeDir, codexDir, home }) {
       const next = lines[sec.start + 1];
       if (kept.madeSection && (next === undefined || !next.trim() || next.trim().startsWith('['))) lines.splice(sec.start, 1);
     }
-    fs.writeFileSync(codexConfig, lines.join('\n'));
+    fs.writeFileSync(codexConfig, lines.join(eolOf(text)));
   }
 
   const isOn = () => record().on !== false;

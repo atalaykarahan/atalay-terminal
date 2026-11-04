@@ -327,11 +327,13 @@ function resultMeta(tr) {
   return out;
 }
 
-// ---------- time ----------
-// Parses "2026-10-24T19:41:07.123Z" into epoch milliseconds, as UTC whatever the suffix (as the Mac engine does).
-// A Codex tool call as a pending tool: its shell command, or the files it patches.
+// A Codex tool call as a pending tool: its shell command, the files it patches, or what it looks up on the web.
 function codexCall(name, p, at) {
   if (/patch/.test(name)) return { n: 'Edit', c: 'edit', l: 'apply patch', t: at };
+  if (/web_search/.test(name)) {
+    const a = (p && p.action) || {};
+    return { n: 'WebSearch', c: 'web', l: clip(a.query || a.url || 'web search', 120), t: at };
+  }
   const input = typeof p.input === 'string' ? p.input : typeof p.arguments === 'string' ? p.arguments : '';
   // `tools.exec_command({"cmd":"…"})`, or the older shell call's {"command":["bash","-lc","…"]}.
   let command = '';
@@ -346,6 +348,8 @@ function codexCall(name, p, at) {
     try {
       const j = JSON.parse(input);
       if (Array.isArray(j.command)) command = String(j.command[j.command.length - 1] || '');
+      // Codex on Windows (shell_command) gives it as it's typed: {"command":"Get-ChildItem"}.
+      else if (typeof j.command === 'string') command = j.command;
     } catch {}
   }
   return { n: 'Bash', c: 'bash', l: clip(command || name, 120), t: at };
@@ -596,6 +600,8 @@ function codexLog(cwd, since) {
   return found ? found.file : null;
 }
 
+// ---------- time ----------
+// Parses "2026-10-24T19:41:07.123Z" into epoch milliseconds, as UTC whatever the suffix (as the Mac engine does).
 function parseISO(s) {
   if (typeof s !== 'string' || s.length < 20) return 0;
   const num = (a, b) => Number(s.slice(a, b));
@@ -2485,15 +2491,24 @@ class RadarEngine {
         } else if (p.type === 'item_completed' && p.item && p.item.type === 'UserMessage') {
           const text = (p.item.content || []).map((c) => c && c.text).find(Boolean);
           if (text) O.prompt = clip(text, 200);
+        } else if (p.type === 'user_message' && typeof p.message === 'string' && p.message.trim()) {
+          // Older Codex logs (0.10x, still what many Windows users run) write the prompt this way.
+          O.prompt = clip(p.message.trim(), 200);
         } else if (p.type === 'token_count' && p.info) {
           if (p.info.last_token_usage) O.ctx = Number(p.info.last_token_usage.input_tokens) || 0;
           if (p.info.model_context_window) O.ctxMax = Number(p.info.model_context_window) || 0;
         } else if (p.type === 'thread_settings_applied' && p.thread_settings && p.thread_settings.model) {
           O.model = String(p.thread_settings.model);
         }
+      } else if (j.type === 'turn_context' && typeof p.model === 'string' && p.model) {
+        // Older Codex logs give the model with every turn instead.
+        O.model = p.model;
       } else if (j.type === 'response_item' && typeof p.type === 'string') {
         if (p.type.endsWith('_call_output')) {
           if (O.call && O.call.id === p.call_id) O.call = null;
+        } else if (p.type === 'web_search_call') {
+          // Logged once the search is over, with no output line to end it: nothing left running.
+          if (p.status !== 'completed') O.call = { id: p.call_id || '', p: codexCall(p.type, p, ts) };
         } else if (p.type.endsWith('_call')) {
           O.call = { id: p.call_id || '', p: codexCall(p.name || p.type, p, ts) };
         }
