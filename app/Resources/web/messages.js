@@ -5,7 +5,8 @@
 //    with a quick reply or accept/decline; clicking it opens the chat. Closed, it's gone. A friend coming online
 //    shows there for a moment too, like on Steam, and so does a new version of the app (a click shows what's new).
 //    Your own progress shows there as well: the daily bonus as a strip, a new level or rank as a takeover of the whole
-//    screen for a few seconds, and five hours of work in a day as flames along the screen's edges.
+//    screen for a few seconds, and five hours of work in a day as flames along the screen's edges. A chat that needs
+//    you (an approval) while the app is behind other windows shows there too, and stays until the chat moves on.
 //  · chat: the conversation in its own window, opened mid-screen the first time and dragged anywhere by its header.
 // Each part is its own panel (Swift injects __MESSAGES_ROLE__ "notices" or "chat", places and moves the panels), and
 // every friend's chat has a panel of its own (__MESSAGES_FRIEND__), so several stay on screen side by side.
@@ -57,6 +58,7 @@ window.Messages = (() => {
   const alertBox = NOTICES ? mount('dangerbox') : null;
   let alertOn = null;
   const queue = []; // notices waiting for the one on screen (an update, the daily bonus)
+  const waits = new Map(); // chats that need you (below), session id -> { sid, title, folder, what }, the newest last
 
   function sizeNotes() {
     if (ROLE !== 'notices') return;
@@ -81,7 +83,8 @@ window.Messages = (() => {
   const autoHide = () => (replying() ? (peekTimer = setTimeout(autoHide, 3000)) : hidePeek());
 
   function showPeek(p) {
-    if ((peek && p !== peek && replying()) || alertOn) return void queue.push(p);
+    // A chat that needs you stays on top: the other notices wait behind it.
+    if ((peek && p !== peek && replying()) || alertOn || (peek && peek.kind === 'wait' && p.kind !== 'wait')) return void queue.push(p);
     clearTimeout(peekTimer);
     const again = !!peek;
     peek = p;
@@ -92,8 +95,12 @@ window.Messages = (() => {
       p.heard = true;
       Sfx.play('xp');
     }
-    peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
+    // A chat that needs you has no time: it goes when the chat moves on (waitOver) or is put away.
+    if (p.kind !== 'wait') peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
   }
+
+  // What comes after a notice: a chat that needs you first, then the queue.
+  const nextPeek = () => (waits.size ? showWait() : queue.length && showPeek(queue.shift()));
 
   function hidePeek() {
     clearTimeout(peekTimer);
@@ -106,7 +113,7 @@ window.Messages = (() => {
       if (peek) return;
       notes.innerHTML = '';
       sizeNotes();
-      if (queue.length && !takeover) showPeek(queue.shift());
+      if (!takeover) nextPeek();
     }, 190);
   }
 
@@ -165,6 +172,16 @@ window.Messages = (() => {
         `<div class="mb-head"><span class="mb-tag">ONLINE</span><span class="mb-who">${who(p.friends[more])}` +
         `<small>${more ? `and ${more} more are` : 'is'} now online</small></span></div></div>`
       );
+    } else if (p.kind === 'wait') {
+      // A chat that needs you: which one, where, what it asks for, how many more wait. A click opens it.
+      const w = p.item;
+      return (
+        `<div class="mb peek wait in" data-act="wait" title="Open the chat"><div class="mb-border"></div>` +
+        `<div class="mb-head"><span class="mb-tag">NEEDS YOU</span><span class="mb-who"><span>${esc(w.title)}</span>` +
+        `<small>${esc(w.folder)}${p.more ? ` · ${p.more} more waiting` : ''}</small></span>` +
+        `<button class="mb-x" data-act="close" title="Close">×</button></div>` +
+        `<div class="mb-text">${esc(w.what)}</div></div>`
+      );
     } else {
       body =
         head('NEW FRIEND', p.friend, null) +
@@ -187,7 +204,18 @@ window.Messages = (() => {
       const el = e.target.closest('[data-act]');
       if (!el || !peek) return;
       const act = el.dataset.act;
-      if (act === 'close') return hidePeek();
+      if (act === 'close') {
+        // Put away: the chats waiting now don't pop up again (another question in one of them does).
+        if (peek.kind === 'wait') waits.clear();
+        return hidePeek();
+      }
+      if (act === 'wait') {
+        const sid = peek.item.sid;
+        waits.delete(sid);
+        hidePeek();
+        // Swift brings that chat to the front (its terminal, for one running outside the app).
+        return post({ type: 'openWait', sid });
+      }
       if (act === 'update') {
         hidePeek();
         // The dashboard shows what's new (Swift brings its window to the front).
@@ -249,6 +277,35 @@ window.Messages = (() => {
     const p = { kind: 'update', version: u.version };
     if (takeover || (peek && peek.kind !== 'update')) queue.push(p);
     else showPeek(p);
+  }
+
+  // ======================= a chat needs you =======================
+  // A chat waiting for you (an approval, a question) while the app is behind other windows (Swift's WaitNotifier
+  // decides when): it goes over whatever is in the corner (that comes back after it) and stays until the chat moves
+  // on, the newest on top with how many more wait. Not held back on do-not-disturb: it's your own work, stuck.
+  function showWait() {
+    if (!waits.size || takeover || alertOn) return;
+    if (peek && peek.kind !== 'wait') {
+      // A reply being written stays; this comes right after it (hidePeek).
+      if (replying()) return;
+      queue.unshift(peek);
+    }
+    const all = [...waits.values()];
+    showPeek({ kind: 'wait', item: all[all.length - 1], more: all.length - 1 });
+  }
+
+  function addWait(w) {
+    if (!NOTICES || !w || !w.sid) return;
+    waits.delete(w.sid);
+    waits.set(w.sid, w);
+    Sfx.play('wait');
+    showWait();
+  }
+
+  function waitOver(sid) {
+    if (!NOTICES || !waits.delete(sid) || !peek || peek.kind !== 'wait') return;
+    if (waits.size) showWait();
+    else hidePeek();
   }
 
   // ======================= your progress =======================
@@ -465,8 +522,8 @@ window.Messages = (() => {
     unlockKeys();
     takeover = null;
     sizeNotes();
-    // Another level-up waiting plays first; notices (the daily bonus) come after the last one.
-    if (queue.length && !peek && !pending) showPeek(queue.shift());
+    // Another level-up waiting plays first; notices (a chat that needs you, the daily bonus) come after the last one.
+    if (!peek && !pending) nextPeek();
     setTimeout(play, 600);
     setTimeout(ignite, 700);
   }
@@ -940,7 +997,7 @@ window.Messages = (() => {
     alertBox.innerHTML = '';
     document.body.classList.remove('danger-on');
     sizeNotes();
-    if (queue.length && !takeover && !peek) showPeek(queue.shift());
+    if (!takeover && !peek) nextPeek();
   }
 
   if (NOTICES) {
@@ -969,6 +1026,8 @@ window.Messages = (() => {
     focus: (on) => setFocus(on),
     skip: () => skip(),
     runaways: (list) => setRunaways(list),
+    wait: (w) => addWait(w),
+    waitOver: (sid) => waitOver(sid),
   };
   Social.load();
   post({ type: 'ready' });

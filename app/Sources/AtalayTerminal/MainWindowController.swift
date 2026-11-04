@@ -54,6 +54,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         overlay.manager = self
         buildLayout()
         wireEngine()
+        WaitNotifier.shared.titleOf = { [weak self] b in self?.sidebar.customTitles[b.id] ?? b.title }
+        MessagePanel.onOpenWait = { [weak self] sid in self?.openFromNotice(sid) }
         runaways.onChange = { [weak self] json in
             self?.radar.push("runaways", json)
             MessagePanel.notices.runaways(json)
@@ -291,6 +293,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
             lastStatus[b.id] = b.status
         }
+        WaitNotifier.shared.update(live)
         if sidebar.briefs != briefs { sidebar.briefs = briefs }
         let open = Set(chats.values.compactMap(\.sessionId))
         if sidebar.openInTabs != open { sidebar.openInTabs = open }
@@ -483,6 +486,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         makeChat(cwd: cwd, claudeArgs: nil, sessionId: nil, title: (cwd as NSString).lastPathComponent, frame: frame)
+    }
+
+    private func openFromNotice(_ sid: String) {
+        if !sid.hasPrefix("ai:"), let b = briefs[sid], b.live, b.host == "term", let pid = b.pid,
+           Detached.sessionName(hosting: pid, anyBuild: true) == nil {
+            return ITerm.reveal(pid: pid)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        openSession(sid)
     }
 
     /// Opens a saved or running conversation in its own window, in its project folder.

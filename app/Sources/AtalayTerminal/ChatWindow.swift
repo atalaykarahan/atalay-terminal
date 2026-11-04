@@ -495,6 +495,8 @@ final class NeonBorderView: NSView {
     }
 
     func setStatus(_ status: String) {
+        // Waiting on the user looks like the turn it's in: the corner's notice says it (WaitNotifier), not the border.
+        let status = status == "waiting" ? "busy" : status
         guard status != current else { return }
         current = status
         var colors: [UInt32]
@@ -504,7 +506,6 @@ final class NeonBorderView: NSView {
         switch status {
         case "busy": colors = [h("--accent"), h("--amber"), h("--warn"), h("--accent")]; spin = 3.2; glowHex = h("--accent")
         case "idle", "terminal": colors = [h("--cyan"), h("--idle-deep"), h("--violet"), h("--cyan")]; spin = 9; glowHex = h("--cyan")
-        case "waiting": colors = [h("--warn"), h("--accent"), h("--amber"), h("--warn")]; spin = 1.1; glowHex = h("--warn")
         default: colors = [h("--dim2"), h("--ended-deep"), h("--dim2")]; spin = 0; glowHex = h("--dim2")
         }
         gradient.colors = colors.map { NSColor(hex: $0).cgColor }
@@ -523,7 +524,7 @@ final class NeonBorderView: NSView {
         let p = CABasicAnimation(keyPath: "shadowOpacity")
         p.fromValue = 0.2
         p.toValue = 0.95
-        p.duration = status == "waiting" ? 0.45 : 1.6
+        p.duration = 1.6
         p.autoreverses = true
         p.repeatCount = .infinity
         glow.add(p, forKey: "pulse")

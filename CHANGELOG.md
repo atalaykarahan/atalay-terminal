@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased (2026-11-04)
+
+- Chats (Mac): a chat that needs you (an approval, a question) while the app is behind other windows pops up in the screen's corner as messages do, and stays until you answer it; a click opens it (one running in iTerm2 or Terminal brings that terminal forward). The window's edge no longer flashes red for it: the notice says it
+
 ## 0.16.0
 
 - Tabs: End Session in a window with tabs ends only the tab in front (its chat, its terminal or its panes), the other tabs keep running; the last one ends the window as before, and asks first when something still runs in it

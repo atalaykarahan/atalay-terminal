@@ -120,6 +120,12 @@ window.Sfx = (() => {
   const LENGTH = { levelup: 3000, rankup: 4200, glitch: 1200, fire: 3200, alarm: 2800, hit: 800, boom: 2000 };
 
   const SOUNDS = {
+    // A chat needs you (an approval): two short even beeps and a higher one, like a console asking for a key.
+    wait() {
+      note(783.99, 0, { dur: 0.14, type: 'triangle', vol: 0.1, bright: 0.25 });
+      note(783.99, 0.16, { dur: 0.14, type: 'triangle', vol: 0.1, bright: 0.25 });
+      note(1174.66, 0.32, { dur: 0.42, type: 'triangle', vol: 0.09, bright: 0.25 });
+    },
     // Incoming message: two quick rising notes, like a HUD ping.
     message() {
       note(880, 0, { dur: 0.32 });
