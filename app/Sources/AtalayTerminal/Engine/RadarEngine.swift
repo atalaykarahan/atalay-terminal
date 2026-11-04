@@ -58,6 +58,9 @@ final class RadarEngine {
     /// Other AI tools running (Codex, Gemini…), by session id ("ai:<pid>:<start>").
     private var others: [String: OtherAI] = [:]
     private var otherCpu: [Int32: (ns: UInt64, at: Double)] = [:]
+    /// What of their records today's counts already have (otherOnce), and their calls by name, for their results.
+    private var otherSeen = Set<String>()
+    private var otherCalls: [String: (p: Pending, done: Bool)] = [:]
 
     init() {
         claudeDir = CLAUDE_DIR
@@ -203,6 +206,9 @@ final class RadarEngine {
         recOwner.removeAll()
         for S in sessions.values { S.resetCounters() }
         for A in agents.values { A.resetCounters() }
+        otherSeen.removeAll()
+        otherCalls.removeAll()
+        for O in others.values { O.resetCounters() }
     }
 
     // MARK: lookup helpers
@@ -231,11 +237,15 @@ final class RadarEngine {
     }
 
     private func ev(_ k: String, _ ts: Double, _ S: Session, _ A: SubAgent?, _ extra: [String: Any] = [:]) -> [String: Any] {
+        ev(k, ts, sid: S.id, aid: A?.id, extra)
+    }
+
+    private func ev(_ k: String, _ ts: Double, sid: String, aid: String?, _ extra: [String: Any] = [:]) -> [String: Any] {
         var e = extra
         e["k"] = k
         e["t"] = ts
-        e["s"] = S.id
-        if let A { e["a"] = A.id }
+        e["s"] = sid
+        if let aid { e["a"] = aid }
         return e
     }
 
@@ -431,21 +441,21 @@ final class RadarEngine {
             if let A { r["a"] = A.id }
             ringPush(&G.shells, r, 40)
         }
-        if let file = sm.file { touchFile(file, name, S, A, ts) }
+        if let file = sm.file { touchFile(file, name, sid: S.id, aid: A?.id, ts) }
         if name == "Agent" || name == "Task", let input = b["input"] as? [String: Any] {
             agentHints[id] = (clip(input["description"] as? String, 70), input["subagent_type"] as? String ?? "")
         }
         emit(ev("tool", ts, S, A, ["id": id, "n": name, "c": c, "l": sm.label]), today)
     }
 
-    private func touchFile(_ fp: String, _ name: String, _ S: Session, _ A: SubAgent?, _ ts: Double) {
+    private func touchFile(_ fp: String, _ name: String, sid: String, aid: String?, _ ts: Double) {
         let F = G.files[fp] ?? FileHeat(p: fp)
         G.files[fp] = F
         if name == "Read" || name == "NotebookRead" {
             F.r += 1
         } else {
             F.w += 1
-            F.editors[A.map { "\(S.id):\($0.id)" } ?? S.id] = (ts, S.id, A?.id)
+            F.editors[aid.map { "\(sid):\($0)" } ?? sid] = (ts, sid, aid)
         }
         F.last = ts
     }
@@ -898,11 +908,17 @@ final class RadarEngine {
             if O.tool == "Codex", !cwd.isEmpty { readCodexLog(O, cwd: cwd, since: Double(f.info.started) / 1_000_000, now: ms) }
             if O.tool == "Antigravity", !cwd.isEmpty { readAntigravity(O, cwd: cwd) }
             if busy != O.busy || cwd != O.cwd || O.tty != f.info.tty || O.ppid != f.info.ppid {
-                if busy != O.busy { O.statusSince = ms }
                 O.busy = busy
                 O.cwd = cwd
                 O.tty = f.info.tty
                 O.ppid = f.info.ppid
+                stateDirty = true
+            }
+            // Since when it shows what it shows (your.call's clock), its records' turn included, not only its CPU.
+            let shown = otherStatus(O, ms).status
+            if shown != O.shown {
+                O.shown = shown
+                O.statusSince = ms
                 stateDirty = true
             }
         }
@@ -933,6 +949,123 @@ final class RadarEngine {
         return found.map { clip($0.replacingOccurrences(of: "\n", with: " "), 120) }
     }
 
+    /// Its status: ended, or what its records say (over is the user's turn, unless its subagents still work, as Claude's
+    /// background ones; a step waiting for the user's permission, its own or a subagent's, waits; without Antigravity's steps
+    /// to tell, a tool call that runs nothing and burns nothing for a few seconds does), else busy while it works the CPU or
+    /// runs a command.
+    private func otherStatus(_ O: OtherAI, _ now: Double) -> (status: String, waiting: String?) {
+        guard O.endedAt == 0 else { return ("ended", nil) }
+        guard let open = O.turnOpen else { return (O.busy || O.command != nil ? "busy" : "idle", nil) }
+        if O.waitsForUser || O.agentWaiting != nil {
+            return ("waiting", "approval: " + ((O.waitsForUser ? O.call?.p : O.agentWaiting)?.l ?? "a step"))
+        }
+        if !open { return (O.agents.contains { $0["running"] as? Bool == true } ? "busy" : "idle", nil) }
+        if !O.stepsKnown, O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 { return ("waiting", "approval: " + call.p.l) }
+        return ("busy", nil)
+    }
+
+    // MARK: the other AI tools' work, counted as Claude's is
+
+    // Every panel Claude's calls fill (tool.mix, the ticker, research.feed, files.heat, session.log, the card's tools, web
+    // and errors, the tokens) gets Codex's and Antigravity's too, from their own records: someone working only with one of
+    // them saw them all empty. Each call, prompt or reply has a name of its own (`key`), so a record read again (another
+    // conversation and back, the tool started again on the same one) counts nothing twice; only today's count, as Claude's.
+    // `aid`: the subagent it's from, if any.
+
+    /// Whether `key` is new to the day's counts (`all`) and to the session's (`mine`); either way it's counted from here.
+    private func otherOnce(_ O: OtherAI, _ key: String) -> (all: Bool, mine: Bool) {
+        (otherSeen.insert(key).inserted, O.counted.insert(key).inserted)
+    }
+
+    /// A tool call (`p` as agyTool and codexCall make it), on `files` if it reads or edits some.
+    private func otherTool(_ O: OtherAI, _ key: String, _ p: Pending, files: [String] = [], aid: String? = nil) {
+        let ts = p.t, c = p.c
+        guard ts >= day0 else { return }
+        if O.counted.insert(key).inserted {
+            O.tools += 1
+            O.byCat[c, default: 0] += 1
+            if c == "web" { O.web += 1 }
+            O.spark[Int(ts / 20_000), default: 0] += 1
+            stateDirty = true
+        }
+        guard otherCalls[key] == nil else { return }
+        otherCalls[key] = (p, false)
+        G.tools += 1
+        G.byCat[c, default: 0] += 1
+        if ts >= (G.lastByCat[c]?["t"] as? Double ?? 0) { G.lastByCat[c] = ["l": p.l, "t": ts, "s": O.id] }
+        let mb = minute(ts)
+        mb.tools += 1
+        mb.cats[c, default: 0] += 1
+        ringPush(&G.ticker, ["id": key, "t": ts, "c": c, "st": "run", "n": p.n], 200)
+        if c == "web" {
+            G.web += 1
+            var r: [String: Any] = ["id": key, "t": ts, "s": O.id, "kind": p.n == "WebSearch" ? "search" : "fetch",
+                                    "l": p.l, "m": "", "ok": NSNull(), "d": NSNull(), "hosts": [String]()]
+            if let aid { r["a"] = aid }
+            ringPush(&G.research, r, 60)
+        }
+        if c == "bash" {
+            var r: [String: Any] = ["id": key, "t": ts, "s": O.id, "l": p.l, "cmd": p.l, "ok": NSNull(), "d": NSNull()]
+            if let aid { r["a"] = aid }
+            ringPush(&G.shells, r, 40)
+        }
+        for f in files { touchFile(f, c == "read" ? "Read" : "Edit", sid: O.id, aid: aid, ts) }
+        emit(ev("tool", ts, sid: O.id, aid: aid, ["id": key, "n": p.n, "c": c, "l": p.l]), true)
+    }
+
+    /// A call over: a failed one counts as an error; the ticker, research.feed, the shells and session.log get how it went.
+    private func otherResult(_ O: OtherAI, _ key: String, ok: Bool, _ ts: Double, d: Double?, aid: String? = nil) {
+        if O.counted.contains(key), O.resulted.insert(key).inserted, !ok {
+            O.errors += 1
+            stateDirty = true
+        }
+        guard let call = otherCalls[key], !call.done else { return }
+        otherCalls[key]?.done = true
+        if !ok { G.errors += 1 }
+        if let i = G.ticker.lastIndex(where: { $0["id"] as? String == key }) { G.ticker[i]["st"] = ok ? "ok" : "err" }
+        if let i = G.research.lastIndex(where: { $0["id"] as? String == key }) {
+            G.research[i]["ok"] = ok
+            G.research[i]["d"] = orNull(d)
+        }
+        if let i = G.shells.lastIndex(where: { $0["id"] as? String == key }) {
+            G.shells[i]["ok"] = ok
+            G.shells[i]["d"] = orNull(d)
+        }
+        var extra: [String: Any] = ["id": key, "ok": ok, "m": "", "n": call.p.n, "c": call.p.c]
+        if let d { extra["d"] = d }
+        emit(ev("result", ts, sid: O.id, aid: aid, extra), true)
+    }
+
+    /// A reply's tokens: the day's (the top bar, spend.ledger's line of the model, at no price: none is listed) and the card's.
+    private func otherTokens(_ O: OtherAI, _ key: String, _ ts: Double, _ i: Int, _ o: Int, _ r: Int) {
+        guard ts >= day0, i + o + r > 0 else { return }
+        let (all, mine) = otherOnce(O, key)
+        if mine { O.addTok(i, o, r, 0) }
+        stateDirty = true
+        guard all else { return }
+        G.tokIn += i; G.tokOut += o; G.tokCr += r
+        let mk = O.model.isEmpty ? O.tool : O.model
+        let bm = G.byModel[mk] ?? ModelAgg(model: mk, priced: false)
+        bm.tokIn += i; bm.tokOut += o; bm.tokCr += r
+        bm.calls += 1
+        G.byModel[mk] = bm
+        minute(ts).tok += i + o + r
+    }
+
+    /// What the user asked, or what it answered, into session.log (a prompt counts as Claude's do).
+    private func otherText(_ O: OtherAI, _ key: String, _ kind: String, _ text: String, _ ts: Double) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ts >= day0, !t.isEmpty else { return }
+        let (all, mine) = otherOnce(O, key)
+        if kind == "prompt", mine {
+            O.prompts += 1
+            stateDirty = true
+        }
+        guard all else { return }
+        if kind == "prompt" { G.prompts += 1 }
+        emit(ev(kind, ts, sid: O.id, aid: nil, ["l": clip(redact(t), kind == "prompt" ? 180 : 160)]), true)
+    }
+
     /// Codex's own log (~/.codex/sessions/<date>/rollout-….jsonl): its turn open or over, the tool call it's on, the
     /// prompt, the context and the model. Matched to the process by its folder and start, looked for again every 30 s
     /// until found; read on from where it was.
@@ -957,30 +1090,60 @@ final class RadarEngine {
             guard let j = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
                   let p = j["payload"] as? [String: Any] else { continue }
             let ts = parseISO(j["timestamp"] as? String)
+            // A line's own name for the day's counts: its log, and when in it. A turn's prompt and answers are named by
+            // the turn and what they say: Codex writes each as an event, as an item, or (some versions) both.
+            let at = "codex:\(path):\(j["timestamp"] as? String ?? "")", turn = "codex:\(path):turn\(O.turns)"
             switch (j["type"] as? String, p["type"] as? String) {
             case ("event_msg", "task_started"):
                 O.turnOpen = true
                 O.call = nil
+                O.turns += 1
             case ("event_msg", "task_complete"), ("event_msg", "turn_aborted"):
                 O.turnOpen = false
                 O.call = nil
             case ("event_msg", "item_completed"):
                 let item = p["item"] as? [String: Any]
-                if item?["type"] as? String == "UserMessage",
-                   let text = (item?["content"] as? [[String: Any]])?.compactMap({ $0["text"] as? String }).first {
+                guard let text = (item?["content"] as? [[String: Any]])?.compactMap({ $0["text"] as? String }).first else { break }
+                if item?["type"] as? String == "UserMessage" {
                     O.prompt = clip(text, 200)
+                    otherText(O, turn + ":in", "prompt", text, ts)
+                } else if item?["type"] as? String == "AgentMessage" {
+                    otherText(O, turn + ":say:\(text.hashValue)", "say", text, ts)
                 }
+            case ("event_msg", "user_message"):
+                // Older Codex logs write the prompt this way.
+                guard let text = p["message"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { break }
+                O.prompt = clip(text.trimmingCharacters(in: .whitespacesAndNewlines), 200)
+                otherText(O, turn + ":in", "prompt", text, ts)
+            case ("event_msg", "agent_message"):
+                if let text = p["message"] as? String { otherText(O, turn + ":say:\(text.hashValue)", "say", text, ts) }
             case ("event_msg", "token_count"):
                 let info = p["info"] as? [String: Any]
-                if let last = info?["last_token_usage"] as? [String: Any] { O.ctx = int(last["input_tokens"]) }
+                if let last = info?["last_token_usage"] as? [String: Any] {
+                    O.ctx = int(last["input_tokens"])
+                    // Its input counts the cached part too: the rest is what was new.
+                    let cached = int(last["cached_input_tokens"])
+                    otherTokens(O, at + ":tok", ts, max(0, int(last["input_tokens"]) - cached), int(last["output_tokens"]), cached)
+                }
                 if let window = info?["model_context_window"] as? NSNumber { O.ctxMax = window.doubleValue }
             case ("event_msg", "thread_settings_applied"):
                 if let m = (p["thread_settings"] as? [String: Any])?["model"] as? String { O.model = m }
-            case ("response_item", let kind?) where kind.hasSuffix("_call") && !kind.hasSuffix("_output"):
-                let name = p["name"] as? String ?? kind
-                O.call = (p["call_id"] as? String ?? "", Self.codexCall(name: name, p: p, at: ts))
+            case ("turn_context", _):
+                // Older Codex logs give the model with every turn instead.
+                if let m = p["model"] as? String, !m.isEmpty { O.model = m }
             case ("response_item", let kind?) where kind.hasSuffix("_call_output"):
+                let key = "codex:" + (p["call_id"] as? String ?? at)
                 if O.call?.id == p["call_id"] as? String { O.call = nil }
+                otherResult(O, key, ok: Self.codexOk(p["output"]), ts, d: otherCalls[key].map { max(0, ts - $0.p.t) })
+            case ("response_item", "web_search_call"):
+                // Logged once the search is over, with no output line to end it: nothing left running.
+                let key = "codex:" + (p["call_id"] as? String ?? at), call = Self.codexCall(name: "web_search_call", p: p, at: ts)
+                otherTool(O, key, call)
+                if p["status"] as? String != "completed" { O.call = (p["call_id"] as? String ?? "", call) } else { otherResult(O, key, ok: true, ts, d: nil) }
+            case ("response_item", let kind?) where kind.hasSuffix("_call"):
+                let key = "codex:" + (p["call_id"] as? String ?? at), call = Self.codexCall(name: p["name"] as? String ?? kind, p: p, at: ts)
+                O.call = (p["call_id"] as? String ?? "", call)
+                otherTool(O, key, call, files: call.c == "edit" ? Self.codexFiles(p) : [])
             default:
                 break
             }
@@ -996,19 +1159,17 @@ final class RadarEngine {
     /// Claude's do. Its screen redrawing while the user types is no work.
     private func readAntigravity(_ O: OtherAI, cwd: String) {
         let root = HOME + "/.gemini/antigravity-cli"
+        readAgyModel(O, root: root)
         guard let db = Self.agyOpen(root + "/conversation_summaries.db") else { return }
         defer { sqlite3_close(db) }
-        // Its newest conversation in this folder (a folder as a file:// address, as Antigravity writes it).
-        let here = URL(fileURLWithPath: cwd).standardizedFileURL.path
-        var row: (id: String, title: String, status: String)?
-        Self.agyRows(db, "SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 "
-                     + "ORDER BY last_modified_time DESC LIMIT 40") { col in
-            let uris = (try? JSONSerialization.jsonObject(with: Data(col(3).utf8)) as? [String]) ?? []
-            guard uris.contains(where: { URL(string: $0)?.standardizedFileURL.path == here }) else { return true }
-            row = (col(0), col(1), col(2))
-            return false
+        guard let (id, title, status) = Self.agyConversation(db, cwd: cwd, root: root) else {
+            // Nothing sent from this folder yet: the user's turn (its screen redrawing is no work, as its CPU said).
+            if O.turnOpen != false {
+                O.turnOpen = false
+                stateDirty = true
+            }
+            return
         }
-        guard let (id, title, status) = row else { return }
         let open = status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY") || status.hasSuffix("_CANCELING")
         if O.turnOpen != open || O.title != title {
             O.turnOpen = open
@@ -1016,6 +1177,7 @@ final class RadarEngine {
             stateDirty = true
         }
         readAgyTranscript(O, root: root, id: id)
+        if !open, let plan = O.plan { closeAgyCalls(O, conversation: id, plan: plan, root: root, aid: nil) }
         // What runs, or waits for the user, right now: its steps not over yet.
         let was = (O.call?.p.l, O.waitsForUser)
         if !open {
@@ -1030,6 +1192,89 @@ final class RadarEngine {
         }
         if was.0 != O.call?.p.l || was.1 != O.waitsForUser { stateDirty = true }
         readAntigravityAgents(O, db: db, parent: id, root: root)
+    }
+
+    /// Antigravity's conversation in `cwd`: the one its CLI says it's in there (cache/last_conversations.json, by folder),
+    /// else its newest there (a folder as a file:// address, as it writes it). The desktop Antigravity's conversations share
+    /// the list (app_data_dir "antigravity"): one of those, months old, is no CLI's. Folders compare with their links
+    /// resolved: the CLI may write the one it was started in, the process has the real one.
+    private static func agyConversation(_ db: OpaquePointer, cwd: String, root: String) -> (id: String, title: String, status: String)? {
+        let here = realFolder(cwd), cols = "conversation_id, title, status, workspace_uris"
+        var row: (id: String, title: String, status: String)?
+        if let data = FileManager.default.contents(atPath: root + "/cache/last_conversations.json"),
+           let last = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for case let (dir, id as String) in last where realFolder(dir) == here {
+                agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE conversation_id = ?", [id]) { col in
+                    row = (col(0), col(1), col(2))
+                    return false
+                }
+                if let row { return row }
+            }
+        }
+        // Older CLIs' lists have no app_data_dir.
+        for filter in ["nesting_depth = 0 AND IFNULL(app_data_dir, '') != 'antigravity'", "nesting_depth = 0"] {
+            var read = false
+            agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE \(filter) ORDER BY last_modified_time DESC LIMIT 40") { col in
+                let uris = (try? JSONSerialization.jsonObject(with: Data(col(3).utf8)) as? [String]) ?? []
+                guard uris.contains(where: { URL(string: $0).map { realFolder($0.path) } == here }) else { return true }
+                row = (col(0), col(1), col(2))
+                return false
+            } done: { read = $0 }
+            if read { break }
+        }
+        return row
+    }
+
+    /// The calls of a conversation's last reply still open once it has stopped (its turn over, or a subagent the session
+    /// killed): their steps never reached its transcript, so its own database says how they ended (3 done, 6 canceled;
+    /// 1, 2, 8, 9 and 11 haven't yet).
+    private func closeAgyCalls(_ O: OtherAI, conversation id: String, plan: AgyPlan, root: String, aid: String?) {
+        let keys = plan.calls.indices.map { "agy:\(id):\(plan.idx):\($0)" }
+        guard keys.contains(where: { otherCalls[$0]?.done == false }), let db = Self.agyOpen(root + "/conversations/" + id + ".db") else { return }
+        defer { sqlite3_close(db) }
+        var ended: [Int: String] = [:]
+        Self.agyRows(db, "SELECT idx, status FROM steps WHERE idx > \(plan.idx) AND status NOT IN (0, 1, 2, 8, 9, 11)") { col in
+            ended[Int(col(0)) ?? -1] = col(1)
+            return true
+        }
+        for (k, key) in keys.enumerated() where otherCalls[key]?.done == false {
+            guard let status = ended[plan.idx + 1 + k] else { continue }
+            otherResult(O, key, ok: status == "3", nowMs(), d: nil, aid: aid)
+        }
+    }
+
+    /// A folder as the file system has it, its links resolved.
+    private static func realFolder(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// The model Antigravity's CLI runs on, as its log names it at the start and on each change ("Propagating selected model
+    /// override to backend: label="Gemini 3.8 Flash (High)""): the card's model and effort, and its context window for the
+    /// gauge (Gemini's 1M tokens, Claude's 200k), which its records don't give. Read again only when the log changes, its
+    /// last 256 KB (cli.log is the newest run's).
+    private func readAgyModel(_ O: OtherAI, root: String) {
+        let path = root + "/cli.log"
+        guard let st = fileStat(path), "\(st.size):\(st.mtime)" != O.modelMark, let fh = FileHandle(forReadingAtPath: path) else { return }
+        defer { try? fh.close() }
+        O.modelMark = "\(st.size):\(st.mtime)"
+        try? fh.seek(toOffset: st.size > 256 << 10 ? st.size - (256 << 10) : 0)
+        let text = String(decoding: fh.readDataToEndOfFile(), as: UTF8.self)
+        guard let r = text.range(of: "selected model override to backend: label=\"", options: .backwards),
+              let end = text[r.upperBound...].firstIndex(of: "\"") else { return }
+        let label = String(text[r.upperBound..<end])
+        var model = label, effort = ""
+        if let m = label.range(of: #"\s*\((low|medium|high|xhigh|max)\)\s*$"#, options: [.regularExpression, .caseInsensitive]) {
+            model = String(label[..<m.lowerBound])
+            effort = label[m].trimmingCharacters(in: CharacterSet(charactersIn: "() ")).lowercased()
+        }
+        let lower = model.lowercased()
+        let window = lower.contains("gemini") ? 1_048_576.0 : lower.contains("claude") ? 200_000 : 0
+        if model != O.model || effort != O.effort || window != O.ctxMax {
+            O.model = model
+            O.effort = effort
+            O.ctxMax = window
+            stateDirty = true
+        }
     }
 
     /// The conversation's transcript, read on from where it was (a new conversation: from the start): the prompt, the
@@ -1056,18 +1301,31 @@ final class RadarEngine {
             O.waitsForUser = step == "WAITING"
             switch kind {
             case "USER_INPUT":
-                O.prompt = clip(Self.agyRequest(j["content"]), 200)
+                let asked = Self.agyRequest(j["content"])
+                O.prompt = clip(asked, 200)
+                otherText(O, "agy:\(id):\(idx):in", "prompt", asked, ts)
                 O.call = nil
                 O.plan = nil
             case "PLANNER_RESPONSE":
                 if let n = j["input_tokens"] as? NSNumber { O.ctx = n.intValue + int(j["cache_read_tokens"]) }
+                otherTokens(O, "agy:\(id):\(idx):tok", ts, int(j["input_tokens"]), int(j["output_tokens"]), int(j["cache_read_tokens"]))
+                if let text = j["content"] as? String { otherText(O, "agy:\(id):\(idx):say", "say", text, ts) }
                 // A reply that calls tools: they run (or wait) next, a step each.
                 let calls = j["tool_calls"] as? [[String: Any]] ?? []
                 O.plan = calls.isEmpty ? nil : AgyPlan(idx: idx, calls: calls, ts: ts)
                 O.call = calls.last.map { ("", Self.agyTool($0, at: ts)) }
+                for (k, call) in calls.enumerated() {
+                    let p = Self.agyTool(call, at: ts)
+                    otherTool(O, "agy:\(id):\(idx):\(k)", p, files: Self.agyFile(call, kind: p.c).map { [$0] } ?? [])
+                }
             default:
-                // A tool's own step: done, it no longer waits; still running or waiting, it does.
-                if step == "DONE" || step == "ERROR" || step == "CANCELED" { O.call = nil }
+                // A tool's own step: done, it no longer waits; still running or waiting, it does. Its call's result counts.
+                if step == "DONE" || step == "ERROR" || step == "CANCELED" {
+                    O.call = nil
+                    if let plan = O.plan, kind != "SYSTEM_MESSAGE", plan.calls.indices.contains(idx - plan.idx - 1) {
+                        otherResult(O, "agy:\(id):\(plan.idx):\(idx - plan.idx - 1)", ok: step == "DONE", ts, d: Self.agyDuration(j["content"]))
+                    }
+                }
                 // One that started subagents says which, in the order the call asked for them (their roles, prompts).
                 guard let plan = O.plan, let call = Self.agyPlanned(plan, step: idx), call["name"] as? String == "invoke_subagent",
                       let text = j["content"] as? String else { break }
@@ -1099,10 +1357,15 @@ final class RadarEngine {
             let mtime = fileStat(path)?.mtime ?? 0
             var log = O.agentLogs[id] ?? AgyLog()
             if mtime != log.mtime {
-                log = Self.agyLog(path, mtime: mtime)
+                log = Self.agyLog(path, mtime: mtime, id: id)
                 O.agentLogs[id] = log
                 stateDirty = true
+                // Its calls and tokens count as the session's, as a Claude subagent's do.
+                for u in log.usage { otherTokens(O, u.key, u.ts, u.i, u.o, u.r) }
+                for c in log.calls { otherTool(O, c.key, c.p, files: c.file.map { [$0] } ?? [], aid: id) }
+                for r in log.results { otherResult(O, r.key, ok: r.ok, r.ts, d: r.d, aid: id) }
             }
+            if !running, let plan = log.plan { closeAgyCalls(O, conversation: id, plan: plan, root: root, aid: id) }
             // Done more than 15 minutes ago: off the list, as Claude's.
             guard running || now - mtime < 15 * Self.MIN else { return true }
             var call: Pending?, waits = false
@@ -1137,16 +1400,17 @@ final class RadarEngine {
     }
 
     /// A subagent's whole transcript (it's short): when it started and last moved, what it was asked, its last reply's
-    /// tool calls, and its counts (tools, errors, web, tokens), as Claude's subagents have them.
-    private static func agyLog(_ path: String, mtime: Double) -> AgyLog {
+    /// tool calls, and its counts (tools, errors, web, tokens), as Claude's subagents have them; and each call, its result
+    /// and each reply's tokens, named by `id` (the subagent's conversation), for the day's counts.
+    private static func agyLog(_ path: String, mtime: Double, id: String) -> AgyLog {
         var log = AgyLog(mtime: mtime)
         guard let data = FileManager.default.contents(atPath: path) else { return log }
         for line in data.split(separator: 0x0A) {
             guard let j = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
-            let ts = parseISO(j["created_at"] as? String)
+            let ts = parseISO(j["created_at"] as? String), idx = int(j["step_index"]), step = j["status"] as? String ?? ""
             if log.firstTs == 0 { log.firstTs = ts }
             log.lastTs = max(log.lastTs, ts)
-            if j["status"] as? String == "ERROR" { log.errors += 1 }
+            if step == "ERROR" { log.errors += 1 }
             switch j["type"] as? String {
             case "SYSTEM_MESSAGE" where log.prompt.isEmpty:
                 // The session's message to it: what it was asked.
@@ -1159,12 +1423,21 @@ final class RadarEngine {
                 log.prompt = agyRequest(j["content"])
             case "PLANNER_RESPONSE":
                 let calls = j["tool_calls"] as? [[String: Any]] ?? []
-                log.plan = calls.isEmpty ? nil : AgyPlan(idx: int(j["step_index"]), calls: calls, ts: ts)
+                log.plan = calls.isEmpty ? nil : AgyPlan(idx: idx, calls: calls, ts: ts)
                 log.tools += calls.count
                 log.web += calls.filter { ["web", "browser"].contains(agyTool($0, at: ts).c) }.count
                 log.tokIn += int(j["input_tokens"])
                 log.tokOut += int(j["output_tokens"])
                 log.tokCache += int(j["cache_read_tokens"])
+                log.usage.append(("agy:\(id):\(idx):tok", ts, int(j["input_tokens"]), int(j["output_tokens"]), int(j["cache_read_tokens"])))
+                for (k, call) in calls.enumerated() {
+                    let p = agyTool(call, at: ts)
+                    log.calls.append(("agy:\(id):\(idx):\(k)", p, agyFile(call, kind: p.c)))
+                }
+            case let kind? where kind != "USER_INPUT" && kind != "SYSTEM_MESSAGE":
+                // A tool's own step, right after the reply that called it.
+                guard let plan = log.plan, ["DONE", "ERROR", "CANCELED"].contains(step), plan.calls.indices.contains(idx - plan.idx - 1) else { break }
+                log.results.append(("agy:\(id):\(plan.idx):\(idx - plan.idx - 1)", step == "DONE", ts, agyDuration(j["content"])))
             default: break
             }
         }
@@ -1262,7 +1535,7 @@ final class RadarEngine {
         let name = call["name"] as? String ?? "tool"
         let args = call["args"] as? [String: Any] ?? [:]
         let what = ["CommandLine", "Command", "command", "Query", "query", "queries", "Url", "url", "Uri", "AbsolutePath", "TargetFile",
-                    "File", "path", "SearchPath", "DirectoryPath", "Role", "ServerName", "toolSummary", "Prompt"]
+                    "File", "FilePath", "Path", "path", "SearchPath", "DirectoryPath", "Pattern", "Role", "ServerName", "toolSummary", "Prompt"]
             .lazy.compactMap { agyArg(args[$0]) }.first { !$0.isEmpty } ?? name
         let (n, c): (String, String)
         switch name {
@@ -1271,20 +1544,47 @@ final class RadarEngine {
         case "read_url_content", "view_content_chunk": (n, c) = ("WebFetch", "web")
         case let x where x.hasPrefix("browser_") || x.hasSuffix("_browser_url") || x.hasSuffix("_browser_page") || x == "capture_browser_screenshot":
             (n, c) = ("Browser", "browser")
-        case "view_file", "view_file_outline", "view_code_item", "list_dir": (n, c) = ("Read", "read")
-        case "grep_search", "find_by_name", "codebase_search": (n, c) = ("Grep", "search")
-        case let x where x.contains("write") || x.contains("replace") || x.contains("edit"): (n, c) = ("Edit", "edit")
+        // read_file is the CLI's (1.5); view_file the desktop app's.
+        case "view_file", "view_file_outline", "view_code_item", "list_dir", "read_file", "list_directory": (n, c) = ("Read", "read")
+        case "grep_search", "find_by_name", "codebase_search", "search_files", "grep", "glob": (n, c) = ("Grep", "search")
+        case let x where x.contains("write") || x.contains("replace") || x.contains("edit") || x.contains("create_file") || x.contains("delete_file"):
+            (n, c) = ("Edit", "edit")
         case "invoke_subagent": (n, c) = ("Agent", "agent")
+        // Messaging, listing or killing its subagents, as Claude's SendMessage, ListAgents and TaskStop are.
+        case "manage_subagents": (n, c) = (name, "agent")
         case let x where x.hasPrefix("mcp"): (n, c) = ("MCP", "mcp")
         default: (n, c) = (name, "plan")
         }
         return Pending(n: n, c: c, l: clip(what, 120), t: at)
     }
 
-    /// A Codex tool call as a pending tool: its shell command, or the files it patches.
+    /// The file an Antigravity call reads or edits, for files.heat.
+    private static func agyFile(_ call: [String: Any], kind: String) -> String? {
+        guard kind == "read" || kind == "edit" else { return nil }
+        let args = call["args"] as? [String: Any] ?? [:]
+        return ["AbsolutePath", "TargetFile", "File", "FilePath", "Path", "path"].lazy
+            .compactMap { agyValue(args[$0]) as? String }.first { !$0.isEmpty }
+    }
+
+    /// How long an Antigravity tool step took: its result starts "Created At: …\nCompleted At: …".
+    private static func agyDuration(_ content: Any?) -> Double? {
+        guard let s = content as? String,
+              let r = s.range(of: #"Created At:\s*\S+\s+Completed At:\s*\S+"#, options: .regularExpression) else { return nil }
+        let words = s[r].split(whereSeparator: \.isWhitespace)
+        guard words.count == 6 else { return nil }
+        let from = parseISO(String(words[2])), to = parseISO(String(words[5]))
+        return from > 0 && to >= from ? to - from : nil
+    }
+
+    /// A Codex tool call as a pending tool: its shell command, the files it patches, or what it looks up on the web.
     private static func codexCall(name: String, p: [String: Any], at: Double) -> Pending {
         let input = (p["input"] as? String) ?? (p["arguments"] as? String) ?? ""
         if name.contains("patch") { return Pending(n: "Edit", c: "edit", l: "apply patch", t: at) }
+        if name.contains("web_search") {
+            let action = p["action"] as? [String: Any] ?? [:]
+            let what = [action["query"], action["url"]].compactMap { $0 as? String }.first { !$0.isEmpty }
+            return Pending(n: "WebSearch", c: "web", l: clip(what ?? "web search", 120), t: at)
+        }
         // `tools.exec_command({"cmd":"…"})`, or the older shell call's {"command":["bash","-lc","…"]}.
         var command = ""
         if let r = input.range(of: #""cmd"\s*:\s*"((?:[^"\\]|\\.)*)""#, options: .regularExpression) {
@@ -1295,6 +1595,30 @@ final class RadarEngine {
             command = parts.last ?? ""
         }
         return Pending(n: "Bash", c: "bash", l: clip(command.isEmpty ? name : command, 120), t: at)
+    }
+
+    /// Whether a Codex call went well: its shell's output says "Exit code: N" or "exit_code":N (0: it did); a patch's or
+    /// another's says nothing of the kind and counts as done. Newer Codex gives the output as parts of text.
+    private static func codexOk(_ output: Any?) -> Bool {
+        var s = output as? String ?? ""
+        if let parts = output as? [[String: Any]] {
+            s = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        } else if s.isEmpty, let output, JSONSerialization.isValidJSONObject(output), let data = try? JSONSerialization.data(withJSONObject: output) {
+            s = String(decoding: data, as: UTF8.self)
+        }
+        let head = String(s.prefix(400))
+        guard let r = head.range(of: #"(?i)exit[ _]code"?:?\s*-?\d+"#, options: .regularExpression),
+              let n = head[r].range(of: #"-?\d+$"#, options: .regularExpression) else { return true }
+        return Int(head[r][n]) == 0
+    }
+
+    /// The files a Codex patch adds, changes or deletes ("*** Update File: …"), for files.heat.
+    private static func codexFiles(_ p: [String: Any]) -> [String] {
+        (p["input"] as? String ?? "").components(separatedBy: .newlines).compactMap { line in
+            guard let head = ["*** Add File: ", "*** Update File: ", "*** Delete File: "].first(where: { line.hasPrefix($0) }) else { return nil }
+            let file = line.dropFirst(head.count).trimmingCharacters(in: .whitespaces)
+            return file.isEmpty ? nil : file
+        }
     }
 
     /// The newest Codex log of the last week begun in `cwd` and written since `since` (seconds).
@@ -1464,42 +1788,27 @@ final class RadarEngine {
             let live = O.endedAt == 0
             // What it runs: a shell of its own right now, else the tool call its log has it on.
             let running = O.command.map { Pending(n: "Bash", c: "bash", l: $0, t: O.commandSince) } ?? O.call?.p
-            var status = "ended", waiting: String?
+            let (status, waiting) = otherStatus(O, now)
             // Its subagents end with it.
             let agents = live ? O.agents : O.agents.map { var a = $0; a["running"] = false; a["pending"] = [[String: Any]](); return a }
             let agentsRunning = agents.filter { $0["running"] as? Bool == true }.count
-            if live, let open = O.turnOpen {
-                // Its records have the turn: over is the user's turn, unless its subagents still work (as Claude's
-                // background ones); a step waiting for the user's permission, its own or a subagent's, waits; without its
-                // steps to tell, a tool call that runs nothing and burns nothing for a few seconds does.
-                if O.waitsForUser || O.agentWaiting != nil {
-                    status = "waiting"
-                    waiting = "approval: " + ((O.waitsForUser ? O.call?.p : O.agentWaiting)?.l ?? "a step")
-                } else if !open {
-                    status = agentsRunning > 0 ? "busy" : "idle"
-                } else if !O.stepsKnown, O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 {
-                    status = "waiting"
-                    waiting = "approval: " + call.p.l
-                } else {
-                    status = "busy"
-                }
-            } else if live {
-                status = O.busy || O.command != nil ? "busy" : "idle"
-            }
             runningAgents += agentsRunning
             for p in (running.map { [$0.dict] } ?? []) + agents.flatMap({ $0["pending"] as? [[String: Any]] ?? [] }) {
                 pendingByCat[p["c"] as? String ?? "plan", default: 0] += 1
             }
             let host: String? = O.hostTab != nil ? "app" : (live ? "term" : nil)
             let folder = (O.cwd as NSString).lastPathComponent
+            let k0 = Int(now / 20_000)
+            let spark = ((k0 - 29)...k0).map { O.spark[$0] ?? 0 }
+            let flags = O.ctxMax > 0 && Double(O.ctx) / O.ctxMax > 0.8 ? ["ctx 80%+"] : [String]()
             var item: [String: Any] = [
                 "id": O.id, "name": O.tool, "title": O.title.isEmpty ? folder : O.title, "lastPrompt": O.prompt, "cwd": cwdLabel(O.cwd), "branch": "",
-                "model": O.model.isEmpty ? O.tool : O.model, "effort": "", "status": status, "live": live,
+                "model": O.model.isEmpty ? O.tool : O.model, "effort": O.effort, "status": status, "live": live,
                 "statusSince": live ? O.statusSince : O.endedAt, "cpu": O.cpu, "mem": O.mem, "kind": "", "entry": "",
                 "firstTs": O.firstTs, "lastTs": O.lastTs, "ctx": O.ctx, "ctxMax": O.ctxMax, "turnMs": 0.0,
-                "tok": ["in": 0, "out": 0, "cr": 0, "cw": 0], "cost": 0.0, "tools": 0, "errors": 0, "web": 0, "prompts": 0,
-                "byCat": [String: Int](), "pending": running.map { [$0.dict] } ?? [[String: Any]](),
-                "spark": [Int](repeating: 0, count: 30), "flags": [String](), "agents": agents, "agentsRunning": agentsRunning,
+                "tok": O.tokDict, "cost": 0.0, "tools": O.tools, "errors": O.errors, "web": O.web, "prompts": O.prompts,
+                "byCat": O.byCat, "pending": running.map { [$0.dict] } ?? [[String: Any]](),
+                "spark": spark, "flags": flags, "agents": agents, "agentsRunning": agentsRunning,
             ]
             if let running { item["last"] = running.dict }
             item["waitingFor"] = orNull(waiting)
@@ -1511,8 +1820,13 @@ final class RadarEngine {
             var brief = SessionBrief(id: O.id, name: O.tool, title: !O.title.isEmpty ? O.title : O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
                                      cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab)
             brief.model = O.model.isEmpty ? O.tool : O.model
+            brief.effort = O.effort
             brief.ctx = O.ctx
             brief.ctxMax = O.ctxMax
+            brief.tools = O.tools
+            brief.web = O.web
+            brief.errors = O.errors
+            brief.spark = spark
             brief.agentsRunning = agentsRunning
             brief.statusSince = live ? O.statusSince : O.endedAt
             if let running {

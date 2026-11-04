@@ -3,6 +3,12 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased
+
+- Dashboard: Codex's and Antigravity's work fills every panel as Claude's does: their tool calls in tool.mix, the ticker, research.feed, files.heat and session.log (their answers as "reply", not "claude"), their prompts and tokens in the top bar and spend.ledger (at no price), and their card's tools, web, errors and activity; their subagents' calls count with them, on the Mac and Windows
+- Antigravity: one you haven't sent anything yet is your turn, not working; its model, effort and context window show (the gauge was empty), its newer tools are known, a step it never finished (a subagent it killed, an approval you cancelled) no longer shows as running, and on Windows its Ctrl+K (which approves its subagents' steps) is its own, not the shortcut wheel's
+- Codex: newer Codex's answers reach session.log and its failed commands count as errors
+
 ## 0.16.0
 
 - Tabs: End Session in a window with tabs ends only the tab in front (its chat, its terminal or its panes), the other tabs keep running; the last one ends the window as before, and asks first when something still runs in it

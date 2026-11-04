@@ -62,13 +62,16 @@ final class Session: Track {
     init(id: String) { self.id = id }
 }
 
-/// Another AI tool running in a terminal (Proc.otherAIs): a session on the dashboard without a transcript.
-final class OtherAI {
+/// Another AI tool running in a terminal (Proc.otherAIs): a session on the dashboard without a transcript of Claude's.
+/// Its counters (today's calls, errors, prompts, tokens) come from its own records, as a Claude session's do.
+final class OtherAI: Track {
     let id: String, tool: String, pid: Int32
     var cwd = "", tty: String?, ppid: Int32 = 0
     var cpu = 0.0, mem = 0
     var busy = false, busyUntil = 0.0, statusSince = 0.0
-    var firstTs = 0.0, lastTs = 0.0, endedAt = 0.0
+    /// The status it shows (statusSince is since when: your.call's clock), its records' turn included, not only its CPU.
+    var shown = ""
+    var endedAt = 0.0
     var hostTab: String?
     /// A shell it runs right now (any tool, from its child processes), and since when.
     var command: String?, commandSince = 0.0
@@ -89,12 +92,23 @@ final class OtherAI {
     /// prompt): by conversation id.
     var agentLogs: [String: AgyLog] = [:]
     var agentRoles: [String: (role: String, prompt: String)] = [:]
-    var prompt = "", model = "", ctx = 0, ctxMax = 0.0
+    var prompt = "", effort = "", ctx = 0, ctxMax = 0.0
+    /// Codex's turns in its log so far (each turn's prompt is named by its turn), and Antigravity's cli.log as it was when
+    /// its model was last read (size and mtime).
+    var turns = 0, modelMark = ""
+    /// Its records already in its counts (calls, prompts, replies, tokens: `counted`), and its calls whose result is.
+    var counted = Set<String>(), resulted = Set<String>()
 
     init(id: String, tool: String, pid: Int32) {
         self.id = id
         self.tool = tool
         self.pid = pid
+    }
+
+    override func resetCounters() {
+        super.resetCounters()
+        counted.removeAll()
+        resulted.removeAll()
     }
 }
 
@@ -104,11 +118,15 @@ struct AgyPlan {
     var idx: Int, calls: [[String: Any]], ts: Double
 }
 
-/// What an Antigravity subagent's transcript says, read again when it changes.
+/// What an Antigravity subagent's transcript says, read again when it changes; and each of its calls (the file it reads or
+/// edits), their results and each reply's tokens, by name (`key`), for the day's counts.
 struct AgyLog {
     var mtime = 0.0, firstTs = 0.0, lastTs = 0.0, prompt = ""
     var plan: AgyPlan?
     var tools = 0, errors = 0, web = 0, tokIn = 0, tokOut = 0, tokCache = 0
+    var calls: [(key: String, p: Pending, file: String?)] = []
+    var results: [(key: String, ok: Bool, ts: Double, d: Double?)] = []
+    var usage: [(key: String, ts: Double, i: Int, o: Int, r: Int)] = []
 }
 
 final class SubAgent: Track {

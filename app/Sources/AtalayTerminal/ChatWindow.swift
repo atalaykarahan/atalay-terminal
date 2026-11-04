@@ -42,7 +42,9 @@ final class ChatHUD: ObservableObject {
         if e.kind == "usage" || e.kind == "result" { return }
         let hex: UInt32 = e.kind == "prompt" ? ThemeStore.shared.hex("--accent-soft") : e.kind == "say" ? ThemeStore.shared.hex("--txt2")
             : Theme.catHex[e.cat ?? ""] ?? Theme.planHex
-        let tag = e.kind == "tool" ? Theme.catLabel[e.cat ?? ""] ?? "tool" : e.kind == "prompt" ? "you" : e.kind == "say" ? "claude" : e.kind
+        // Another AI tool's answer (Codex's, Antigravity's: their sessions are "ai:…") is its own, not Claude's.
+        let tag = e.kind == "tool" ? Theme.catLabel[e.cat ?? ""] ?? "tool" : e.kind == "prompt" ? "you"
+            : e.kind == "say" ? (e.sid.hasPrefix("ai:") ? "reply" : "claude") : e.kind
         seq += 1
         withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) {
             chips.append(TickerChip(id: seq, tag: tag, text: String(e.label.prefix(42)), hex: hex, at: Date()))

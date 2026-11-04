@@ -355,10 +355,12 @@ function codexCall(name, p, at) {
   return { n: 'Bash', c: 'bash', l: clip(command || name, 120), t: at };
 }
 
-// Whether a Codex call went well: its shell's output starts "Exit code: N" (0: it did); a patch's or another's says
-// nothing of the kind and counts as done.
+// Whether a Codex call went well: its shell's output says "Exit code: N" or "exit_code":N (0: it did); a patch's or
+// another's says nothing of the kind and counts as done. Newer Codex gives the output as parts of text.
 function codexOk(output) {
-  const s = typeof output === 'string' ? output : output && typeof output === 'object' ? JSON.stringify(output) : '';
+  const s = typeof output === 'string' ? output
+    : Array.isArray(output) ? output.map((x) => (x && typeof x.text === 'string' ? x.text : '')).join('\n')
+    : output && typeof output === 'object' ? JSON.stringify(output) : '';
   const m = /exit[ _]code"?:?\s*(-?\d+)/i.exec(s.slice(0, 400));
   return !m || Number(m[1]) === 0;
 }
@@ -456,7 +458,7 @@ function agyConversation(db, cwd, root) {
   } catch {}
   let rows = [];
   // Older CLIs' lists have no app_data_dir.
-  for (const where of ["nesting_depth = 0 AND app_data_dir != 'antigravity'", 'nesting_depth = 0']) {
+  for (const where of ["nesting_depth = 0 AND IFNULL(app_data_dir, '') != 'antigravity'", 'nesting_depth = 0']) {
     try {
       rows = db.prepare(`SELECT ${cols} FROM conversation_summaries WHERE ${where} ORDER BY last_modified_time DESC LIMIT 40`).all();
       break;
@@ -567,6 +569,8 @@ function agyTool(call, at) {
   else if (['grep_search', 'find_by_name', 'codebase_search', 'search_files', 'grep', 'glob'].includes(name)) [n, c] = ['Grep', 'search'];
   else if (/write|replace|edit|create_file|delete_file/.test(name)) [n, c] = ['Edit', 'edit'];
   else if (name === 'invoke_subagent') [n, c] = ['Agent', 'agent'];
+  // Messaging, listing or killing its subagents, as Claude's SendMessage, ListAgents and TaskStop are.
+  else if (name === 'manage_subagents') c = 'agent';
   else if (name.startsWith('mcp')) [n, c] = ['MCP', 'mcp'];
   return { n, c, l: clip(what, 120), t: at };
 }
@@ -2560,6 +2564,7 @@ class RadarEngine {
         this.stateDirty = true;
       }
       this.readAgyTranscript(O, root, id, now);
+      if (!open && O.plan) this.closeAgyCalls(O, id, O.plan, root, null);
       // What runs, or waits for the user, right now: its steps not over yet.
       const was = `${O.call ? O.call.p.l : ''}|${O.waitsForUser}`;
       if (!open) {
@@ -2579,6 +2584,32 @@ class RadarEngine {
     } finally {
       agyClose(db);
     }
+  }
+
+  // The calls of a conversation's last reply still open once it has stopped (its turn over, or a subagent the session
+  // killed): their steps never reached its transcript, so its own database says how they ended (3 done, 6 canceled; 1, 2,
+  // 8, 9 and 11 haven't yet).
+  closeAgyCalls(O, id, plan, root, A) {
+    const keys = plan.calls.map((_, k) => `agy:${id}:${plan.idx}:${k}`);
+    const open = (key) => {
+      const c = this.otherCalls.get(key);
+      return c && !c.done;
+    };
+    if (!keys.some(open)) return;
+    const db = agyOpen(path.join(root, 'conversations', `${id}.db`));
+    if (!db) return;
+    let rows = [];
+    try {
+      rows = db.prepare(`SELECT idx, status FROM steps WHERE idx > ${Number(plan.idx) || 0} AND status NOT IN (0, 1, 2, 8, 9, 11)`).all();
+    } catch {
+    } finally {
+      agyClose(db);
+    }
+    const ended = new Map(rows.map((r) => [Number(r.idx), Number(r.status)]));
+    keys.forEach((key, k) => {
+      const status = ended.get(plan.idx + 1 + k);
+      if (open(key) && status != null) this.otherResult(O, key, status === 3, Date.now(), null, A);
+    });
   }
 
   // The conversation's transcript, read on from where it was (a new conversation: from the start): the prompt, the
@@ -2671,6 +2702,7 @@ class RadarEngine {
         for (const c of log.calls) this.otherTool(O, c.key, c.p, c.ts, c.file, A);
         for (const r of log.results) this.otherResult(O, r.key, r.ok, r.ts, r.d, A);
       }
+      if (!running && log.plan) this.closeAgyCalls(O, id, log.plan, root, { id });
       // Done more than 15 minutes ago: off the list, as Claude's.
       if (!running && now - mtime >= 15 * MIN) continue;
       let call = null, waits = false;
@@ -2740,9 +2772,9 @@ class RadarEngine {
       const p = j && j.payload;
       if (!p || typeof p !== 'object') continue;
       const ts = parseISO(j.timestamp) || now;
-      // A line's own name for the day's counts: its log, and when in it (each turn's prompt by the turn: newer Codex
-      // logs write it twice, as an event and as an item).
-      const at = `codex:${O.log}:${j.timestamp}`;
+      // A line's own name for the day's counts: its log, and when in it. A turn's prompt and answers are named by the
+      // turn and what they say: Codex writes each as an event, as an item, or (some versions) both.
+      const at = `codex:${O.log}:${j.timestamp}`, turn = `codex:${O.log}:turn${O.turns || 0}`;
       if (j.type === 'event_msg') {
         if (p.type === 'task_started') {
           O.turnOpen = true;
@@ -2755,14 +2787,18 @@ class RadarEngine {
           const text = (p.item.content || []).map((c) => c && c.text).find(Boolean);
           if (text) {
             O.prompt = clip(text, 200);
-            this.otherText(O, `codex:${O.log}:turn${O.turns || 0}:in`, 'prompt', text, ts);
+            this.otherText(O, `${turn}:in`, 'prompt', text, ts);
           }
+        } else if (p.type === 'item_completed' && p.item && p.item.type === 'AgentMessage') {
+          // Its answer, as newer Codex writes it (older ones: agent_message).
+          const text = (p.item.content || []).map((c) => c && c.text).find(Boolean);
+          if (text) this.otherText(O, `${turn}:say:${text}`, 'say', text, ts);
         } else if (p.type === 'user_message' && typeof p.message === 'string' && p.message.trim()) {
           // Older Codex logs (0.10x, still what many Windows users run) write the prompt this way.
           O.prompt = clip(p.message.trim(), 200);
-          this.otherText(O, `codex:${O.log}:turn${O.turns || 0}:in`, 'prompt', p.message, ts);
+          this.otherText(O, `${turn}:in`, 'prompt', p.message, ts);
         } else if (p.type === 'agent_message' && typeof p.message === 'string') {
-          this.otherText(O, `${at}:say`, 'say', p.message, ts);
+          this.otherText(O, `${turn}:say:${p.message}`, 'say', p.message, ts);
         } else if (p.type === 'token_count' && p.info) {
           const u = p.info.last_token_usage;
           if (u) {
