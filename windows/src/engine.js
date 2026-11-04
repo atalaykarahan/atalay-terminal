@@ -355,6 +355,20 @@ function codexCall(name, p, at) {
   return { n: 'Bash', c: 'bash', l: clip(command || name, 120), t: at };
 }
 
+// Whether a Codex call went well: its shell's output starts "Exit code: N" (0: it did); a patch's or another's says
+// nothing of the kind and counts as done.
+function codexOk(output) {
+  const s = typeof output === 'string' ? output : output && typeof output === 'object' ? JSON.stringify(output) : '';
+  const m = /exit[ _]code"?:?\s*(-?\d+)/i.exec(s.slice(0, 400));
+  return !m || Number(m[1]) === 0;
+}
+
+// The files a Codex patch adds, changes or deletes ("*** Update File: C:\…"), for files.heat.
+function codexFiles(p) {
+  const input = typeof p.input === 'string' ? p.input : '';
+  return [...input.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$/gm)].map((m) => m[1]);
+}
+
 // The lines a tool's log (O.log) got since the last look, parsed (from its last 2 MB when it's long).
 function readNewLines(O) {
   let st;
@@ -418,21 +432,36 @@ function agyClose(db) {
   } catch {}
 }
 
-// Antigravity's newest conversation in `cwd` (its folders are file:// addresses, decoded to compare).
-function agyConversation(db, cwd) {
+// Antigravity's conversation in `cwd`: the one its CLI says it's in there (cache\last_conversations.json, by folder),
+// else its newest there (its folders are file:// addresses, decoded to compare). The desktop Antigravity's conversations
+// share the list (app_data_dir "antigravity"): one of those, months old, is no CLI's.
+function agyConversation(db, cwd, root) {
   const { fileURLToPath } = require('url');
+  const samePath = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() === path.resolve(cwd).toLowerCase() : path.resolve(p) === path.resolve(cwd));
   const same = (uri) => {
     try {
-      const p = path.resolve(fileURLToPath(uri));
-      return process.platform === 'win32' ? p.toLowerCase() === path.resolve(cwd).toLowerCase() : p === path.resolve(cwd);
+      return samePath(fileURLToPath(uri));
     } catch {
       return false;
     }
   };
-  let rows = [];
+  const cols = 'conversation_id, title, status, workspace_uris';
   try {
-    rows = db.prepare('SELECT conversation_id, title, status, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 ORDER BY last_modified_time DESC LIMIT 40').all();
+    const last = JSON.parse(fs.readFileSync(path.join(root, 'cache', 'last_conversations.json'), 'utf8'));
+    for (const [dir, id] of Object.entries(last && typeof last === 'object' ? last : {})) {
+      if (typeof id !== 'string' || !samePath(dir)) continue;
+      const r = db.prepare(`SELECT ${cols} FROM conversation_summaries WHERE conversation_id = ?`).get(id);
+      if (r) return r;
+    }
   } catch {}
+  let rows = [];
+  // Older CLIs' lists have no app_data_dir.
+  for (const where of ["nesting_depth = 0 AND app_data_dir != 'antigravity'", 'nesting_depth = 0']) {
+    try {
+      rows = db.prepare(`SELECT ${cols} FROM conversation_summaries WHERE ${where} ORDER BY last_modified_time DESC LIMIT 40`).all();
+      break;
+    } catch {}
+  }
   for (const r of rows) {
     let uris = [];
     try {
@@ -495,7 +524,26 @@ function agyArg(v) {
   return typeof d === 'object' ? JSON.stringify(d) : String(d);
 }
 
-const AGY_LABEL_KEYS = ['CommandLine', 'Command', 'command', 'Query', 'query', 'queries', 'Url', 'url', 'Uri', 'AbsolutePath', 'TargetFile', 'File', 'path', 'SearchPath', 'DirectoryPath', 'Role', 'ServerName', 'toolSummary', 'Prompt'];
+const AGY_LABEL_KEYS = ['CommandLine', 'Command', 'command', 'Query', 'query', 'queries', 'Url', 'url', 'Uri', 'AbsolutePath', 'TargetFile', 'File', 'FilePath', 'Path', 'path', 'SearchPath', 'DirectoryPath', 'Pattern', 'Role', 'ServerName', 'toolSummary', 'Prompt'];
+// The file a call reads or edits, for files.heat.
+const AGY_FILE_KEYS = ['AbsolutePath', 'TargetFile', 'File', 'FilePath', 'Path', 'path'];
+
+function agyFile(call, kind) {
+  if (kind !== 'read' && kind !== 'edit') return null;
+  const args = (call && call.args) || {};
+  for (const k of AGY_FILE_KEYS) {
+    const v = agyValue(args[k]);
+    if (typeof v === 'string' && v) return v;
+  }
+  return null;
+}
+
+// How long an Antigravity tool step took: its result starts "Created At: …\nCompleted At: …".
+function agyDuration(content) {
+  const m = /Created At:\s*(\S+)\s+Completed At:\s*(\S+)/.exec(String(content || ''));
+  const d = m ? Date.parse(m[2]) - Date.parse(m[1]) : NaN;
+  return Number.isFinite(d) && d >= 0 ? d : null;
+}
 
 // An Antigravity tool call as Claude's tools are shown: its kind (a shell, the web, a file…) and what it's on.
 function agyTool(call, at) {
@@ -514,18 +562,20 @@ function agyTool(call, at) {
   else if (name === 'search_web') [n, c] = ['WebSearch', 'web'];
   else if (name === 'read_url_content' || name === 'view_content_chunk') [n, c] = ['WebFetch', 'web'];
   else if (name.startsWith('browser_') || name.endsWith('_browser_url') || name.endsWith('_browser_page') || name === 'capture_browser_screenshot') [n, c] = ['Browser', 'browser'];
-  else if (['view_file', 'view_file_outline', 'view_code_item', 'list_dir'].includes(name)) [n, c] = ['Read', 'read'];
-  else if (['grep_search', 'find_by_name', 'codebase_search'].includes(name)) [n, c] = ['Grep', 'search'];
-  else if (/write|replace|edit/.test(name)) [n, c] = ['Edit', 'edit'];
+  // read_file is the CLI's (1.5); view_file the desktop app's.
+  else if (['view_file', 'view_file_outline', 'view_code_item', 'list_dir', 'read_file', 'list_directory'].includes(name)) [n, c] = ['Read', 'read'];
+  else if (['grep_search', 'find_by_name', 'codebase_search', 'search_files', 'grep', 'glob'].includes(name)) [n, c] = ['Grep', 'search'];
+  else if (/write|replace|edit|create_file|delete_file/.test(name)) [n, c] = ['Edit', 'edit'];
   else if (name === 'invoke_subagent') [n, c] = ['Agent', 'agent'];
   else if (name.startsWith('mcp')) [n, c] = ['MCP', 'mcp'];
   return { n, c, l: clip(what, 120), t: at };
 }
 
 // A subagent's whole transcript (it's short): when it started and last moved, what it was asked, its last reply's tool
-// calls, and its counts (tools, errors, web, tokens), as Claude's subagents have them.
-function agyLog(file, mtime) {
-  const log = { mtime, firstTs: 0, lastTs: 0, prompt: '', plan: null, tools: 0, errors: 0, web: 0, tokIn: 0, tokOut: 0, tokCache: 0 };
+// calls, and its counts (tools, errors, web, tokens), as Claude's subagents have them; and each call, its result and
+// each reply's tokens (`calls`, `results`, `usage`, named by `id`, the subagent's conversation) for the day's counts.
+function agyLog(file, mtime, id) {
+  const log = { mtime, firstTs: 0, lastTs: 0, prompt: '', plan: null, tools: 0, errors: 0, web: 0, tokIn: 0, tokOut: 0, tokCache: 0, calls: [], results: [], usage: [] };
   let text = '';
   try {
     text = fs.readFileSync(file, 'utf8');
@@ -552,12 +602,22 @@ function agyLog(file, mtime) {
       log.prompt = agyRequest(j.content);
     } else if (j.type === 'PLANNER_RESPONSE') {
       const calls = Array.isArray(j.tool_calls) ? j.tool_calls : [];
-      log.plan = calls.length ? { idx: Number(j.step_index) || 0, calls, ts } : null;
+      const idx = Number(j.step_index) || 0;
+      log.plan = calls.length ? { idx, calls, ts } : null;
       log.tools += calls.length;
       log.web += calls.filter((call) => ['web', 'browser'].includes(agyTool(call, ts).c)).length;
       log.tokIn += Number(j.input_tokens) || 0;
       log.tokOut += Number(j.output_tokens) || 0;
       log.tokCache += Number(j.cache_read_tokens) || 0;
+      log.usage.push({ key: `agy:${id}:${idx}:tok`, ts, i: Number(j.input_tokens) || 0, o: Number(j.output_tokens) || 0, r: Number(j.cache_read_tokens) || 0 });
+      calls.forEach((call, k) => {
+        const p = agyTool(call, ts);
+        log.calls.push({ key: `agy:${id}:${idx}:${k}`, p, file: agyFile(call, p.c), ts });
+      });
+    } else if (log.plan && !['USER_INPUT', 'SYSTEM_MESSAGE'].includes(j.type) && ['DONE', 'ERROR', 'CANCELED'].includes(j.status)) {
+      // A tool's own step, right after the reply that called it.
+      const k = (Number(j.step_index) || 0) - log.plan.idx - 1;
+      if (k >= 0 && k < log.plan.calls.length) log.results.push({ key: `agy:${id}:${log.plan.idx}:${k}`, ok: j.status === 'DONE', ts, d: agyDuration(j.content) });
     }
   }
   return log;
@@ -598,6 +658,15 @@ function codexLog(cwd, since) {
     }
   }
   return found ? found.file : null;
+}
+
+// Another AI tool's counts for the day, as a Claude session has them: its calls by kind, its errors and web calls, its
+// prompts and tokens, its calls per 20 s (the card's spark), and what it already counted (`counted`, `resulted`).
+function resetOther(O) {
+  Object.assign(O, {
+    tools: 0, errors: 0, web: 0, prompts: 0, byCat: {}, spark: new Map(), tok: { in: 0, out: 0, cr: 0, cw: 0 },
+    counted: new Set(), resulted: new Set(),
+  });
 }
 
 // ---------- time ----------
@@ -1146,8 +1215,11 @@ class RadarEngine {
     this.initWanted = false;
     this.day0 = dayStart();
     this.sessions = new Map();
-    // Other AI tools running (Codex, Antigravity…), by session id ("ai:<pid>:<start>"): see setOthers.
+    // Other AI tools running (Codex, Antigravity…), by session id ("ai:<pid>:<start>"): see setOthers. What of their
+    // records today's counts already have (otherOnce), and their calls by name, for their results (otherTool).
     this.others = new Map();
+    this.otherSeen = new Set();
+    this.otherCalls = new Map();
     this.agents = new Map();
     this.cursors = new Map();
     this.seenMsg = new Set();
@@ -1519,6 +1591,9 @@ class RadarEngine {
     this.recOwner.clear();
     for (const S of this.sessions.values()) S.resetCounters();
     for (const A of this.agents.values()) A.resetCounters();
+    this.otherSeen.clear();
+    this.otherCalls.clear();
+    for (const O of this.others.values()) resetOther(O);
   }
 
   // ----- lookup helpers -----
@@ -2226,7 +2301,8 @@ class RadarEngine {
 
   // The other AI tools running (Codex, Antigravity…; runaways.js finds them in its process readings), each a session as
   // on the Mac: busy while it uses the CPU, idle once it has been quiet for 10 seconds, ended for two minutes after it
-  // quits so its window turns back into a terminal. No transcript to read: no tokens nor cost.
+  // quits so its window turns back into a terminal. Codex's and Antigravity's own records tell more (readCodexLog,
+  // readAntigravity): their turn, their calls and tokens, counted with Claude's (otherTool). No cost: no list price.
   setOthers(list) {
     const now = Date.now(), seen = new Set();
     for (const a of list) {
@@ -2235,6 +2311,7 @@ class RadarEngine {
       let O = this.others.get(id);
       if (!O) {
         O = { id, tool: a.tool, pid: a.pid, cwd: '', cpu: 0, busy: false, busyUntil: 0, statusSince: now, firstTs: a.started, lastTs: now, endedAt: 0, hostTab: null, chain: [] };
+        resetOther(O);
         this.others.set(id, O);
         this.stateDirty = true;
       }
@@ -2252,9 +2329,15 @@ class RadarEngine {
       if (busy) O.lastTs = now;
       const cwd = a.cwd || O.cwd;
       if (busy !== O.busy || cwd !== O.cwd) {
-        if (busy !== O.busy) O.statusSince = now;
         O.busy = busy;
         O.cwd = cwd;
+        this.stateDirty = true;
+      }
+      // Since when it shows what it shows (your.call's clock), its records' turn included, not only its CPU.
+      const shown = this.otherStatus(O, now).status;
+      if (shown !== O.shown) {
+        O.shown = shown;
+        O.statusSince = now;
         this.stateDirty = true;
       }
     }
@@ -2296,6 +2379,158 @@ class RadarEngine {
     return O.command ? { n: 'Bash', c: 'bash', l: O.command, t: O.commandSince || Date.now() } : O.call ? O.call.p : null;
   }
 
+  // ----- the other AI tools' work, counted as Claude's is -----
+  // Every panel Claude's calls fill (tool.mix, the ticker, research.feed, files.heat, session.log, the card's tools, web
+  // and errors, the tokens) gets Codex's and Antigravity's too, from their own records: someone working only with one of
+  // them saw them all empty. Each call, prompt or reply has a name of its own (`key`), so a record read again (another
+  // conversation and back, the tool started again on the same one) counts nothing twice; only today's count, as
+  // Claude's. `A`: the subagent it's from, if any ({ id }).
+
+  // Whether `key` is new to the day's counts (`all`) and to the session's (`mine`); either way it's counted from here.
+  otherOnce(O, key) {
+    const all = !this.otherSeen.has(key), mine = !O.counted.has(key);
+    this.otherSeen.add(key);
+    O.counted.add(key);
+    return { all, mine };
+  }
+
+  // A tool call (`p`: { n, c, l } as agyTool and codexCall make it), on `file` if it reads or edits one.
+  otherTool(O, key, p, ts, file, A = null) {
+    if (!(ts >= this.day0) || this.otherCalls.has(key) && O.counted.has(key)) return;
+    const c = p.c ?? 'plan';
+    if (!O.counted.has(key)) {
+      O.counted.add(key);
+      O.tools += 1;
+      O.byCat[c] = (O.byCat[c] || 0) + 1;
+      if (c === 'web') O.web += 1;
+      const sk = Math.floor(ts / 20_000);
+      O.spark.set(sk, (O.spark.get(sk) || 0) + 1);
+      this.stateDirty = true;
+    }
+    if (this.otherCalls.has(key)) return;
+    this.otherCalls.set(key, { p, t: ts, done: false });
+    const G = this.G;
+    G.tools += 1;
+    G.byCat[c] = (G.byCat[c] || 0) + 1;
+    if (ts >= (G.lastByCat[c]?.t ?? 0)) G.lastByCat[c] = { l: p.l, t: ts, s: O.id };
+    const mb = this.minute(ts);
+    mb.tools += 1;
+    mb.cats[c] = (mb.cats[c] || 0) + 1;
+    this.ringPush(G.ticker, { id: key, t: ts, c, st: 'run', n: p.n }, 200);
+    if (c === 'web') {
+      G.web += 1;
+      const r = { id: key, t: ts, s: O.id, kind: p.n === 'WebSearch' ? 'search' : 'fetch', l: p.l, m: '', ok: null, d: null, hosts: [] };
+      if (A) r.a = A.id;
+      this.ringPush(G.research, r, 60);
+    }
+    if (c === 'bash') {
+      const r = { id: key, t: ts, s: O.id, l: p.l, cmd: p.l, ok: null, d: null };
+      if (A) r.a = A.id;
+      this.ringPush(G.shells, r, 40);
+    }
+    for (const f of Array.isArray(file) ? file : file ? [file] : []) this.touchFile(f, c === 'read' ? 'Read' : 'Edit', O, A, ts);
+    this.emit(this.ev('tool', ts, O, A, { id: key, n: p.n, c, l: p.l }), true);
+  }
+
+  // A call over: a failed one counts as an error; the ticker, research.feed and session.log get how it went.
+  otherResult(O, key, ok, ts, d, A = null) {
+    if (O.counted.has(key) && !O.resulted.has(key)) {
+      O.resulted.add(key);
+      if (!ok) O.errors += 1;
+    }
+    const call = this.otherCalls.get(key);
+    if (!call || call.done) return;
+    call.done = true;
+    const G = this.G;
+    if (!ok) G.errors += 1;
+    const tk = G.ticker.findLast((x) => x.id === key);
+    if (tk) tk.st = ok ? 'ok' : 'err';
+    const rs = G.research.findLast((x) => x.id === key);
+    if (rs) Object.assign(rs, { ok, d: d ?? null });
+    const sh = G.shells.findLast((x) => x.id === key);
+    if (sh) Object.assign(sh, { ok, d: d ?? null });
+    const extra = { id: key, ok, m: '', n: call.p.n, c: call.p.c ?? 'plan' };
+    if (d != null) extra.d = d;
+    this.emit(this.ev('result', ts, O, A, extra), true);
+  }
+
+  // A reply's tokens: the day's (the top bar, spend.ledger's line of the model, at no price: none is listed) and the card's.
+  otherTokens(O, key, ts, i, o, r) {
+    if (!(ts >= this.day0) || !(i + o + r > 0)) return;
+    const { all, mine } = this.otherOnce(O, key);
+    if (mine) {
+      O.tok.in += i;
+      O.tok.out += o;
+      O.tok.cr += r;
+    }
+    if (!all) return;
+    const G = this.G;
+    G.tokIn += i;
+    G.tokOut += o;
+    G.tokCr += r;
+    const mk = O.model || O.tool;
+    let bm = G.byModel.get(mk);
+    if (!bm) G.byModel.set(mk, (bm = { model: mk, priced: false, tokIn: 0, tokOut: 0, tokCr: 0, tokCw: 0, cost: 0, calls: 0 }));
+    bm.tokIn += i;
+    bm.tokOut += o;
+    bm.tokCr += r;
+    bm.calls += 1;
+    this.minute(ts).tok += i + o + r;
+    this.stateDirty = true;
+  }
+
+  // What the user asked, or what it answered, into session.log (a prompt counts as Claude's do).
+  otherText(O, key, kind, text, ts) {
+    const t = String(text || '').trim();
+    if (!(ts >= this.day0) || !t) return;
+    const { all, mine } = this.otherOnce(O, key);
+    if (kind === 'prompt' && mine) O.prompts += 1;
+    if (!all) return;
+    if (kind === 'prompt') this.G.prompts += 1;
+    this.emit(this.ev(kind, ts, O, null, { l: clip(redact(t), kind === 'prompt' ? 180 : 160) }), true);
+  }
+
+  // The model Antigravity's CLI runs on, as its log names it at the start and on each change ("Propagating selected model
+  // override to backend: label="Gemini 3.8 Flash (High)""): the card's model and effort, and its context window for the
+  // gauge (Gemini's 1M tokens, Claude's 200k), which its records don't give. Read again only when the log changes, its
+  // last 256 KB (cli.log is the newest run's).
+  readAgyModel(O, root) {
+    const file = path.join(root, 'cli.log');
+    let st;
+    try {
+      st = fs.statSync(file);
+    } catch {
+      return;
+    }
+    const mark = `${st.size}:${st.mtimeMs}`;
+    if (O.agyLogMark === mark) return;
+    O.agyLogMark = mark;
+    const from = Math.max(0, st.size - (256 << 10));
+    const buf = Buffer.alloc(st.size - from);
+    try {
+      const fd = fs.openSync(file, 'r');
+      try {
+        fs.readSync(fd, buf, 0, buf.length, from);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return;
+    }
+    const all = [...buf.toString('utf8').matchAll(/selected model override to backend: label="([^"]+)"/g)];
+    if (!all.length) return;
+    const label = all[all.length - 1][1];
+    const m = /^(.*?)\s*\((low|medium|high|xhigh|max)\)\s*$/i.exec(label);
+    const model = m ? m[1] : label, effort = m ? m[2].toLowerCase() : '';
+    const window = /gemini/i.test(model) ? 1_048_576 : /claude/i.test(model) ? 200_000 : 0;
+    if (model !== O.model || effort !== O.effort || window !== O.ctxMax) {
+      O.model = model;
+      O.effort = effort;
+      O.ctxMax = window;
+      this.stateDirty = true;
+    }
+  }
+
   // Antigravity's own records (~/.gemini/antigravity-cli), as the Mac engine reads them: its newest conversation in this
   // folder from conversation_summaries.db (its title and run status: RUNNING or BUSY while it works, IDLE once it's the
   // user's turn); that conversation's transcript.jsonl for the prompt, the context and its last reply's tool calls; and
@@ -2304,11 +2539,19 @@ class RadarEngine {
   // show as Claude's do. Its screen redrawing while the user types is no work.
   readAntigravity(O, cwd, now) {
     const root = path.join(HOME, '.gemini', 'antigravity-cli');
+    this.readAgyModel(O, root);
     const db = agyOpen(path.join(root, 'conversation_summaries.db'));
     if (!db) return;
     try {
-      const row = agyConversation(db, cwd);
-      if (!row) return;
+      const row = agyConversation(db, cwd, root);
+      if (!row) {
+        // Nothing sent from this folder yet: the user's turn (its screen redrawing is no work, as its CPU said).
+        if (O.turnOpen !== false) {
+          O.turnOpen = false;
+          this.stateDirty = true;
+        }
+        return;
+      }
       const id = row.conversation_id;
       const open = /_(RUNNING|BUSY|CANCELING)$/.test(row.status || '');
       if (O.turnOpen !== open || O.title !== row.title) {
@@ -2356,17 +2599,28 @@ class RadarEngine {
       O.waitsForUser = step === 'WAITING';
       if (j.type === 'USER_INPUT') {
         O.prompt = clip(agyRequest(j.content), 200);
+        this.otherText(O, `agy:${id}:${idx}:in`, 'prompt', agyRequest(j.content), ts);
         O.call = null;
         O.plan = null;
       } else if (j.type === 'PLANNER_RESPONSE') {
         if (j.input_tokens != null) O.ctx = (Number(j.input_tokens) || 0) + (Number(j.cache_read_tokens) || 0);
+        this.otherTokens(O, `agy:${id}:${idx}:tok`, ts, Number(j.input_tokens) || 0, Number(j.output_tokens) || 0, Number(j.cache_read_tokens) || 0);
+        if (typeof j.content === 'string') this.otherText(O, `agy:${id}:${idx}:say`, 'say', j.content, ts);
         // A reply that calls tools: they run (or wait) next, a step each.
         const calls = Array.isArray(j.tool_calls) ? j.tool_calls : [];
         O.plan = calls.length ? { idx, calls, ts } : null;
         O.call = calls.length ? { id: '', p: agyTool(calls[calls.length - 1], ts) } : null;
+        calls.forEach((call, k) => {
+          const p = agyTool(call, ts);
+          this.otherTool(O, `agy:${id}:${idx}:${k}`, p, ts, agyFile(call, p.c));
+        });
       } else {
-        // A tool's own step: done, it no longer waits; still running or waiting, it does.
-        if (['DONE', 'ERROR', 'CANCELED'].includes(step)) O.call = null;
+        // A tool's own step: done, it no longer waits; still running or waiting, it does. Its call's result counts.
+        if (['DONE', 'ERROR', 'CANCELED'].includes(step)) {
+          O.call = null;
+          const k = O.plan && j.type !== 'SYSTEM_MESSAGE' ? idx - O.plan.idx - 1 : -1;
+          if (k >= 0 && k < O.plan.calls.length) this.otherResult(O, `agy:${id}:${O.plan.idx}:${k}`, step === 'DONE', ts, agyDuration(j.content));
+        }
         // One that started subagents says which, in the order the call asked for them (their roles, prompts).
         const call = O.plan && agyPlanned(O.plan, idx);
         if (!call || call.name !== 'invoke_subagent' || typeof j.content !== 'string') continue;
@@ -2408,9 +2662,14 @@ class RadarEngine {
       } catch {}
       let log = O.agentLogs.get(id);
       if (!log || log.mtime !== mtime) {
-        log = agyLog(file, mtime);
+        log = agyLog(file, mtime, id);
         O.agentLogs.set(id, log);
         this.stateDirty = true;
+        // Its calls and tokens count as the session's, as a Claude subagent's do.
+        const A = { id };
+        for (const u of log.usage) this.otherTokens(O, u.key, u.ts, u.i, u.o, u.r);
+        for (const c of log.calls) this.otherTool(O, c.key, c.p, c.ts, c.file, A);
+        for (const r of log.results) this.otherResult(O, r.key, r.ok, r.ts, r.d, A);
       }
       // Done more than 15 minutes ago: off the list, as Claude's.
       if (!running && now - mtime >= 15 * MIN) continue;
@@ -2481,21 +2740,37 @@ class RadarEngine {
       const p = j && j.payload;
       if (!p || typeof p !== 'object') continue;
       const ts = parseISO(j.timestamp) || now;
+      // A line's own name for the day's counts: its log, and when in it (each turn's prompt by the turn: newer Codex
+      // logs write it twice, as an event and as an item).
+      const at = `codex:${O.log}:${j.timestamp}`;
       if (j.type === 'event_msg') {
         if (p.type === 'task_started') {
           O.turnOpen = true;
           O.call = null;
+          O.turns = (O.turns || 0) + 1;
         } else if (p.type === 'task_complete' || p.type === 'turn_aborted') {
           O.turnOpen = false;
           O.call = null;
         } else if (p.type === 'item_completed' && p.item && p.item.type === 'UserMessage') {
           const text = (p.item.content || []).map((c) => c && c.text).find(Boolean);
-          if (text) O.prompt = clip(text, 200);
+          if (text) {
+            O.prompt = clip(text, 200);
+            this.otherText(O, `codex:${O.log}:turn${O.turns || 0}:in`, 'prompt', text, ts);
+          }
         } else if (p.type === 'user_message' && typeof p.message === 'string' && p.message.trim()) {
           // Older Codex logs (0.10x, still what many Windows users run) write the prompt this way.
           O.prompt = clip(p.message.trim(), 200);
+          this.otherText(O, `codex:${O.log}:turn${O.turns || 0}:in`, 'prompt', p.message, ts);
+        } else if (p.type === 'agent_message' && typeof p.message === 'string') {
+          this.otherText(O, `${at}:say`, 'say', p.message, ts);
         } else if (p.type === 'token_count' && p.info) {
-          if (p.info.last_token_usage) O.ctx = Number(p.info.last_token_usage.input_tokens) || 0;
+          const u = p.info.last_token_usage;
+          if (u) {
+            O.ctx = Number(u.input_tokens) || 0;
+            // Its input counts the cached part too: the rest is what was new.
+            const cached = Number(u.cached_input_tokens) || 0;
+            this.otherTokens(O, `${at}:tok`, ts, Math.max(0, (Number(u.input_tokens) || 0) - cached), Number(u.output_tokens) || 0, cached);
+          }
           if (p.info.model_context_window) O.ctxMax = Number(p.info.model_context_window) || 0;
         } else if (p.type === 'thread_settings_applied' && p.thread_settings && p.thread_settings.model) {
           O.model = String(p.thread_settings.model);
@@ -2504,13 +2779,21 @@ class RadarEngine {
         // Older Codex logs give the model with every turn instead.
         O.model = p.model;
       } else if (j.type === 'response_item' && typeof p.type === 'string') {
+        const key = `codex:${p.call_id || at}`;
         if (p.type.endsWith('_call_output')) {
           if (O.call && O.call.id === p.call_id) O.call = null;
+          const call = this.otherCalls.get(key);
+          this.otherResult(O, key, codexOk(p.output), ts, call ? Math.max(0, ts - call.t) : null);
         } else if (p.type === 'web_search_call') {
           // Logged once the search is over, with no output line to end it: nothing left running.
-          if (p.status !== 'completed') O.call = { id: p.call_id || '', p: codexCall(p.type, p, ts) };
+          const call = codexCall(p.type, p, ts);
+          this.otherTool(O, key, call, ts);
+          if (p.status !== 'completed') O.call = { id: p.call_id || '', p: call };
+          else this.otherResult(O, key, true, ts, null);
         } else if (p.type.endsWith('_call')) {
-          O.call = { id: p.call_id || '', p: codexCall(p.name || p.type, p, ts) };
+          const call = codexCall(p.name || p.type, p, ts);
+          O.call = { id: p.call_id || '', p: call };
+          this.otherTool(O, key, call, ts, call.c === 'edit' ? codexFiles(p) : null);
         }
       }
     }
@@ -2668,12 +2951,15 @@ class RadarEngine {
       const nRun = agents.filter((a) => a.running).length;
       runningAgents += nRun;
       for (const p of [...(running ? [running] : []), ...agents.flatMap((a) => a.pending)]) pendingByCat[p.c ?? 'plan'] = (pendingByCat[p.c ?? 'plan'] || 0) + 1;
+      const k0 = Math.floor(now / 20_000), spark = [];
+      for (let k = k0 - 29; k <= k0; k++) spark.push(O.spark.get(k) || 0);
+      const flags = O.ctxMax > 0 && O.ctx / O.ctxMax > 0.8 ? ['ctx 80%+'] : [];
       list.push({
         id: O.id, name: O.tool, title: O.title || baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
-        model: O.model || O.tool, effort: '', status, live, statusSince: live ? O.statusSince : O.endedAt,
+        model: O.model || O.tool, effort: O.effort || '', status, live, statusSince: live ? O.statusSince : O.endedAt,
         cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: 0,
-        tok: { in: 0, out: 0, cr: 0, cw: 0 }, cost: 0, tools: 0, errors: 0, web: 0, prompts: 0,
-        byCat: {}, pending: running ? [running] : [], spark: new Array(30).fill(0), flags: [], agents, agentsRunning: nRun,
+        tok: { ...O.tok }, cost: 0, tools: O.tools, errors: O.errors, web: O.web, prompts: O.prompts,
+        byCat: O.byCat, pending: running ? [running] : [], spark, flags, agents, agentsRunning: nRun,
         waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
         tab: typeof O.hostTab === 'string' ? O.hostTab : null,
         ...(running && { last: running }),

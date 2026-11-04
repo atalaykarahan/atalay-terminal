@@ -95,7 +95,8 @@ chats run in the app, through node-pty, and end with it.
   on the orbit, as a closed tab does on the Mac; a click opens it again, End Session ends it and all it runs.
 - No four-finger click (Mac trackpads only): Ctrl and the middle mouse button (or Ctrl+K) open the shortcut wheel,
   Ctrl+N a new terminal and Ctrl+W closes the window, in the terminal windows too (where they'd otherwise go to the
-  shell). Ctrl+B (⌘B) opens and closes the chats list in the dashboard window only: in a terminal it stays the shell's
-  (and Claude's, which runs a command in the background with it).
+  shell); while Antigravity runs in one, its Ctrl+K is Antigravity's, which approves its subagents' steps with it.
+  Ctrl+B (⌘B) opens and closes the chats list in the dashboard window only: in a terminal it stays the shell's (and
+  Claude's, which runs a command in the background with it).
 - No iTerm2: a chat started in another terminal shows on the dashboard and can be opened as a copy.
 - Updates come from the releases repo's `windows` release (above), not from the API's offer, which is the Mac app's.

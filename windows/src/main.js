@@ -616,7 +616,9 @@ function chatInfo(id, c) {
   // A chat with no live Claude after its first seconds is a terminal: Claude exited, or never started (not installed).
   const starting = c.claude && Date.now() - c.startedAt < 15_000;
   const status = !terminals.has(id) ? 'ended' : s ? s.status : starting ? 'busy' : 'terminal';
-  return { title: (s && s.name) || c.title, status: status === 'shell' ? 'idle' : status, cwd: tildify(c.cwd) };
+  // Another AI tool running in it (Codex, Antigravity…): the page leaves it the keys it needs (terminal.js).
+  const tool = engine.live().find((x) => x.ai && x.tab === id);
+  return { title: (s && s.name) || c.title, status: status === 'shell' ? 'idle' : status, cwd: tildify(c.cwd), tool: tool ? tool.name : null };
 }
 
 const tildify = (p) => (p && p.startsWith(os.homedir()) ? '~' + p.slice(os.homedir().length) : p || '');

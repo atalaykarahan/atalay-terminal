@@ -351,6 +351,8 @@ function logLine(ev, live) {
     text = toolText(ev);
   } else {
     [cat, col] = LOG_CAT[ev.k] || ['·', 'var(--lavender)'];
+    // Another AI tool's answer (Codex's, Antigravity's: their sessions are "ai:…") is its own, not Claude's.
+    if (ev.k === 'say' && String(ev.s || '').startsWith('ai:')) cat = 'reply';
     text = ev.k === 'prompt' ? `› ${ev.l}` : ev.l;
   }
   const el = document.createElement('div');
