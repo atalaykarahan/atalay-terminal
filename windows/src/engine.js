@@ -436,8 +436,9 @@ function agyClose(db) {
 
 // Antigravity's conversation in `cwd`: the one its CLI says it's in there (cache\last_conversations.json, by folder),
 // else its newest there (its folders are file:// addresses, decoded to compare). The desktop Antigravity's conversations
-// share the list (app_data_dir "antigravity"): one of those, months old, is no CLI's.
-function agyConversation(db, cwd, root) {
+// share the list (app_data_dir "antigravity"): one of those, months old, is no CLI's. One nothing has touched since
+// `since` (the CLI's start) is an earlier run's: a CLI starts a new conversation, so it has sent nothing yet.
+function agyConversation(db, cwd, root, since = 0) {
   const { fileURLToPath } = require('url');
   const samePath = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() === path.resolve(cwd).toLowerCase() : path.resolve(p) === path.resolve(cwd));
   const same = (uri) => {
@@ -447,13 +448,18 @@ function agyConversation(db, cwd, root) {
       return false;
     }
   };
-  const cols = 'conversation_id, title, status, workspace_uris';
+  const cols = 'conversation_id, title, status, workspace_uris, last_modified_time';
+  // Its time ("2026-11-04 20:08:07.021044+00:00"); one that doesn't read counts as touched.
+  const touched = (r) => {
+    const t = parseISO(r.last_modified_time);
+    return !t || t >= since;
+  };
   try {
     const last = JSON.parse(fs.readFileSync(path.join(root, 'cache', 'last_conversations.json'), 'utf8'));
     for (const [dir, id] of Object.entries(last && typeof last === 'object' ? last : {})) {
       if (typeof id !== 'string' || !samePath(dir)) continue;
       const r = db.prepare(`SELECT ${cols} FROM conversation_summaries WHERE conversation_id = ?`).get(id);
-      if (r) return r;
+      if (r && touched(r)) return r;
     }
   } catch {}
   let rows = [];
@@ -469,7 +475,7 @@ function agyConversation(db, cwd, root) {
     try {
       uris = JSON.parse(r.workspace_uris);
     } catch {}
-    if (Array.isArray(uris) && uris.some(same)) return r;
+    if (Array.isArray(uris) && uris.some(same)) return touched(r) ? r : null;
   }
   return null;
 }
@@ -2547,7 +2553,7 @@ class RadarEngine {
     const db = agyOpen(path.join(root, 'conversation_summaries.db'));
     if (!db) return;
     try {
-      const row = agyConversation(db, cwd, root);
+      const row = agyConversation(db, cwd, root, O.firstTs - 2000);
       if (!row) {
         // Nothing sent from this folder yet: the user's turn (its screen redrawing is no work, as its CPU said).
         if (O.turnOpen !== false) {

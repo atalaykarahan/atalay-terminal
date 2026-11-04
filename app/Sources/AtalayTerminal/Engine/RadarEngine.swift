@@ -1162,7 +1162,7 @@ final class RadarEngine {
         readAgyModel(O, root: root)
         guard let db = Self.agyOpen(root + "/conversation_summaries.db") else { return }
         defer { sqlite3_close(db) }
-        guard let (id, title, status) = Self.agyConversation(db, cwd: cwd, root: root) else {
+        guard let (id, title, status) = Self.agyConversation(db, cwd: cwd, root: root, since: O.firstTs - 2000) else {
             // Nothing sent from this folder yet: the user's turn (its screen redrawing is no work, as its CPU said).
             if O.turnOpen != false {
                 O.turnOpen = false
@@ -1197,15 +1197,21 @@ final class RadarEngine {
     /// Antigravity's conversation in `cwd`: the one its CLI says it's in there (cache/last_conversations.json, by folder),
     /// else its newest there (a folder as a file:// address, as it writes it). The desktop Antigravity's conversations share
     /// the list (app_data_dir "antigravity"): one of those, months old, is no CLI's. Folders compare with their links
-    /// resolved: the CLI may write the one it was started in, the process has the real one.
-    private static func agyConversation(_ db: OpaquePointer, cwd: String, root: String) -> (id: String, title: String, status: String)? {
-        let here = realFolder(cwd), cols = "conversation_id, title, status, workspace_uris"
+    /// resolved: the CLI may write the one it was started in, the process has the real one. One nothing has touched since
+    /// `since` (the CLI's start) is an earlier run's: a CLI starts a new conversation, so it has sent nothing yet.
+    private static func agyConversation(_ db: OpaquePointer, cwd: String, root: String, since: Double) -> (id: String, title: String, status: String)? {
+        let here = realFolder(cwd), cols = "conversation_id, title, status, workspace_uris, last_modified_time"
+        // Its time ("2026-11-04 20:08:07.021044+00:00"); one that doesn't read counts as touched.
+        let touched = { (col: (Int32) -> String) -> Bool in
+            let t = parseISO(col(4))
+            return t == 0 || t >= since
+        }
         var row: (id: String, title: String, status: String)?
         if let data = FileManager.default.contents(atPath: root + "/cache/last_conversations.json"),
            let last = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             for case let (dir, id as String) in last where realFolder(dir) == here {
                 agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE conversation_id = ?", [id]) { col in
-                    row = (col(0), col(1), col(2))
+                    if touched(col) { row = (col(0), col(1), col(2)) }
                     return false
                 }
                 if let row { return row }
@@ -1217,7 +1223,7 @@ final class RadarEngine {
             agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE \(filter) ORDER BY last_modified_time DESC LIMIT 40") { col in
                 let uris = (try? JSONSerialization.jsonObject(with: Data(col(3).utf8)) as? [String]) ?? []
                 guard uris.contains(where: { URL(string: $0).map { realFolder($0.path) } == here }) else { return true }
-                row = (col(0), col(1), col(2))
+                if touched(col) { row = (col(0), col(1), col(2)) }
                 return false
             } done: { read = $0 }
             if read { break }
