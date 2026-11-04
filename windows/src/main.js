@@ -39,7 +39,7 @@ const PROBE = process.env.ATL_PROBE || '';
 
 // Run from the sources on a Mac (development), its data must not land in the Mac app's own folder.
 if (process.platform !== 'win32') app.setPath('userData', path.join(app.getPath('appData'), 'atalay-terminal-windows-dev'));
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!app.requestSingleInstanceLock()) return app.quit();
 nativeTheme.themeSource = 'dark';
 // The installer's shortcuts carry the app's id (build.appId in package.json) as their AppUserModelID; the windows must
 // too, or a pinned shortcut and the running app sit apart on the taskbar.
@@ -71,8 +71,8 @@ const settings = (() => {
 // each page is as wide as its part of the window).
 let dash = null, dashView = null, chatsView = null;
 const boots = new Map(); // webContents id -> what its preload asks for before the page loads
-const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt }
-const panels = { notices: null, chats: new Map() }; // the messages panels: the corner's notices, friends' chats
+const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt, steppedAside }
+const panels = { notices: null, chats: new Map(), showing: new Set() }; // the messages panels: the corner's notices, friends' chats
 
 // The AI tools in the theme's colours (Settings · INTERFACE): Claude Code, Codex and Antigravity on their themes that use
 // the terminal's 16 colours.
@@ -125,6 +125,8 @@ const terminals = createTerminals({
       if (!c.claude && c.win && !c.win.isDestroyed()) c.win.destroy();
       chats.delete(id);
       toDash(`terminalGone(${JSON.stringify(id)})`);
+      pushWinOpen();
+      pushChats();
     }
     quitIfIdle();
   },
@@ -160,12 +162,16 @@ const engine = createEngine({
   limitsFile: path.join(app.getPath('userData'), 'limits.json'),
   // A Claude process under one of the app's terminals belongs to that window (its id becomes the session's `tab`).
   isAppPid: (pid) => (terminals.list().find((t) => t.pid === pid) || {}).id || false,
-  onInit: (json) => toDash(`init(${json})`),
+  onInit(json) {
+    toDash(`init(${json})`);
+    pushWinOpen(true);
+  },
   onState(json) {
     toDash(`state(${json})`);
     matchChats();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
     badge();
+    pushWinOpen();
     pushChats();
   },
   onEvents: (json) => toDash(`events(${json})`),
@@ -206,7 +212,8 @@ function popupMenu(items, at, view) {
         click: i.items ? undefined : () => (picked = i.id),
       }));
     const off = view ? view.getBounds() : { x: 0, y: 0 };
-    const pos = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: Math.round(at.x + off.x), y: Math.round(at.y + off.y) } : {};
+    const z = (view && !view.webContents.isDestroyed() && view.webContents.getZoomFactor()) || 1;
+    const pos = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: Math.round(at.x * z + off.x), y: Math.round(at.y * z + off.y) } : {};
     Menu.buildFromTemplate(build(items)).popup({ window: dash || undefined, ...pos, callback: () => resolve(picked) });
   });
 }
@@ -382,9 +389,15 @@ function createDashboard() {
   setTimeout(show, 4000);
   const visibility = () => toDash(`visibility(${win.isVisible() && !win.isMinimized()}, ${win.isFocused()})`);
   for (const ev of ['focus', 'blur', 'minimize', 'restore', 'show', 'hide']) win.on(ev, visibility);
+  for (const ev of ['focus', 'restore', 'show']) win.on(ev, pinAllToDash);
   // The level-up waits for the app to be in front (the notices' "focus"): the app's focus events are BrowserWindows'.
   win.on('focus', tellFocus);
   win.on('blur', () => setImmediate(tellFocus));
+  // Closing the dashboard leaves the chats and terminals open: let them go before it closes, or Windows closes its
+  // child windows with it.
+  win.on('close', () => {
+    for (const c of win.getChildWindows()) if (!c.isDestroyed()) c.setParentWindow(null);
+  });
   win.on('closed', () => {
     // A window's views don't go with it: their pages close here.
     for (const v of views) if (!v.webContents.isDestroyed()) v.webContents.close();
@@ -393,7 +406,9 @@ function createDashboard() {
     chatsList.timer = null;
     chatsList.slide = null;
     chatsJSON = '';
+    winOpenJSON = '';
     badged = 0;
+    stepAside(false);
     quitIfIdle();
   });
 }
@@ -406,8 +421,9 @@ const chatsWidth = (w) => (Number.isFinite(w) ? Math.round(Math.min(CHATS_MAX, M
 const chatsList = { shown: settings.get('sidebarHidden') !== true, width: chatsWidth(settings.get('sidebarWidth')), slide: null, timer: null };
 
 function layout() {
-  if (!dash || dash.isDestroyed()) return;
+  if (!dash || dash.isDestroyed() || dash.isMinimized()) return;
   const [w, h] = dash.getContentSize();
+  if (w < 1 || h < 1) return;
   const side = Math.round(chatsList.slide != null ? chatsList.slide : chatsList.shown ? chatsList.width : 0);
   chatsView.setBounds({ x: 0, y: 0, width: side, height: h });
   dashView.setBounds({ x: side, y: 0, width: Math.max(0, w - side), height: h });
@@ -450,6 +466,20 @@ function toggleChats() {
     }
     layout();
   }, 16);
+}
+
+// Tells the dashboard which sessions have a visible chat window (cards light up), as on the Mac.
+let winOpenJSON = '';
+function pushWinOpen(force) {
+  if (!dashView) return;
+  const map = {};
+  for (const c of chats.values()) {
+    if (c.sessionId && (c.steppedAside || (c.win && !c.win.isDestroyed() && c.win.isVisible()))) map[c.sessionId] = true;
+  }
+  const json = JSON.stringify(map);
+  if (json === winOpenJSON && !force) return;
+  winOpenJSON = json;
+  run(dashView, `window.__winOpen = ${json}`);
 }
 
 let chatsJSON = '', chatsVersion = -1;
@@ -511,12 +541,14 @@ function handleChats(msg) {
       toggleChats();
       return true;
     // Dragged wider or narrower: kept for the next time it opens (and the next launch) once the drag is over.
-    case 'width':
+    case 'width': {
       if (!chatsList.shown || chatsList.timer) return true;
-      chatsList.width = chatsWidth(Number(msg.w));
+      const z = (chatsView && !chatsView.webContents.isDestroyed() && chatsView.webContents.getZoomFactor()) || 1;
+      chatsList.width = chatsWidth(Number(msg.w) * z);
       layout();
       if (msg.done) settings.set('sidebarWidth', chatsList.width);
       return true;
+    }
     default:
       throw new Error('unknown request');
   }
@@ -582,7 +614,10 @@ function showDashboard() {
 function handleRadar(msg) {
   switch (msg.type) {
     case 'ready':
+      // A reloaded page has no menu open.
+      stepAside(false);
       engine.requestInit();
+      pushWinOpen(true);
       pushCloud();
       pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
@@ -602,6 +637,10 @@ function handleRadar(msg) {
       return endSession(msg.sid);
     case 'endRunaway':
       return runaways.end(msg.pid, msg.started);
+    // A menu (friends, settings, an update) opened or closed on the dashboard: the windows pinned above it step out of
+    // the way meanwhile, as on the Mac.
+    case 'modal':
+      return stepAside(msg.open === true);
     case 'log':
       console.log('dashboard page:', msg.msg);
       return true;
@@ -611,8 +650,50 @@ function handleRadar(msg) {
 }
 
 // ---------- terminal and chat windows ----------
+// Terminal and friend-chat windows ride above the dashboard as its children, so clicking the dashboard never buries
+// them, while going behind other apps with it; when a menu opens on the dashboard they step out of its way.
+let modalOpen = false;
+function pinToDash(win) {
+  if (PROBE || !win || win.isDestroyed() || win.isMinimized()) return;
+  const parent = !modalOpen && dash && !dash.isDestroyed() && dash.isVisible() && !dash.isMinimized() ? dash : null;
+  if (win.getParentWindow() !== parent) win.setParentWindow(parent);
+}
+function pinAllToDash() {
+  if (modalOpen || !dash || dash.isDestroyed() || !dash.isVisible() || dash.isMinimized()) return;
+  for (const c of chats.values()) if (!c.steppedAside && c.win && !c.win.isDestroyed() && c.win.isVisible() && !c.win.isMinimized()) pinToDash(c.win);
+  for (const w of panels.chats.values()) if (!w.steppedAside && !w.isDestroyed() && w.isVisible()) pinToDash(w);
+}
+function stepAside(open) {
+  modalOpen = open;
+  for (const c of chats.values()) {
+    if (!c.win || c.win.isDestroyed()) continue;
+    if (open && c.win.isVisible() && !c.win.isMinimized() && !c.steppedAside) {
+      c.steppedAside = true;
+      c.win.setParentWindow(null);
+      c.win.hide();
+    } else if (!open && c.steppedAside) {
+      c.steppedAside = false;
+      pinToDash(c.win);
+      c.win.showInactive();
+    }
+  }
+  for (const w of panels.chats.values()) {
+    if (w.isDestroyed()) continue;
+    if (open && w.isVisible() && !w.steppedAside) {
+      w.steppedAside = true;
+      w.setParentWindow(null);
+      w.hide();
+    } else if (!open && w.steppedAside) {
+      w.steppedAside = false;
+      pinToDash(w);
+      w.showInactive();
+    }
+  }
+  return true;
+}
+
 function chatInfo(id, c) {
-  const s = c.sessionId && engine.live().find((x) => x.sessionId === c.sessionId);
+  const s = engine.live().find((x) => !x.ai && (x.tab === id || (c.sessionId && x.sessionId === c.sessionId)));
   // A chat with no live Claude after its first seconds is a terminal: Claude exited, or never started (not installed).
   const starting = c.claude && Date.now() - c.startedAt < 15_000;
   const status = !terminals.has(id) ? 'ended' : s ? s.status : starting ? 'busy' : 'terminal';
@@ -629,11 +710,14 @@ const tildify = (p) => (p && p.startsWith(os.homedir()) ? '~' + p.slice(os.homed
 function matchChats() {
   const live = engine.live();
   for (const s of live) {
-    const c = s.tab && chats.get(s.tab);
-    if (!c || !c.claude || c.sessionId === s.sessionId) continue;
+    const c = !s.ai && s.tab && chats.get(s.tab);
+    if (!c || c.sessionId === s.sessionId) continue;
     // A session the engine places in this window too keeps it (a Claude started inside the chat's Claude doesn't take
     // its window); a guess gives way.
     if (!live.some((x) => x.sessionId === c.sessionId && x.tab === s.tab)) c.sessionId = s.sessionId;
+  }
+  for (const [id, c] of chats) {
+    if (!c.claude && c.sessionId && !live.some((x) => x.sessionId === c.sessionId && x.tab === id)) c.sessionId = null;
   }
   const taken = new Set([...chats.values()].map((c) => c.sessionId).filter(Boolean));
   for (const c of chats.values()) {
@@ -651,21 +735,44 @@ const samePath = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.
  * A chat or terminal window. A new one starts its shell (Claude in it with `claudeArgs`); one given the `id` of a session
  * that outlived the app attaches to it instead (`claude`: whether it was started as a chat), hidden unless `show`.
  */
+let chatCascade = 0;
 function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!claudeArgs, sessionId, title, show = true }) {
-  const area = screen.getPrimaryDisplay().workArea;
-  const cascade = chats.size * 28;
+  const home = chatHome(), area = home.workArea;
+  const cascade = (chatCascade++ % 6) * 28;
+  const place = wholeOnDisplay({ x: area.x + 120 + cascade, y: area.y + 80 + cascade, width: 960, height: 640 }, home);
   const win = new BrowserWindow({
-    width: 960, height: 640, minWidth: 560, minHeight: 360, x: area.x + 120 + cascade, y: area.y + 80 + cascade,
+    ...place, minWidth: 560, minHeight: 360,
     title: title || "Atalay's Terminal", backgroundColor: themes.color('--code-bg'), show: false, autoHideMenuBar: true,
     ...(PROBE ? { x: -32000, y: -32000, frame: false } : {}),
     webPreferences: webPrefs(),
   });
   bootFor(win.webContents);
-  const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now() };
+  const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
   chats.set(id, c);
   win.loadFile(path.join(__dirname, '..', 'pages', 'terminal.html'));
-  win.once('ready-to-show', () => show && (PROBE ? win.showInactive() : win.show()));
+  win.once('ready-to-show', () => {
+    if (!show) return;
+    if (PROBE) return win.showInactive();
+    if (modalOpen) {
+      c.steppedAside = true;
+      return void pushWinOpen();
+    }
+    pinToDash(win);
+    win.show();
+    win.focus();
+    pushWinOpen();
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // A window pinned above the dashboard is its child, and Windows minimizes an owned window to a bar on the desktop
+  // rather than the taskbar: it lets go of the dashboard on its way to the taskbar and pins again when it comes back,
+  // as on the Mac.
+  if (process.platform === 'win32') {
+    win.hookWindowMessage(0x0112, (wParam) => {
+      if ((wParam.readUInt32LE(0) & 0xfff0) === 0xf020 && win.getParentWindow()) win.setParentWindow(null);
+    });
+  }
+  win.on('minimize', () => win.getParentWindow() && win.setParentWindow(null));
+  win.on('restore', () => !c.steppedAside && pinToDash(win));
   // Once its first seconds are over a chat says what it is even if nothing else changes (chatInfo).
   if (claude) setTimeout(() => chats.get(id) === c && send(win, 'term:info', chatInfo(id, c)), 15_500);
   // Closing a window (Ctrl+W, its ×) only hides it, as on the Mac: what runs in it goes on, Claude as a session on the
@@ -674,10 +781,16 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
   win.on('close', (e) => {
     if (quitting || !terminals.has(id)) return;
     e.preventDefault();
+    c.steppedAside = false;
+    win.setParentWindow(null);
     win.hide();
+    pushWinOpen();
   });
   win.on('closed', () => {
-    if (chats.get(id)?.win === win) chats.delete(id);
+    if (chats.get(id)?.win === win) {
+      chats.delete(id);
+      pushWinOpen();
+    }
   });
   return id;
 }
@@ -685,9 +798,13 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
 function showChat(id) {
   const c = chats.get(id);
   if (!c || c.win.isDestroyed()) return false;
+  c.steppedAside = false;
+  if (!c.win.isVisible() && !PROBE) c.win.setBounds(wholeOnDisplay(c.win.getBounds(), chatHome()));
   if (c.win.isMinimized()) c.win.restore();
+  pinToDash(c.win);
   c.win.show();
   c.win.focus();
+  pushWinOpen();
   return true;
 }
 
@@ -712,10 +829,10 @@ function openSession(sid, fork) {
     return true;
   }
   if (!fork) {
-    for (const [id, c] of chats) if (c.sessionId === sid && terminals.has(id)) return showChat(id);
-    // Running in one of the app's windows that doesn't know it yet: a terminal Claude was started in, a chat back from
-    // the last launch.
+    // Running in one of the app's windows (a terminal Claude was started in, a chat back from the last launch): its
+    // live process decides first, then the window that opened the conversation.
     if (live && live.tab && chats.has(live.tab) && terminals.has(live.tab)) return showChat(live.tab);
+    for (const [id, c] of chats) if (c.sessionId === sid && terminals.has(id)) return showChat(id);
   }
   const cwd = engine.sessionCwd(sid) || (live && live.cwd);
   if (!cwd || !fs.existsSync(cwd)) {
@@ -750,6 +867,8 @@ function endTerminal(id) {
   if (c) {
     if (c.win && !c.win.isDestroyed()) c.win.destroy();
     chats.delete(id);
+    pushWinOpen();
+    pushChats();
   }
   quitIfIdle();
 }
@@ -874,6 +993,10 @@ function showOverlay(js) {
       alwaysOnTop: true, backgroundColor: '#00000000', webPreferences: webPrefs(),
     });
     bootFor(over.webContents);
+    over.webContents.on('render-process-gone', () => {
+      overReady = false;
+      setTimeout(() => over && !over.isDestroyed() && over.webContents.reload(), 500);
+    });
     over.loadFile(path.join(WEB, 'overlay.html'));
     over.on('blur', hideOverlay);
   }
@@ -887,19 +1010,25 @@ function showOverlay(js) {
   return true;
 }
 function hideOverlay() {
-  if (over && !over.isDestroyed() && over.isVisible()) over.hide();
+  if (!over || over.isDestroyed() || !over.isVisible()) return;
+  over.hide();
+  if (overReady) run(over, 'window.Shortcuts && Shortcuts.close(true); document.querySelector("#picker .l-close")?.click()');
 }
 /** The wheel, centred where the pointer is (Ctrl and the middle mouse button, or Ctrl+K: Windows has no four-finger
  *  click). */
 function showShortcuts() {
   const p = screen.getCursorScreenPoint();
   const d = screen.getDisplayNearestPoint(p);
-  return showOverlay(`Overlay.shortcuts(${p.x - d.bounds.x}, ${p.y - d.bounds.y})`);
+  const z = (over && !over.isDestroyed() && over.webContents.getZoomFactor()) || themes.uiScale() || 1;
+  return showOverlay(`Overlay.shortcuts(${Math.round((p.x - d.bounds.x) / z)}, ${Math.round((p.y - d.bounds.y) / z)})`);
 }
 // Ctrl and the middle button in any of the app's windows (preload.js).
 ipcMain.on('atl:wheel', () => showShortcuts());
 
 // ---------- the messages panels: the corner's notices and friends' chats ----------
+// Each chat panel's intended bounds: on a scaled display (125%, 150%) Electron's getBounds() rounds up by a pixel, so
+// reading it back on every drag step would grow the panel as it moves.
+const panelBounds = new WeakMap();
 function panelWindow(role, friend) {
   const win = new BrowserWindow({
     width: 380, height: 140, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: role === 'notices',
@@ -907,6 +1036,14 @@ function panelWindow(role, friend) {
   });
   bootFor(win.webContents, { role, friend });
   panelWaiting.set(win, []);
+  win.webContents.on('render-process-gone', () => {
+    panelWaiting.set(win, []);
+    if (role === 'notices' && !win.isDestroyed()) {
+      win.setIgnoreMouseEvents(false);
+      win.hide();
+    }
+    setTimeout(() => !win.isDestroyed() && win.webContents.reload(), 500);
+  });
   win.loadFile(path.join(WEB, 'messages.html'));
   return win;
 }
@@ -918,6 +1055,10 @@ function tellFocus() {
 app.on('browser-window-focus', tellFocus);
 // Going from one of the app's windows to another blurs the first before the second has focus.
 app.on('browser-window-blur', () => setImmediate(tellFocus));
+
+function tellShowing() {
+  toNotices(`showing && __messages.showing(${JSON.stringify([...panels.showing])})`);
+}
 
 function notices() {
   if (PROBE) return null;
@@ -948,18 +1089,28 @@ function watchDisplays() {
   watchingDisplays = true;
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed']) {
     screen.on(event, () => {
-      for (const w of panels.chats.values()) if (!w.isDestroyed() && w.isVisible()) w.setBounds(wholeOnDisplay(w.getBounds()));
+      for (const w of panels.chats.values()) {
+        if (w.isDestroyed() || !w.isVisible()) continue;
+        const b = panelBounds.get(w) || w.getBounds();
+        const next = wholeOnDisplay({ x: Math.round(b.x), y: Math.round(b.y), width: b.width, height: b.height });
+        panelBounds.set(w, next);
+        w.setBounds(next);
+      }
     });
   }
 }
 
 function openFriendChat(friend) {
+  if (!friend) return false;
   watchDisplays();
   let win = panels.chats.get(friend);
   if (!win || win.isDestroyed()) {
     win = panelWindow('chat', friend);
     panels.chats.set(friend, win);
-    win.on('closed', () => panels.chats.delete(friend));
+    win.on('closed', () => {
+      if (panels.chats.get(friend) === win) panels.chats.delete(friend);
+      if (panels.showing.delete(friend)) tellShowing();
+    });
   }
   // The conversation, loaded and in front (a panel that's already open comes forward).
   runPanel(win, `window.__messages && __messages.open(${JSON.stringify(friend)})`);
@@ -973,7 +1124,12 @@ function handleMessages(win, body) {
       const waiting = panelWaiting.get(win) || [];
       panelWaiting.delete(win);
       for (const js of waiting) run(win, js);
-      if (role === 'notices') tellFocus();
+      if (role === 'notices') {
+        tellFocus();
+        if (panels.showing.size) tellShowing();
+        const xp = cloud.json().xp;
+        if (xp) toNotices(`xp(${JSON.stringify(xp)})`);
+      }
       return true;
     }
     case 'layout': {
@@ -982,12 +1138,15 @@ function handleMessages(win, body) {
       const z = win.webContents.getZoomFactor() || 1;
       const w = Math.round((body.w || 0) * z), h = Math.round((body.h || 0) * z);
       if (w < 1 || h < 1) {
+        if (role === 'notices') win.setIgnoreMouseEvents(false);
+        win.steppedAside = false;
+        win.setParentWindow(null);
         win.hide();
         if (role === 'chat') win.close();
         return true;
       }
-      const d = screen.getPrimaryDisplay();
       if (role === 'notices') {
+        const d = chatHome();
         win.setIgnoreMouseEvents(body.place === 'fire', { forward: true });
         if (body.place === 'screen') {
           win.setAlwaysOnTop(true, 'screen-saver');
@@ -1002,30 +1161,54 @@ function handleMessages(win, body) {
           if (!win.isVisible()) win.showInactive();
         }
       } else {
-        const b = win.getBounds();
-        if (!win.isVisible()) {
-          // Where it was left while that's on the display it opens on (give or take 40 px), else that display's middle.
+        const cur = panelBounds.get(win) || win.getBounds();
+        let next;
+        if (!win.isVisible() && !win.steppedAside) {
+          // Where it was left while that's on the display it opens on (give or take 40 px), else that display's middle;
+          // a chat opened while others are on screen cascades from the last one, as on the Mac.
           const home = chatHome(), a = home.workArea;
+          const other = [...panels.chats.values()].reverse().find((p) => p !== win && !p.isDestroyed() && p.isVisible());
+          const ob = other && (panelBounds.get(other) || other.getBounds());
           const saved = settings.get('chatWindowTopLeft');
           const p = Array.isArray(saved) && saved.length === 2 && { x: saved[0] + 40, y: saved[1] + 20 };
           const left = p && p.x >= a.x - 40 && p.x < a.x + a.width + 40 && p.y >= a.y - 40 && p.y < a.y + a.height + 40;
-          const [x, y] = left ? saved : [a.x + Math.round((a.width - w) / 2), a.y + Math.round((a.height - h) / 2)];
-          win.setBounds(wholeOnDisplay({ x, y, width: w, height: h }, home));
+          const [x, y] = ob ? [Math.round(ob.x) + 34, Math.round(ob.y) + 34] : left ? saved : [a.x + Math.round((a.width - w) / 2), a.y + Math.round((a.height - h) / 2)];
+          next = wholeOnDisplay({ x, y, width: w, height: h }, home);
+        } else {
+          next = wholeOnDisplay({ x: Math.round(cur.x), y: Math.round(cur.y), width: w, height: h });
+        }
+        panelBounds.set(win, next);
+        win.setBounds(next);
+        if (modalOpen) {
+          win.steppedAside = true;
+          return true;
+        }
+        pinToDash(win);
+        if (body.focus) {
           win.show();
-        } else win.setBounds(wholeOnDisplay({ x: b.x, y: b.y, width: w, height: h }));
-        if (body.focus) win.focus();
+          win.focus();
+        } else if (!win.isVisible()) win.showInactive();
       }
       return true;
     }
     case 'drag': {
-      const [x, y] = win.getPosition(), z = win.webContents.getZoomFactor() || 1;
-      win.setPosition(Math.round(x + (body.dx || 0) * z), Math.round(y + (body.dy || 0) * z));
+      if (role !== 'chat') return true;
+      const b = panelBounds.get(win) || win.getBounds(), z = win.webContents.getZoomFactor() || 1;
+      b.x += (body.dx || 0) * z;
+      b.y += (body.dy || 0) * z;
+      panelBounds.set(win, b);
+      win.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width: b.width, height: b.height });
       return true;
     }
-    case 'dragEnd':
-      win.setBounds(wholeOnDisplay(win.getBounds()));
-      settings.set('chatWindowTopLeft', win.getPosition());
+    case 'dragEnd': {
+      if (role !== 'chat') return true;
+      const b = panelBounds.get(win) || win.getBounds();
+      const next = wholeOnDisplay({ x: Math.round(b.x), y: Math.round(b.y), width: b.width, height: b.height });
+      panelBounds.set(win, next);
+      win.setBounds(next);
+      settings.set('chatWindowTopLeft', [next.x, next.y]);
       return true;
+    }
     case 'openUpdate':
       showDashboard();
       toDash('openUpdate()');
@@ -1046,9 +1229,14 @@ function handleMessages(win, body) {
       return runaways.end(body.pid, body.started);
     case 'openChat':
       return openFriendChat(body.id);
-    case 'showing':
-      toNotices(`showing && __messages.showing(${JSON.stringify(body.id ? [body.id] : [])})`);
+    case 'showing': {
+      const entry = [...panels.chats.entries()].find(([, w]) => w === win);
+      if (!entry) return true;
+      if (body.id === entry[0]) panels.showing.add(entry[0]);
+      else panels.showing.delete(entry[0]);
+      tellShowing();
       return true;
+    }
     case 'log':
       console.log(`${role} page:`, body.msg);
       return true;
@@ -1311,7 +1499,10 @@ function buildMenu() {
           label: 'Close Window', accelerator: 'CmdOrCtrl+W',
           click: () => {
             const w = BrowserWindow.getFocusedWindow();
-            if (w && w !== dash) w.close();
+            if (!w || w === dash || w === panels.notices) return;
+            if (w === over) return hideOverlay();
+            if ([...panels.chats.values()].includes(w)) return runPanel(w, 'window.__messages && __messages.close && __messages.close()');
+            w.close();
           },
         },
         { role: 'quit', label: 'Quit', accelerator: 'CmdOrCtrl+Q' },
@@ -1336,7 +1527,21 @@ function buildMenu() {
         { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { type: 'separator' }, { role: 'togglefullscreen' },
       ],
     },
-    { label: 'Window', submenu: [{ role: 'minimize' }, { label: 'End This Terminal', click: () => { const f = focusedChat(); if (f) endTerminal(f[0]); } }] },
+    {
+      label: 'Window',
+      submenu: [
+        {
+          label: 'Minimize', accelerator: 'CmdOrCtrl+M',
+          click: () => {
+            const w = BaseWindow.getFocusedWindow();
+            if (!w || w === over || w === panels.notices) return;
+            if (w !== dash && typeof w.getParentWindow === 'function' && w.getParentWindow()) w.setParentWindow(null);
+            w.minimize();
+          },
+        },
+        { label: 'End This Terminal', click: () => { const f = focusedChat(); if (f) endTerminal(f[0]); } },
+      ],
+    },
   ]));
 }
 
@@ -1359,6 +1564,7 @@ app.whenReady().then(() => {
     toDash(`idle(${powerMonitor.getSystemIdleTime().toFixed(1)})`);
     pushTerminals();
     // A chat window opened or ended between the engine's states: the list says "in a window" or stops saying it.
+    pushWinOpen();
     pushChats();
   }, 2000);
   // The token savers this build ships go on by themselves the first time (Settings turns them off).

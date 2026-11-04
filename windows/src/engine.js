@@ -491,7 +491,7 @@ function agyArg(v) {
   return typeof d === 'object' ? JSON.stringify(d) : String(d);
 }
 
-const AGY_LABEL_KEYS = ['CommandLine', 'Command', 'command', 'Query', 'query', 'queries', 'Url', 'url', 'Uri', 'AbsolutePath', 'TargetFile', 'File', 'path', 'SearchPath', 'DirectoryPath', 'Role', 'ServerName', 'toolSummary', 'Prompt'];
+const AGY_LABEL_KEYS = ['CommandLine', 'Command', 'command', 'Query', 'query', 'queries', 'Url', 'url', 'Uri', 'AbsolutePath', 'TargetFile', 'File', 'path', 'Path', 'SearchPath', 'DirectoryPath', 'Role', 'ServerName', 'toolSummary', 'Prompt'];
 
 // An Antigravity tool call as Claude's tools are shown: its kind (a shell, the web, a file…) and what it's on.
 function agyTool(call, at) {
@@ -510,7 +510,7 @@ function agyTool(call, at) {
   else if (name === 'search_web') [n, c] = ['WebSearch', 'web'];
   else if (name === 'read_url_content' || name === 'view_content_chunk') [n, c] = ['WebFetch', 'web'];
   else if (name.startsWith('browser_') || name.endsWith('_browser_url') || name.endsWith('_browser_page') || name === 'capture_browser_screenshot') [n, c] = ['Browser', 'browser'];
-  else if (['view_file', 'view_file_outline', 'view_code_item', 'list_dir'].includes(name)) [n, c] = ['Read', 'read'];
+  else if (['read_file', 'view_file', 'view_file_outline', 'view_code_item', 'list_dir'].includes(name)) [n, c] = ['Read', 'read'];
   else if (['grep_search', 'find_by_name', 'codebase_search'].includes(name)) [n, c] = ['Grep', 'search'];
   else if (/write|replace|edit/.test(name)) [n, c] = ['Edit', 'edit'];
   else if (name === 'invoke_subagent') [n, c] = ['Agent', 'agent'];
@@ -2353,11 +2353,56 @@ class RadarEngine {
         O.call = null;
         O.plan = null;
       } else if (j.type === 'PLANNER_RESPONSE') {
-        if (j.input_tokens != null) O.ctx = (Number(j.input_tokens) || 0) + (Number(j.cache_read_tokens) || 0);
+        const inTok = Number(j.input_tokens) || 0;
+        const outTok = Number(j.output_tokens) || 0;
+        const cacheTok = Number(j.cache_read_tokens) || 0;
+        if (j.input_tokens != null) O.ctx = inTok + cacheTok;
+        if (ts >= this.day0) {
+          O.tokIn = (O.tokIn || 0) + inTok;
+          O.tokOut = (O.tokOut || 0) + outTok;
+          O.tokCr = (O.tokCr || 0) + cacheTok;
+          this.G.tokIn += inTok;
+          this.G.tokOut += outTok;
+          this.G.tokCr += cacheTok;
+          this.minute(ts).tok += inTok + outTok + cacheTok;
+        }
         // A reply that calls tools: they run (or wait) next, a step each.
         const calls = Array.isArray(j.tool_calls) ? j.tool_calls : [];
         O.plan = calls.length ? { idx, calls, ts } : null;
         O.call = calls.length ? { id: '', p: agyTool(calls[calls.length - 1], ts) } : null;
+        // Ingest tool calls into the dashboard's counts, files and timeline so Antigravity feeds the heat, mix and map
+        if (calls.length && ts >= this.day0) {
+          const G = this.G, mb = this.minute(ts), sk = Math.floor(ts / 20_000);
+          O.spark = O.spark || new Map();
+          O.byCat = O.byCat || {};
+          O.tools = (O.tools || 0) + calls.length;
+          O.spark.set(sk, (O.spark.get(sk) || 0) + calls.length);
+          for (const call of calls) {
+            const p = agyTool(call, ts);
+            const c = p.c || 'plan';
+            O.byCat[c] = (O.byCat[c] || 0) + 1;
+            G.tools += 1;
+            G.byCat[c] = (G.byCat[c] || 0) + 1;
+            if (ts >= (G.lastByCat[c]?.t ?? 0)) G.lastByCat[c] = { l: p.l, t: ts, s: O.id };
+            mb.tools += 1;
+            mb.cats[c] = (mb.cats[c] || 0) + 1;
+            const callId = randomUUID();
+            this.ringPush(G.ticker, { id: callId, t: ts, c, st: 'run', n: p.n }, 200);
+            if (c === 'web') {
+              G.web += 1;
+              O.web = (O.web || 0) + 1;
+              this.ringPush(G.research, { id: callId, t: ts, s: O.id, kind: p.n === 'WebSearch' ? 'search' : 'fetch', l: p.l, m: '', ok: true, d: null, hosts: [] }, 60);
+            }
+            if (p.n === 'Bash') {
+              this.ringPush(G.shells, { id: callId, t: ts, s: O.id, l: p.l, cmd: p.l, ok: true, d: null }, 40);
+            }
+            if (c === 'read' || c === 'edit') {
+              const fp = agyArg((call.args || {}).Path || (call.args || {}).path || (call.args || {}).File || (call.args || {}).TargetFile);
+              if (fp && typeof fp === 'string') this.touchFile(fp.replace(/^"(.*)"$/, '$1'), p.n, { id: O.id }, null, ts);
+            }
+            this.emit(this.ev('tool', ts, { id: O.id }, null, { id: callId, n: p.n, c, l: p.l }), true);
+          }
+        }
       } else {
         // A tool's own step: done, it no longer waits; still running or waiting, it does.
         if (['DONE', 'ERROR', 'CANCELED'].includes(step)) O.call = null;
@@ -2653,12 +2698,14 @@ class RadarEngine {
       const nRun = agents.filter((a) => a.running).length;
       runningAgents += nRun;
       for (const p of [...(running ? [running] : []), ...agents.flatMap((a) => a.pending)]) pendingByCat[p.c ?? 'plan'] = (pendingByCat[p.c ?? 'plan'] || 0) + 1;
+      const k0 = Math.floor(now / 20_000);
+      const spark = O.spark ? Array.from({ length: 30 }, (_, i) => O.spark.get(k0 - 29 + i) || 0) : new Array(30).fill(0);
       list.push({
         id: O.id, name: O.tool, title: O.title || baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
         model: O.model || O.tool, effort: '', status, live, statusSince: live ? O.statusSince : O.endedAt,
         cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: 0,
-        tok: { in: 0, out: 0, cr: 0, cw: 0 }, cost: 0, tools: 0, errors: 0, web: 0, prompts: 0,
-        byCat: {}, pending: running ? [running] : [], spark: new Array(30).fill(0), flags: [], agents, agentsRunning: nRun,
+        tok: { in: O.tokIn || 0, out: O.tokOut || 0, cr: O.tokCr || 0, cw: 0 }, cost: 0, tools: O.tools || 0, errors: 0, web: O.web || 0, prompts: 0,
+        byCat: O.byCat || {}, pending: running ? [running] : [], spark, flags: [], agents, agentsRunning: nRun,
         waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
         tab: typeof O.hostTab === 'string' ? O.hostTab : null,
         ...(running && { last: running }),
