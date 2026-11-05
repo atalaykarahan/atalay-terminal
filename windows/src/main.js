@@ -654,6 +654,7 @@ function handleRadar(msg) {
       pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
       pushActiveSession(true);
+      toDash(`power(${powerMonitor.isOnBatteryPower()})`);
       return true;
     case 'open':
       return openSession(msg.sid, false);
@@ -1712,6 +1713,9 @@ app.whenReady().then(() => {
   savers.autoStart();
   if (!PROBE) aiColors.autoStart();
   powerMonitor.on('resume', () => cloud.kick());
+  // On battery the dashboard's map draws fewer and smaller frames, as on the Mac (PowerSaver.swift).
+  powerMonitor.on('on-battery', () => toDash('power(true)'));
+  powerMonitor.on('on-ac', () => toDash('power(false)'));
   // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
   // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.
   terminals.restore().then((found) => {
