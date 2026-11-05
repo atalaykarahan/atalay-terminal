@@ -119,6 +119,10 @@
     },
   };
   window.__panel.on();
+  // The one with the keys stands out when several are side by side (terminal.css).
+  addEventListener('focus', () => root.classList.add('focused'));
+  addEventListener('blur', () => root.classList.remove('focused'));
+  if (document.hasFocus()) root.classList.add('focused');
   term.focus();
   atl.send('term:ready', size());
 })();
