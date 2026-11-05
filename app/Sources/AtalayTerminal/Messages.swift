@@ -10,6 +10,8 @@ import WebKit
 /// ⌘V, ⌘C, ⌘X and ⌘A work in all of them through `editKey`. Chats sit among the terminals pinned above the dashboard,
 /// so whichever window was clicked last is on top, and like them they step aside while a dashboard menu is open.
 /// The notices also say when a new version of the app is out; a click on that one shows the dashboard's "what's new".
+/// And when a chat needs the user (an approval) while the app is behind other windows (WaitNotifier): that notice
+/// stays until the chat moves on, and a click on it opens the chat.
 /// A level-up takes the notices panel over the whole screen, keys locked for its first moments and then any key ending
 /// it, only while the app is in front (the page waits for that).
 /// The page decides the size and asks for it, and asks to be moved while the header is dragged.
@@ -35,6 +37,8 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     /// The danger alarm (a runaway process): Details, and END IT (its pid and start, as the page had them).
     static var onOpenDanger: (() -> Void)?
     static var onEndRunaway: ((Int32, Double) -> Void)?
+    /// A chat's "needs you" notice was clicked: that chat, in front (its session id).
+    static var onOpenWait: ((String) -> Void)?
     /// Until when keys do nothing (the level-up takeover; AppDelegate drops them).
     private static var keysLockedUntil: TimeInterval = 0
     static var keysLocked: Bool { ProcessInfo.processInfo.systemUptime < keysLockedUntil }
@@ -180,6 +184,18 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     /// Processes left burning a core where nobody sees them (Runaways): the alarm in the middle of the screen.
     func runaways(_ json: String) {
         run("window.__messages && __messages.runaways && __messages.runaways(\(json))")
+    }
+
+    /// A chat waiting for the user while the app is behind (WaitNotifier): sid, title, folder and what it waits for.
+    /// It stays in the corner until `waitOver`.
+    func wait(_ notice: [String: String]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: notice), let json = String(data: data, encoding: .utf8) else { return }
+        run("window.__messages && __messages.wait && __messages.wait(\(json))")
+    }
+
+    /// That chat moved on (answered, or the app came to the front): its notice goes.
+    func waitOver(_ sid: String) {
+        run("window.__messages && __messages.waitOver && __messages.waitOver(\(Self.literal(sid)))")
     }
 
     /// Your XP as the last heartbeat or live event had it: a new level plays the fanfare (once, the page keeps count).
@@ -385,6 +401,9 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             Self.onOpenDanger?()
         case "endRunaway":
             Self.onEndRunaway?(Int32(number("pid")), number("started"))
+        case "openWait":
+            guard let sid = body["sid"] as? String, !sid.isEmpty else { return }
+            Self.onOpenWait?(sid)
         case "lock":
             // Never longer than 4 s, whatever the page asks.
             Self.keysLockedUntil = ProcessInfo.processInfo.systemUptime + min(max(number("ms"), 0), 4000) / 1000

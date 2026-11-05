@@ -3,6 +3,13 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased
+
+- Chats: a chat that needs you (an approval, a question) while the app is behind other windows pops up in the screen's corner as messages do, and stays until you answer it; a click opens it (one running in another terminal brings that terminal forward). The window's edge no longer flashes red for it: the notice says it, on the Mac and Windows
+- Windows: the top bar shows Claude's 5-hour and weekly limits, as on the Mac (Claude Code's status line hands them to the app; a status line of your own keeps working)
+- Windows: chat and terminal windows ride above the dashboard as on the Mac: clicking the dashboard no longer buries them, they go behind other apps and come back with it, step aside while a dashboard menu is open, and their session's card lights up while one is open
+- Windows: a friend's chat dragged on a 125% or 150% display no longer creeps or grows, a terminal no longer stays blank after its graphics are lost or a virtual desktop switch, right-click menus and the shortcut wheel open where the pointer is at any text size, and Ctrl+W closes a friend's chat, Ctrl+M minimizes
+
 ## 0.16.1
 
 - Dashboard: Codex's and Antigravity's work fills every panel as Claude's does: their tool calls in tool.mix, the ticker, research.feed, files.heat and session.log (their answers as "reply", not "claude"), their prompts and tokens in the top bar and spend.ledger (at no price), and their card's tools, web, errors and activity; their subagents' calls count with them, on the Mac and Windows

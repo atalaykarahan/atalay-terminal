@@ -64,6 +64,14 @@
 .mb.update { --glow: var(--cyan-rgb); }
 .mb.update .mb-tag { background: var(--cyan); }
 
+/* a chat needs you (an approval): the alarm's colour and a quicker border; a × since it stays until the chat moves on */
+.mb.wait { --glow: var(--warn-rgb); cursor: pointer; }
+.mb.wait:hover { filter: brightness(1.15); }
+.mb.wait .mb-tag { background: var(--warn); }
+.mb.wait .mb-border { background: conic-gradient(from var(--ang), var(--warn), var(--amber), var(--accent), var(--warn)); animation-duration: 2.4s; }
+.mb.wait .mb-x { margin-left: auto; }
+.mb.wait .mb-text { padding-bottom: 11px; }
+
 /* the input: a prompt line, as in the rest of the app */
 .mb-input { display: flex; align-items: flex-end; gap: 8px; margin: 6px 10px 10px; padding: 6px 8px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.42); transition: border-color 0.2s, box-shadow 0.2s; }
 .mb-input:focus-within { border-color: var(--accent); box-shadow: 0 0 14px rgba(var(--glow), 0.35); }
