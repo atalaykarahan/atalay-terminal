@@ -159,6 +159,8 @@ function createChatList({ settings }) {
       toggleArchived(item);
       changed();
     },
+    /** The name the user gave a chat, if any. */
+    title: (id) => titles.get(id) || null,
     /** A chat's own name; an empty one brings back the title Claude gave it. */
     rename(id, name) {
       if (!id) return;

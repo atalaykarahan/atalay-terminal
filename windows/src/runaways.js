@@ -327,6 +327,13 @@ function createRunaways({ onChange, onRead }) {
     fresh,
     /** A process's children, oldest first: [{ pid, name, cmd, cwd }]. */
     children: (pid) => (kids.get(pid) || []).map((c) => table.get(c)).filter(Boolean).sort((a, b) => a.started - b.started),
+    /** A process's parents' pids, nearest first, as far as the last reading knows them. */
+    parents(pid) {
+      const out = [];
+      const p = table.get(pid);
+      for (let q = p && !p.orphan && table.get(p.ppid); q && out.length < 12; q = !q.orphan && table.get(q.ppid)) out.push(q.pid);
+      return out;
+    },
     /** % of a core the processes under `roots` used over the last reading. */
     busy,
     /**

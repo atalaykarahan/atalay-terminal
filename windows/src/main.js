@@ -178,6 +178,7 @@ const engine = createEngine({
     matchChats();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
     badge();
+    updateWaits();
     pushWinOpen();
     pushChats();
   },
@@ -827,7 +828,7 @@ function showChat(id) {
 function revealOutside(pid) {
   if (process.platform !== 'win32' || !(pid > 0)) return;
   const own = runaways.ais().find((a) => a.pid === pid);
-  const ids = [pid, ...((own && own.chain) || [])].filter((n) => Number.isInteger(n) && n > 0);
+  const ids = [pid, ...((own && own.chain) || runaways.parents(pid))].filter((n) => Number.isInteger(n) && n > 0);
   const script = [
     "Add-Type -Namespace Atl -Name Win -MemberDefinition '",
     '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
@@ -1088,6 +1089,80 @@ app.on('browser-window-focus', tellFocus);
 // Going from one of the app's windows to another blurs the first before the second has focus.
 app.on('browser-window-blur', () => setImmediate(tellFocus));
 
+// ---------- a chat that needs you ----------
+// A chat waiting for the user (an approval, a question) while the app is behind other windows: a notice in the corner
+// (the notices' "NEEDS YOU") until the chat moves on or the app comes to the front, as on the Mac (WaitNotifier.swift).
+// With the app in front nothing pops up: the chat itself shows that it waits.
+const waitNotices = { waits: new Map(), shown: new Set(), primed: false }; // sid -> what it waits for; those in the corner
+
+// One of the app's windows has the keys; the corner's notices don't count (a click on one is how it's answered).
+function appInFront() {
+  const w = BaseWindow.getFocusedWindow();
+  return !!w && w !== panels.notices;
+}
+
+function updateWaits() {
+  const now = new Map(), byId = new Map();
+  for (const s of engine.live()) {
+    if (s.status !== 'waiting') continue;
+    now.set(s.sessionId, s.waitingFor || '');
+    byId.set(s.sessionId, s);
+  }
+  for (const id of waitNotices.shown) {
+    if (now.has(id)) continue;
+    waitNotices.shown.delete(id);
+    toNotices(`waitOver && __messages.waitOver(${JSON.stringify(id)})`);
+  }
+  // The first state only says what was already waiting at launch: no notices for that.
+  if (waitNotices.primed && !appInFront()) {
+    for (const [id, what] of now) {
+      const before = waitNotices.waits.get(id);
+      // Still the same wait: one notice is enough. Another question in the same chat is a new one.
+      if (before !== undefined && (!before || !what || before === what)) continue;
+      toNotices(`wait && __messages.wait(${JSON.stringify(waitNotice(byId.get(id)))})`);
+      waitNotices.shown.add(id);
+    }
+  }
+  waitNotices.waits = now;
+  waitNotices.primed = true;
+}
+
+// The app came to the front: the user sees the chats themselves.
+app.on('browser-window-focus', (e, w) => {
+  if (w === panels.notices) return;
+  for (const id of waitNotices.shown) toNotices(`waitOver && __messages.waitOver(${JSON.stringify(id)})`);
+  waitNotices.shown.clear();
+});
+
+// Whitespace runs fold to one space; longer text ends in "…" (engine.js's clip).
+function clip(s, n) {
+  const t = String(s || '').split(/\s+/).filter(Boolean).join(' ');
+  const chars = Array.from(t);
+  return chars.length > n ? chars.slice(0, n - 1).join('') + '…' : t;
+}
+
+// Which chat, where (another AI tool's name first), what it waits for.
+function waitNotice(s) {
+  const folder = path.basename(s.cwd || '') || s.cwd || '';
+  const name = (!s.ai && chatlist.title(s.sessionId)) || s.title || s.prompt || '';
+  return {
+    sid: s.sessionId, title: clip(name || folder, 80), folder: (s.ai ? `${s.name} · ` : '') + folder,
+    what: clip(s.waitingFor || 'waiting for your approval', 200),
+  };
+}
+
+// A click on one: that chat in front, or the terminal it runs in outside the app (Windows Terminal, VS Code…), as iTerm2
+// or Terminal comes forward on the Mac; a copy of it would only ask again.
+function openWait(sid) {
+  if (typeof sid !== 'string' || !sid) return false;
+  const live = engine.live().find((s) => s.sessionId === sid);
+  if (live && !live.ai && live.host === 'term') {
+    revealOutside(live.pid);
+    return true;
+  }
+  return openSession(sid, false);
+}
+
 function tellShowing() {
   toNotices(`showing && __messages.showing(${JSON.stringify([...panels.showing])})`);
 }
@@ -1259,6 +1334,8 @@ function handleMessages(win, body) {
       return true;
     case 'endRunaway':
       return runaways.end(body.pid, body.started);
+    case 'openWait':
+      return openWait(body.sid);
     case 'openChat':
       return openFriendChat(body.id);
     case 'showing': {

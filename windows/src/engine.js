@@ -1353,14 +1353,16 @@ class RadarEngine {
       if (!S.live || S.pid == null) continue;
       out.push({
         sessionId: S.id, pid: S.pid, cwd: S.cwd, status: this.shownStatus(S, bySession.get(S.id) || [], now),
-        name: S.name || S.id.slice(0, 8), title: S.title || '', host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null,
+        name: S.name || S.id.slice(0, 8), title: S.title || '', prompt: S.lastPrompt || '', waitingFor: S.waitingFor ?? null,
+        host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null,
       });
     }
     // The other AI tools (`ai`: no conversation to resume, nor one a new chat window should take for its own).
     for (const O of this.others.values()) {
       if (O.endedAt > 0) continue;
+      const { status, waiting } = this.otherStatus(O);
       out.push({
-        sessionId: O.id, pid: O.pid, cwd: O.cwd, status: this.otherStatus(O).status, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
+        sessionId: O.id, pid: O.pid, cwd: O.cwd, status, waitingFor: waiting, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
         host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
       });
     }
