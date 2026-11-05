@@ -159,9 +159,29 @@ export class LineBatch {
 }
 const _p = new THREE.Vector3();
 
-// A ring drawn analytically on a quad: crisp at any zoom, with an optional bright "head"
+// A ring drawn analytically on a thin band around it: crisp at any zoom, with an optional bright "head"
 // that fades behind it (the ship's position on its orbit) and optional moving dashes.
-export const QUAD = new THREE.PlaneGeometry(2, 2);
+// The band used to be a square as wide as the ring, which ran the fragment shader over the ring's whole inside (most
+// of the picture for a session's orbit) only to discard it, once per ring, at full Retina resolution.
+// It reaches as far past the ring outward as inward (setRing's pad), where the glow has already faded out. Vertex
+// `edge` 0 lies on its inner edge, 1 on its outer edge; the outer vertices sit on a polygon around the circle and the
+// inner ones on a polygon inside it, so the band's straight sides never cut into the ring.
+const RING_SEG = 96;
+export const RING_BAND = (() => {
+  const out = 1 / Math.cos(Math.PI / RING_SEG);
+  const pos = new Float32Array((RING_SEG + 1) * 6), edge = new Float32Array((RING_SEG + 1) * 2), index = [];
+  for (let i = 0; i <= RING_SEG; i++) {
+    const a = (i / RING_SEG) * TAU, c = Math.cos(a), s = Math.sin(a);
+    pos.set([c, s, 0, c * out, s * out, 0], i * 6);
+    edge[i * 2 + 1] = 1;
+    if (i < RING_SEG) index.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('edge', new THREE.BufferAttribute(edge, 1));
+  g.setIndex(index);
+  return g;
+})();
 export function ringMaterial(opts = {}) {
   return new THREE.ShaderMaterial({
     ...ADD,
@@ -181,11 +201,14 @@ export function ringMaterial(opts = {}) {
       time: { value: 0 },
     },
     vertexShader: /* glsl */ `
-      uniform float scale;
+      uniform float scale, rIn, rOut;
+      attribute float edge;
       varying vec2 vP;
       void main() {
-        vP = position.xy * scale;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        // vP in world units on the ring's plane; the mesh is scaled by scale, the band's outer radius.
+        float inner = max(rIn - (scale - rOut), 0.0);
+        vP = position.xy * mix(inner, scale, edge);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(vP / scale, 0.0, 1.0);
       }`,
     fragmentShader: /* glsl */ `
       uniform vec3 color;
@@ -213,7 +236,7 @@ export function ringMaterial(opts = {}) {
   });
 }
 
-// Sets a ring material's geometry: radius r (world units), width w, on a quad of half-size s.
+// Sets a ring material's geometry: radius r (world units), width w, on a band reaching pad past the ring on both sides.
 export function setRing(mesh, r, w, pad = 6) {
   const s = r + w + pad;
   mesh.scale.setScalar(s);

@@ -65,6 +65,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         runaways.start()
         observeVisibility()
+        PowerSaver.shared.onChange = { [weak self] _ in self?.pushPower() }
+        PowerSaver.shared.start()
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: ThemeStore.changed, object: nil)
         let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -188,6 +190,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             engine.requestInit()
             lastVisibility = ""
             dashboardVisibilityChanged()
+            pushPower()
             pushCloud()
             terminalsJSON = ""
             pushTerminals()
@@ -498,6 +501,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard state != lastVisibility else { return }
         lastVisibility = state
         radar.webView.evaluateJavaScript("window.__radar && window.__radar.visibility && window.__radar.visibility(\(visible), \(focused)); true", completionHandler: nil)
+    }
+
+    /// On battery or in Low Power Mode the map draws fewer and smaller frames (PowerSaver).
+    private func pushPower() {
+        radar.push("power", PowerSaver.shared.on ? "true" : "false")
     }
 
     // MARK: chats

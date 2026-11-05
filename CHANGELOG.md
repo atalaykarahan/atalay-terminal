@@ -113,6 +113,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Dashboard: far less energy when you aren't looking at it: behind a chat window (or another app) the map draws fewer and smaller frames and its decorations rest, a working terminal no longer keeps it at full rate there; on battery or in Low Power Mode it draws less in front too and the cinematic camera doesn't start on its own; the orbit rings take a fraction of the pixels, and the boot screen's logo, the logo's glow and the feedback beacon no longer repaint every frame. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
 - What's new and notifications: links in a release note or a notification from the developer show in their own colour and open in the browser; `@name` is a GitHub user, in another colour, and opens their profile (Mac and Windows)
 - Codex: its planet keeps orbiting while a child command or delegated worker still runs after the turn record closes, and two Codex chats in the same folder follow their own rollout instead of sharing the newest one. The top bar follows the terminal touched last: with Claude Code and Codex open together it shows that AI's model, context, session tokens/tools and its own capacity left. The countdown keeps the selected AI's limits; after reset it waits for fresh usage instead of inventing a remaining percentage (Mac and Windows)
 - Mac chats: reopening during the closing animation brings the window back once the animation ends; Codex running in another build can be mirrored in staging, as Claude can
