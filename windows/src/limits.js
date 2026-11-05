@@ -6,21 +6,38 @@
 const fs = require('fs');
 const path = require('path');
 
-// PowerShell, as Claude Code can run the command from Git Bash or from cmd; `$input` is the JSON Claude Code pipes in.
+// PowerShell, as Claude Code can run the command from Git Bash or from PowerShell. A status line the user had runs as
+// Claude Code would run it: through Git Bash when it's installed, else PowerShell (cmd would break a bash command).
 const SCRIPT = `# Atalay's Terminal: Claude Code passes its status JSON here (statusLine in its settings.json). The latest one that
 # carries the account's usage limits is kept for the dashboard. A status line of your own (statusline-next) still gets
-# the JSON and shows what it prints.
+# the JSON and shows what it prints, run as Claude Code runs one: through Git Bash when it's installed, else PowerShell.
 $ErrorActionPreference = 'SilentlyContinue'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$json = [Console]::In.ReadToEnd()
+# The JSON's own bytes (UTF-8), not the console code page's reading of them.
+$buf = New-Object IO.MemoryStream
+[Console]::OpenStandardInput().CopyTo($buf)
+$bytes = $buf.ToArray()
+$json = [Text.Encoding]::UTF8.GetString($bytes)
 if ($json -match '"rate_limits"') {
   $tmp = Join-Path $dir ('limits.' + $PID + '.tmp')
-  [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
+  [IO.File]::WriteAllBytes($tmp, $bytes)
   Move-Item -Force -LiteralPath $tmp -Destination (Join-Path $dir 'limits.json')
 }
 $next = Join-Path $dir 'statusline-next'
-if ((Test-Path -LiteralPath $next) -and (Get-Item -LiteralPath $next).Length -gt 0) {
-  $json | & cmd.exe /d /c ([IO.File]::ReadAllText($next))
+if (-not (Test-Path -LiteralPath $next) -or (Get-Item -LiteralPath $next).Length -eq 0) { exit 0 }
+# Its command is read from the file, so no quote in it is lost on the way, and gets the JSON as UTF-8.
+$OutputEncoding = New-Object Text.UTF8Encoding $false
+$git = $env:Path -split ';' | Where-Object { $_ } | ForEach-Object { "$_\\git.exe" } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$bash = @($env:CLAUDE_CODE_GIT_BASH_PATH, $(if ($git) { Join-Path (Split-Path (Split-Path $git)) 'bin\\bash.exe' }),
+  "$env:ProgramFiles\\Git\\bin\\bash.exe", "$env:LOCALAPPDATA\\Programs\\Git\\bin\\bash.exe") |
+  Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if ($bash) {
+  $script = $next.Replace([char]92, [char]47)
+  $json | & $bash $script
+} else {
+  $ps1 = Join-Path $dir 'statusline-next.ps1'
+  Copy-Item -Force -LiteralPath $next -Destination $ps1
+  $json | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ps1
 }
 exit 0
 `;
