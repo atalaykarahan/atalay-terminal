@@ -1,0 +1,81 @@
+/* ===== the dashboard's small panels, laid out as you like (layout.js): moved by their strips, hidden, sized ===== */
+/* The right column and the bottom row as lines of panels (style.css has them as grids): the gaps between panels are
+   lines to drag. */
+#right { display: flex; flex-direction: column; gap: 0; }
+#bottom { display: flex; flex-direction: row; gap: 0; }
+#right > .pl-panel, #bottom > .pl-panel { min-width: 0; min-height: 0; }
+#right > .pl-panel { min-height: 60px; }
+#bottom > .pl-panel { min-width: 120px; }
+.pl-panel.pl-hidden, .pl-panel.pl-dragging { display: none !important; }
+
+/* the page's parts' sizes, when one was dragged */
+#app.lay-w { grid-template-columns: 48px var(--lay-sess, minmax(250px, 21%)) minmax(0, 1fr) var(--lay-right, minmax(270px, 23%)); }
+#app.lay-h { grid-template-rows: auto minmax(0, 1fr) var(--lay-bottom, minmax(176px, 27vh)) 22px; }
+@media (max-width: 1250px) {
+  #app.lay-w { grid-template-columns: 48px var(--lay-sess, minmax(230px, 26%)) minmax(0, 1fr) var(--lay-right, minmax(240px, 26%)); }
+}
+/* every panel hidden from the column or the row: the map (and the column) take its room */
+#app.no-right #right, #app.no-bottom #bottom { display: none; }
+#app.no-right #mapwrap { grid-column: 3 / -1; }
+#app.no-bottom #sessions, #app.no-bottom #mapwrap, #app.no-bottom #right { grid-row: 2 / 4; }
+
+/* the lines between panels */
+.pl-sash { position: relative; flex: none; z-index: 2; }
+.pl-sash.y { height: 8px; cursor: row-resize; }
+.pl-sash.x { width: 8px; cursor: col-resize; }
+.pl-sash::after, .pl-gsash::after { content: ""; position: absolute; background: var(--accent); opacity: 0; transition: opacity 0.12s 0.15s; }
+.pl-sash.y::after, .pl-gsash.y::after { left: 0; right: 0; top: 3px; height: 2px; }
+.pl-sash.x::after, .pl-gsash.x::after { top: 0; bottom: 0; left: 3px; width: 2px; }
+.pl-sash:hover::after, .pl-sash.on::after, .pl-gsash:hover::after, .pl-gsash.on::after { opacity: 0.75; box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.6); }
+/* between the page's parts: over their gaps */
+.pl-gsash { position: fixed; z-index: 40; }
+.pl-gsash[hidden] { display: none; }
+.pl-gsash.x { cursor: col-resize; }
+.pl-gsash.y { cursor: row-resize; }
+#app.pl-sizing, #app.pl-sizing * { user-select: none; }
+body:has(#app.pl-rows) { cursor: row-resize; }
+body:has(#app.pl-cols) { cursor: col-resize; }
+
+/* moving: the strip is the handle */
+.pl-panel > header { cursor: grab; }
+#app.pl-moving, #app.pl-moving * { cursor: grabbing !important; user-select: none; }
+#app.pl-moving .pl-sash { visibility: hidden; }
+#app.pl-moving #right, #app.pl-moving #bottom { outline: 1px dashed rgba(var(--accent-rgb), 0.18); outline-offset: 2px; }
+#app.pl-moving #right:empty, #app.pl-moving #right:not(:has(> .pl-panel:not(.pl-hidden):not(.pl-dragging))) { min-height: 80px; }
+#app.pl-moving .pl-drop { outline-color: rgba(var(--accent-rgb), 0.55); }
+.pl-ph { min-width: 60px; min-height: 60px; margin: 0 1px; border: 1px dashed var(--accent); background: rgba(var(--accent-rgb), 0.07); box-shadow: inset 0 0 22px rgba(var(--accent-rgb), 0.12); }
+.pl-ghost { position: fixed; left: 0; top: 0; z-index: 2000; pointer-events: none; border: 1px solid var(--accent); background: rgba(var(--panel-rgb), 0.85); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), 0 0 24px rgba(var(--accent-rgb), 0.3); opacity: 0.92; }
+.pl-ghost .tag { display: inline-flex; height: 19px; }
+
+/* the strip's hide button: there when the pointer is over the panel */
+.pl-btn { flex: none; width: 19px; height: 19px; margin: 0 1px 0 -4px; padding: 0; border: 0; background: none; color: var(--dim); font: 700 13px/19px var(--font); cursor: pointer; opacity: 0; transition: opacity 0.12s; }
+.pl-panel:hover .pl-btn { opacity: 1; }
+.pl-btn:hover { color: var(--accent-soft); }
+
+/* the panels menu, under its top bar button */
+#panels.on { border-color: var(--accent); color: var(--hi); }
+.pl-menu { position: fixed; z-index: 1500; display: block; width: 230px; padding: 6px 0 10px; background: rgb(var(--panel-rgb)); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55); animation: pl-in 0.12s ease-out; }
+@keyframes pl-in { from { opacity: 0; transform: translateY(-4px); } }
+.pl-menu .pl-h { padding: 6px 12px 3px; color: var(--dim); font-size: 0.82em; letter-spacing: 0.12em; }
+.pl-menu .pl-row { display: flex; align-items: center; gap: 9px; width: 100%; padding: 4px 12px; border: 0; background: none; color: var(--txt3); font: inherit; text-align: left; cursor: pointer; }
+.pl-menu .pl-row:hover { background: rgba(var(--accent-rgb), 0.08); color: var(--hi); }
+.pl-menu .pl-row.on { color: var(--txt); }
+.pl-sw { position: relative; flex: none; width: 24px; height: 12px; border: 1px solid var(--dim2); border-radius: 7px; transition: border-color 0.15s, background 0.15s; }
+.pl-sw i { position: absolute; top: 1px; left: 1px; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); transition: transform 0.15s, background 0.15s; }
+.pl-row.on .pl-sw { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.18); }
+.pl-row.on .pl-sw i { transform: translateX(12px); background: var(--accent); }
+.pl-menu .pl-foot { margin: 8px 12px 0; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.pl-menu .pl-reset { width: 100%; height: 22px; border: 1px solid rgba(var(--accent-rgb), 0.45); border-radius: 4px; background: transparent; color: var(--accent-soft); font: inherit; cursor: pointer; }
+.pl-menu .pl-reset:hover { border-color: var(--accent); color: var(--hi); }
+.pl-menu .pl-tip { padding: 6px 12px 0; color: var(--dim2); font-size: 0.82em; }
+
+/* one column (a narrow window): the page's own layout, nothing to drag */
+@media (max-width: 920px) {
+  #app.lay-w, #app.lay-h { grid-template-columns: 1fr; grid-template-rows: auto; }
+  #right, #bottom { flex-direction: column; }
+  #right > .pl-panel, #bottom > .pl-panel { flex: none !important; }
+  .pl-sash, .pl-gsash { display: none !important; }
+  .pl-panel > header { cursor: default; }
+  #app.no-right #mapwrap { grid-column: 1; }
+  #app.no-bottom #sessions, #app.no-bottom #mapwrap, #app.no-bottom #right { grid-row: auto; }
+}

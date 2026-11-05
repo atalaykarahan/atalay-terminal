@@ -406,11 +406,14 @@ function renderAll() {
   if (!STATE) return;
   renderTop();
   renderSessions();
-  renderResearch();
-  renderFiles();
-  renderMix();
-  renderWorkers();
-  renderSpend();
+  // A panel hidden from the layout (layout.js) isn't drawn; it catches up when it shows again. your.call always is:
+  // it also sets the window's title.
+  const shown = (id) => !window.PanelLayout || PanelLayout.visible(id);
+  if (shown('p-research')) renderResearch();
+  if (shown('p-files')) renderFiles();
+  if (shown('p-mix')) renderMix();
+  if (shown('p-workers')) renderWorkers();
+  if (shown('p-spend')) renderSpend();
   renderCall();
   renderTicker();
   map('state', STATE);
