@@ -409,9 +409,10 @@ enum TokenSavers {
     private static var ourAgyRtk: Bool {
         commands(agyRtkHooks, key: "rtk-rewrite").contains { $0.contains(guardMark) }
     }
+    /// Without rtk on the PATH the guard prints nothing, which leaves the command to the tool's own permissions, as on
+    /// Windows (Antigravity's printed an allow decision there).
     private static func guarded(_ tool: String) -> String {
-        let fallback = tool == "antigravity" ? "; printf \"%s\\n\" \"{\\\"decision\\\":\\\"allow\\\"}\"" : ""
-        return "sh -c 'command -v rtk >/dev/null 2>&1 && exec rtk hook \(tool); cat >/dev/null\(fallback)' \(guardMark)"
+        "sh -c 'command -v rtk >/dev/null 2>&1 && exec rtk hook \(tool); cat >/dev/null' \(guardMark)"
     }
     private static var bundledRtk: URL? {
         Bundle.main.resourceURL.map { $0.appendingPathComponent("bin/rtk") }.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }

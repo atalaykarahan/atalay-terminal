@@ -63,7 +63,7 @@ final class RadarEngine {
     private var otherCalls: [String: (p: Pending, done: Bool)] = [:]
     /// Fresh account-wide Codex limits, read from Codex app-server rather than inferred from a rollout file.
     private var codexUsage: [String: Any]?
-    private var codexUsagePending = false
+    private var codexUsagePending = false, codexWasRunning = false
 
     init() {
         claudeDir = CLAUDE_DIR
@@ -162,8 +162,9 @@ final class RadarEngine {
 
     /// Codex app-server reads the authenticated account's current server-side rate limits. Keep this off the
     /// transcript/indexing queue: starting the local app-server and waiting for its response can take a moment.
+    /// Only while a Codex runs: its limits show for no other session, and each read starts Codex itself.
     private func refreshCodexUsage() {
-        guard !codexUsagePending else { return }
+        guard !codexUsagePending, codexRunning else { return }
         codexUsagePending = true
         DispatchQueue.global(qos: .utility).async {
             let fresh = CodexUsage.read()
@@ -176,6 +177,8 @@ final class RadarEngine {
             }
         }
     }
+
+    private var codexRunning: Bool { others.values.contains { $0.tool == "Codex" && $0.endedAt == 0 } }
 
     private func registryChanged() {
         guard !regPending else { return }
@@ -921,12 +924,13 @@ final class RadarEngine {
             let busy = ms < O.busyUntil
             if busy { O.lastTs = ms }
             let cwd = Proc.cwd(pid) ?? O.cwd
-            let command = Self.runningCommand(under: pid)
+            let running = Self.runningCommand(under: pid), command = running?.line
             if command != O.command {
                 O.command = command
                 O.commandSince = ms
                 stateDirty = true
             }
+            O.commandStarted = running?.started ?? 0
             if O.tool == "Codex", !cwd.isEmpty { readCodexLog(O, cwd: cwd, since: Double(f.info.started) / 1_000_000, now: ms) }
             if O.tool == "Antigravity", !cwd.isEmpty { readAntigravity(O, cwd: cwd) }
             if busy != O.busy || cwd != O.cwd || O.tty != f.info.tty || O.ppid != f.info.ppid {
@@ -949,6 +953,9 @@ final class RadarEngine {
             O.busy = false
             stateDirty = true
         }
+        // A Codex just started has its limits at once, not at the next minute's read.
+        if codexRunning, !codexWasRunning { refreshCodexUsage() }
+        codexWasRunning = codexRunning
         let before = others.count
         others = others.filter { $0.value.endedAt == 0 || ms - $0.value.endedAt < 120_000 }
         if others.count != before { stateDirty = true }
@@ -957,18 +964,18 @@ final class RadarEngine {
 
     private static let shellNames: Set<String> = ["sh", "bash", "zsh", "fish", "dash"]
 
-    /// The command a tool has a shell run right now (`zsh -lc "npm test"`), from its child processes.
-    private static func runningCommand(under pid: Int32) -> String? {
-        var level = Proc.children(of: pid), found: String?
+    /// The command a tool has a shell run right now (`zsh -lc "npm test"`), from its child processes, and when that shell started.
+    private static func runningCommand(under pid: Int32) -> (line: String, started: Double)? {
+        var level = Proc.children(of: pid), found: (line: String, started: Double)?
         for _ in 0..<3 where !level.isEmpty {
             for p in level {
                 guard let name = Proc.name(p), shellNames.contains(name), let args = Proc.arguments(p),
                       let i = args.firstIndex(where: { ["-c", "-lc", "-ic"].contains($0) }), i + 1 < args.count else { continue }
-                found = args[i + 1]
+                found = (args[i + 1], Double(Proc.info(p)?.started ?? 0) / 1000)
             }
             level = level.flatMap { Proc.children(of: $0) }
         }
-        return found.map { clip($0.replacingOccurrences(of: "\n", with: " "), 120) }
+        return found.map { (clip($0.line.replacingOccurrences(of: "\n", with: " "), 120), $0.started) }
     }
 
     /// Its status: ended, or what its records say (over is the user's turn, unless its subagents still work, as Claude's
@@ -977,15 +984,27 @@ final class RadarEngine {
     /// runs a command.
     private func otherStatus(_ O: OtherAI, _ now: Double) -> (status: String, waiting: String?) {
         guard O.endedAt == 0 else { return ("ended", nil) }
-        guard let open = O.turnOpen else { return (O.busy || O.command != nil ? "busy" : "idle", nil) }
+        let command = otherCommand(O)
+        guard let open = O.turnOpen else { return (O.busy || command != nil ? "busy" : "idle", nil) }
         if O.waitsForUser || O.agentWaiting != nil {
             return ("waiting", "approval: " + ((O.waitsForUser ? O.call?.p : O.agentWaiting)?.l ?? "a step"))
         }
         // A completed Codex turn can still have a command or delegated work running. CPU/children are the ground truth
-        // until they settle; parking the planet here made an actively working Codex look idle.
-        if !open { return (O.busy || O.command != nil || O.agents.contains { $0["running"] as? Bool == true } ? "busy" : "idle", nil) }
-        if !O.stepsKnown, O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 { return ("waiting", "approval: " + call.p.l) }
+        // until they settle; parking the planet here made an actively working Codex look idle. Codex's CPU only:
+        // Antigravity's screen redraws take some while it waits for the user, and its records tell when it works.
+        if !open { return ((O.tool == "Codex" && O.busy) || command != nil || O.agents.contains { $0["running"] as? Bool == true } ? "busy" : "idle", nil) }
+        if !O.stepsKnown, command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 { return ("waiting", "approval: " + call.p.l) }
         return ("busy", nil)
+    }
+
+    /// The command it has a shell run, when that's work. Where its records tell its turns (Codex, Antigravity), a shell
+    /// started before its last turn, or with none yet, is a server it keeps by it (an MCP server under `sh -c npx …`) and
+    /// would show it working for good. A turn counts from a few seconds after the tool's start: one it resumed began
+    /// earlier, and the servers it starts with would pass for that turn's commands.
+    private func otherCommand(_ O: OtherAI) -> String? {
+        guard let c = O.command else { return nil }
+        guard O.tool == "Codex" || O.tool == "Antigravity" else { return c }
+        return O.turnStart > 0 && O.commandStarted >= max(O.turnStart, O.firstTs + 5000) ? c : nil
     }
 
     // MARK: the other AI tools' work, counted as Claude's is
@@ -1121,6 +1140,7 @@ final class RadarEngine {
             switch (j["type"] as? String, p["type"] as? String) {
             case ("event_msg", "task_started"):
                 O.turnOpen = true
+                O.turnStart = ts
                 O.call = nil
                 O.turns += 1
             case ("event_msg", "task_complete"), ("event_msg", "turn_aborted"):
@@ -1332,6 +1352,7 @@ final class RadarEngine {
             O.waitsForUser = step == "WAITING"
             switch kind {
             case "USER_INPUT":
+                O.turnStart = ts
                 let asked = Self.agyRequest(j["content"])
                 O.prompt = clip(asked, 200)
                 otherText(O, "agy:\(id):\(idx):in", "prompt", asked, ts)
@@ -1835,7 +1856,7 @@ final class RadarEngine {
             if let ended = dismissed[O.id], ended == O.pid { continue }
             let live = O.endedAt == 0
             // What it runs: a shell of its own right now, else the tool call its log has it on.
-            let running = O.command.map { Pending(n: "Bash", c: "bash", l: $0, t: O.commandSince) } ?? O.call?.p
+            let running = otherCommand(O).map { Pending(n: "Bash", c: "bash", l: $0, t: O.commandSince) } ?? O.call?.p
             let (status, waiting) = otherStatus(O, now)
             // Its subagents end with it.
             let agents = live ? O.agents : O.agents.map { var a = $0; a["running"] = false; a["pending"] = [[String: Any]](); return a }

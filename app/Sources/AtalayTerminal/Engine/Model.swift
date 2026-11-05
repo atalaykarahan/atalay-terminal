@@ -75,6 +75,9 @@ final class OtherAI: Track {
     var hostTab: String?
     /// A shell it runs right now (any tool, from its child processes), and since when.
     var command: String?, commandSince = 0.0
+    /// When that command's shell started, and when its records last started a turn (Codex, Antigravity): a shell older
+    /// than the turn is a server it keeps (an MCP server), no work of that turn.
+    var commandStarted = 0.0, turnStart = 0.0
     /// What its own log tells (Codex's): the turn open or over (nil: no log), the tool call it waits on, the prompt, the
     /// context and the model.
     var log: String?, logOffset: UInt64 = 0, logChecked = 0.0

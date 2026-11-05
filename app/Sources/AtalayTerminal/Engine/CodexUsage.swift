@@ -8,7 +8,8 @@ enum CodexUsage {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["app-server", "--stdio"]
+        // No --stdio: stdio is the default, and older Codex (0.104) refuses the flag and exits.
+        process.arguments = ["app-server"]
         process.standardInput = Pipe()
         process.standardOutput = Pipe()
         process.standardError = FileHandle.nullDevice
