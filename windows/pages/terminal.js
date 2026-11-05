@@ -1,7 +1,7 @@
 'use strict';
-// A chat or terminal window (main.js opens it, terminals.js runs its shell): xterm.js on the theme's palette, the way
-// VS Code draws its terminal; typing and resizing go to the app, its output comes back. The strip on top shows the
-// session's name and status from the dashboard's data.
+// A chat or terminal, as a panel inside the dashboard window (main.js shows it, terminals.js runs its shell): xterm.js
+// on the theme's palette, the way VS Code draws its terminal; typing and resizing go to the app, its output comes back.
+// The strip on top shows the session's name and status from the dashboard's data.
 (() => {
   const css = () => getComputedStyle(document.documentElement);
   const token = (k, d) => css().getPropertyValue(k).trim() || d;
@@ -88,6 +88,37 @@
     atl.send('term:dashboard');
   };
   document.getElementById('end').onclick = () => atl.send('term:end');
+
+  // The panel comes on and goes off as the dashboard's panels do (terminal.css): the app calls on() when it shows it
+  // and off() before it hides it. A panel comes on by itself the first time.
+  const root = document.documentElement;
+  let onAt = 0, crtTimer = 0;
+  const crt = (cls, ms) => {
+    clearTimeout(crtTimer);
+    root.classList.remove('crt-on', 'crt-off');
+    void root.offsetWidth; // the animation starts again
+    root.classList.add(cls);
+    // Off stays off (its last frame) until the panel comes on again.
+    if (cls === 'crt-on') {
+      crtTimer = setTimeout(() => {
+        root.classList.remove(cls);
+        refit();
+      }, ms);
+    }
+  };
+  window.__panel = {
+    on() {
+      if (Date.now() - onAt < 200) return;
+      onAt = Date.now();
+      crt('crt-on', 720);
+      term.focus();
+    },
+    off() {
+      onAt = 0;
+      crt('crt-off');
+    },
+  };
+  window.__panel.on();
   term.focus();
   atl.send('term:ready', size());
 })();

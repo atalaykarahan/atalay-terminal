@@ -73,7 +73,7 @@ const settings = (() => {
 // each page is as wide as its part of the window).
 let dash = null, dashView = null, chatsView = null;
 const boots = new Map(); // webContents id -> what its preload asks for before the page loads
-const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt, steppedAside }
+const chats = new Map(); // terminal id -> { view, sessionId, cwd, claude, title, startedAt } (view: its panel, termPanel)
 const panels = { notices: null, chats: new Map(), showing: new Set() }; // the messages panels: the corner's notices, friends' chats
 
 // The AI tools in the theme's colours (Settings · INTERFACE): Claude Code, Codex and Antigravity on their themes that use
@@ -118,13 +118,13 @@ const savers = createSavers({
 
 const terminals = createTerminals({
   extraPath: savers.binDir,
-  onData: (id, data) => send(chats.get(id)?.win, 'term:data', data),
+  onData: (id, data) => send(chats.get(id)?.view, 'term:data', data),
   onExit(id) {
     const c = chats.get(id);
     if (c) {
-      send(c.win, 'term:exit');
-      // A plain terminal closes with its shell; a chat's window stays to show how it ended until it's closed.
-      if (!c.claude && c.win && !c.win.isDestroyed()) c.win.destroy();
+      send(c.view, 'term:exit');
+      // A plain terminal closes with its shell; a chat's panel stays to show how it ended until it's closed.
+      if (!c.claude) dropView(id, c);
       chats.delete(id);
       toDash(`terminalGone(${JSON.stringify(id)})`);
       pushWinOpen();
@@ -183,7 +183,7 @@ const engine = createEngine({
   onState(json) {
     toDash(`state(${json})`);
     matchChats();
-    for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
+    for (const [id, c] of chats) send(c.view, 'term:info', chatInfo(id, c));
     badge();
     updateWaits();
     pushWinOpen();
@@ -416,6 +416,13 @@ function createDashboard() {
   win.on('closed', () => {
     // A window's views don't go with it: their pages close here.
     for (const v of views) if (!v.webContents.isDestroyed()) v.webContents.close();
+    // The terminals' panels too: what runs in them goes on, and a click brings a panel back (attached again).
+    for (const c of chats.values()) {
+      if (c.view && !c.view.webContents.isDestroyed()) c.view.webContents.close();
+      c.view = null;
+    }
+    termPanel.active = null;
+    termPanel.covered = false;
     if (dash === win) dash = dashView = chatsView = null;
     clearInterval(chatsList.timer);
     chatsList.timer = null;
@@ -442,6 +449,7 @@ function layout() {
   const side = Math.round(chatsList.slide != null ? chatsList.slide : chatsList.shown ? chatsList.width : 0);
   chatsView.setBounds({ x: 0, y: 0, width: side, height: h });
   dashView.setBounds({ x: side, y: 0, width: Math.max(0, w - side), height: h });
+  layoutTerms();
 }
 
 // CSS's cubic-bezier(0.65, 0, 0.35, 1), the Mac's slide: progress (0…1) -> how far along.
@@ -483,14 +491,14 @@ function toggleChats() {
   }, 16);
 }
 
-// Tells the dashboard which sessions have a visible chat window (cards light up), as on the Mac.
+// Tells the dashboard which sessions show in the terminals' panel (cards light up), as on the Mac.
 let winOpenJSON = '';
 function pushWinOpen(force) {
   if (!dashView) return;
   const map = {};
-  for (const c of chats.values()) {
-    if (c.sessionId && (c.steppedAside || (c.win && !c.win.isDestroyed() && c.win.isVisible()))) map[c.sessionId] = true;
-  }
+  // The chat showing in the terminals' panel (a menu over it included).
+  const shown = termPanel.active && chats.get(termPanel.active);
+  if (shown && shown.sessionId && shown.view) map[shown.sessionId] = true;
   const json = JSON.stringify(map);
   if (json === winOpenJSON && !force) return;
   winOpenJSON = json;
@@ -659,14 +667,29 @@ function handleRadar(msg) {
     case 'log':
       console.log('dashboard page:', msg.msg);
       return true;
+    case 'stage':
+      if ([msg.x, msg.y, msg.w, msg.h].every(Number.isFinite)) termPanel.stage = { x: msg.x, y: msg.y, w: msg.w, h: msg.h };
+      layoutTerms();
+      tellTermPanel();
+      return true;
+    case 'hideTerminal':
+      return hideChat();
+    case 'showTerminal': {
+      // The activity bar's terminal: the one shown last, else the newest still running, else a new one.
+      const ids = [...chats.keys()].filter((k) => terminals.has(k) || chats.get(k).view);
+      const id = msg.id && chats.has(msg.id) ? msg.id : ids.includes(termPanel.last) ? termPanel.last : ids[ids.length - 1];
+      if (id) return showChat(id);
+      return showOverlay('Overlay.newTerminal()');
+    }
     default:
       return true;
   }
 }
 
 // ---------- terminal and chat windows ----------
-// Terminal and friend-chat windows ride above the dashboard as its children, so clicking the dashboard never buries
-// them, while going behind other apps with it; when a menu opens on the dashboard they step out of its way.
+// Friends' chat windows ride above the dashboard as its children, so clicking the dashboard never buries them, while
+// going behind other apps with it; when a menu opens on the dashboard they step out of its way, and so does the
+// terminals' panel (coverChat).
 let modalOpen = false;
 function pinToDash(win) {
   if (PROBE || !win || win.isDestroyed() || win.isMinimized()) return;
@@ -675,23 +698,11 @@ function pinToDash(win) {
 }
 function pinAllToDash() {
   if (modalOpen || !dash || dash.isDestroyed() || !dash.isVisible() || dash.isMinimized()) return;
-  for (const c of chats.values()) if (!c.steppedAside && c.win && !c.win.isDestroyed() && c.win.isVisible() && !c.win.isMinimized()) pinToDash(c.win);
   for (const w of panels.chats.values()) if (!w.steppedAside && !w.isDestroyed() && w.isVisible()) pinToDash(w);
 }
 function stepAside(open) {
   modalOpen = open;
-  for (const c of chats.values()) {
-    if (!c.win || c.win.isDestroyed()) continue;
-    if (open && c.win.isVisible() && !c.win.isMinimized() && !c.steppedAside) {
-      c.steppedAside = true;
-      c.win.setParentWindow(null);
-      c.win.hide();
-    } else if (!open && c.steppedAside) {
-      c.steppedAside = false;
-      pinToDash(c.win);
-      c.win.showInactive();
-    }
-  }
+  coverChat(open);
   for (const w of panels.chats.values()) {
     if (w.isDestroyed()) continue;
     if (open && w.isVisible() && !w.steppedAside) {
@@ -749,80 +760,151 @@ function matchChats() {
 const samePath = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 
 /**
- * A chat or terminal window. A new one starts its shell (Claude in it with `claudeArgs`); one given the `id` of a session
- * that outlived the app attaches to it instead (`claude`: whether it was started as a chat), hidden unless `show`.
+ * A chat or terminal. A new one starts its shell (Claude in it with `claudeArgs`); one given the `id` of a session that
+ * outlived the app attaches to it instead (`claude`: whether it was started as a chat), out of sight unless `show`. It
+ * shows as a panel inside the dashboard window (termPanel), not in a window of its own; its panel is made the first
+ * time it's shown and then kept, hidden, while another terminal or the dashboard shows.
  */
-let chatCascade = 0;
 function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!claudeArgs, sessionId, title, show = true }) {
-  const home = chatHome(), area = home.workArea;
-  const cascade = (chatCascade++ % 6) * 28;
-  const place = wholeOnDisplay({ x: area.x + 120 + cascade, y: area.y + 80 + cascade, width: 960, height: 640 }, home);
-  const win = new BrowserWindow({
-    ...place, minWidth: 560, minHeight: 360,
-    title: title || "Atalay's Terminal", backgroundColor: themes.color('--code-bg'), show: false, autoHideMenuBar: true,
-    ...(PROBE ? { x: -32000, y: -32000, frame: false } : {}),
-    webPreferences: webPrefs(),
-  });
-  bootFor(win.webContents);
-  const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
+  const c = { view: null, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now() };
   chats.set(id, c);
-  win.loadFile(path.join(__dirname, '..', 'pages', 'terminal.html'));
-  win.once('ready-to-show', () => {
-    if (!show) return;
-    if (PROBE) return win.showInactive();
-    if (modalOpen) {
-      c.steppedAside = true;
-      return void pushWinOpen();
-    }
-    pinToDash(win);
-    win.show();
-    win.focus();
-    pushWinOpen();
-  });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  // A window pinned above the dashboard is its child, and Windows minimizes an owned window to a bar on the desktop
-  // rather than the taskbar: it lets go of the dashboard on its way to the taskbar and pins again when it comes back,
-  // as on the Mac.
-  if (process.platform === 'win32') {
-    win.hookWindowMessage(0x0112, (wParam) => {
-      if ((wParam.readUInt32LE(0) & 0xfff0) === 0xf020 && win.getParentWindow()) win.setParentWindow(null);
-    });
-  }
-  win.on('minimize', () => win.getParentWindow() && win.setParentWindow(null));
-  win.on('restore', () => !c.steppedAside && pinToDash(win));
+  // A new terminal starts its shell once its panel is there (the panel's size is the shell's); one that outlived the
+  // app waits in the session host until it's clicked, and then gets the end of its output.
+  if (show) showChat(id);
+  else if (!terminals.has(id) && dash) makeView(id, c);
   // Once its first seconds are over a chat says what it is even if nothing else changes (chatInfo).
-  if (claude) setTimeout(() => chats.get(id) === c && send(win, 'term:info', chatInfo(id, c)), 15_500);
-  // Closing a window (Ctrl+W, its ×) only hides it, as on the Mac: what runs in it goes on, Claude as a session on the
-  // orbit and a terminal as the same car it was (no blast), and a click there brings the window back. End Session ends
-  // it. Quitting closes them all: their sessions were seen to just before (the host's go on).
-  win.on('close', (e) => {
-    if (quitting || !terminals.has(id)) return;
-    e.preventDefault();
-    c.steppedAside = false;
-    win.setParentWindow(null);
-    win.hide();
-    pushWinOpen();
-  });
-  win.on('closed', () => {
-    if (chats.get(id)?.win === win) {
-      chats.delete(id);
-      pushWinOpen();
-    }
-  });
+  if (claude) setTimeout(() => chats.get(id) === c && send(c.view, 'term:info', chatInfo(id, c)), 15_500);
   return id;
+}
+
+// ---------- the terminals' panel, inside the dashboard window ----------
+// One terminal shows at a time, over the dashboard's middle (where the activity bar's views show; the page says where:
+// `stage`), in the dashboard's panel look, and it comes on and goes off as the app's other panels do (an old TV's
+// power on and off, pages/terminal.css). Each is a view of its own above the page, with a clear background, so the
+// dashboard shows around it while it animates. A menu or popup of the page (`modal`) would be under it: the panel
+// steps aside while one is open.
+const termPanel = { active: null, last: null, stage: null, covered: false, hiding: new Map() };
+
+function stageBounds() {
+  if (!dash || dash.isDestroyed()) return null;
+  const [w, h] = dash.getContentSize();
+  const side = Math.round(chatsList.slide != null ? chatsList.slide : chatsList.shown ? chatsList.width : 0);
+  const z = dashView && !dashView.webContents.isDestroyed() ? dashView.webContents.getZoomFactor() || 1 : 1;
+  const st = termPanel.stage;
+  // Until the page has said, about where it is: right of the activity bar, under the top bar, over the ticker.
+  const r = st ? { x: st.x * z, y: st.y * z, width: st.w * z, height: st.h * z } : { x: 64, y: 64, width: w - side - 72, height: h - 100 };
+  const x = Math.round(r.x), y = Math.round(r.y);
+  return {
+    x: side + x, y,
+    width: Math.max(200, Math.min(Math.round(r.width), w - side - x)),
+    height: Math.max(150, Math.min(Math.round(r.height), h - y)),
+  };
+}
+
+function layoutTerms() {
+  const b = stageBounds();
+  if (!b) return;
+  for (const c of chats.values()) if (c.view && !c.view.webContents.isDestroyed()) c.view.setBounds(b);
+}
+
+function makeView(id, c) {
+  const view = new WebContentsView({ webPreferences: webPrefs() });
+  view.setBackgroundColor('#00000000');
+  view.setVisible(false);
+  bootFor(view.webContents);
+  view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  view.webContents.on('render-process-gone', () => setTimeout(() => !view.webContents.isDestroyed() && view.webContents.reload(), 500));
+  dash.contentView.addChildView(view);
+  const b = stageBounds();
+  if (b) view.setBounds(b);
+  view.webContents.loadFile(path.join(__dirname, '..', 'pages', 'terminal.html'));
+  c.view = view;
+  return view;
+}
+
+function dropView(id, c) {
+  if (!c || !c.view) return;
+  const view = c.view;
+  c.view = null;
+  if (termPanel.active === id) {
+    termPanel.active = null;
+    termPanel.covered = false;
+    tellTermPanel();
+    pushWinOpen();
+    if (dashView && !dashView.webContents.isDestroyed()) dashView.webContents.focus();
+  }
+  clearTimeout(termPanel.hiding.get(id));
+  termPanel.hiding.delete(id);
+  if (dash && !dash.isDestroyed()) {
+    try {
+      dash.contentView.removeChildView(view);
+    } catch {}
+  }
+  if (!view.webContents.isDestroyed()) view.webContents.close();
+}
+
+// The dashboard's page knows which terminal shows (its activity bar marks it).
+function tellTermPanel() {
+  run(dashView, `window.TermPanel && TermPanel.shown(${JSON.stringify(termPanel.active)})`);
 }
 
 function showChat(id) {
   const c = chats.get(id);
-  if (!c || c.win.isDestroyed()) return false;
-  c.steppedAside = false;
-  if (!c.win.isVisible() && !PROBE) c.win.setBounds(wholeOnDisplay(c.win.getBounds(), chatHome()));
-  if (c.win.isMinimized()) c.win.restore();
-  pinToDash(c.win);
-  c.win.show();
-  c.win.focus();
+  if (!c) return false;
+  showDashboard();
+  if (!dash) return false;
+  if (!c.view || c.view.webContents.isDestroyed()) makeView(id, c);
+  // Another terminal showing goes at once: the new one comes on in its place.
+  const was = termPanel.active;
+  if (was && was !== id) {
+    const o = chats.get(was);
+    if (o && o.view) o.view.setVisible(false);
+  }
+  const wasHiding = termPanel.hiding.has(id);
+  clearTimeout(termPanel.hiding.get(id));
+  termPanel.hiding.delete(id);
+  termPanel.active = termPanel.last = id;
+  // A menu open on the dashboard keeps it out of the way until the menu closes (stepAside), as a window waited.
+  termPanel.covered = modalOpen;
+  // On top of the other views (the chats list, the dashboard).
+  dash.contentView.removeChildView(c.view);
+  dash.contentView.addChildView(c.view);
+  layoutTerms();
+  c.view.setVisible(!modalOpen);
+  if (was !== id || wasHiding) run(c.view, 'window.__panel && __panel.on()');
+  if (!modalOpen) c.view.webContents.focus();
+  tellTermPanel();
   pushWinOpen();
   return true;
+}
+
+/** The terminal showing goes off (what runs in it goes on), and the dashboard has the keys again. */
+function hideChat() {
+  const id = termPanel.active;
+  if (!id) return false;
+  termPanel.active = null;
+  termPanel.covered = false;
+  tellTermPanel();
+  pushWinOpen();
+  if (dashView && !dashView.webContents.isDestroyed()) dashView.webContents.focus();
+  const c = chats.get(id);
+  if (!c || !c.view) return true;
+  const view = c.view;
+  run(view, 'window.__panel && __panel.off()');
+  termPanel.hiding.set(id, setTimeout(() => {
+    termPanel.hiding.delete(id);
+    if (termPanel.active !== id && c.view === view && !view.webContents.isDestroyed()) view.setVisible(false);
+  }, 560));
+  return true;
+}
+
+// A menu or popup of the dashboard's page opened (or closed again): the panel steps aside for it (stepAside).
+function coverChat(open) {
+  const c = termPanel.active && chats.get(termPanel.active);
+  if (!c || !c.view || termPanel.covered === !!open) return;
+  termPanel.covered = !!open;
+  c.view.setVisible(!open);
+  if (!open) c.view.webContents.focus();
 }
 
 /** The window of a process running outside the app, to the front: its own or the first of its parents' that has one. */
@@ -905,7 +987,7 @@ function endTerminal(id) {
   }
   toDash(`terminalGone(${JSON.stringify(id)})`);
   if (c) {
-    if (c.win && !c.win.isDestroyed()) c.win.destroy();
+    dropView(id, c);
     chats.delete(id);
     pushWinOpen();
     pushChats();
@@ -988,7 +1070,7 @@ function commandLabel(cmd) {
 }
 
 // The terminal pages' lines to their shells.
-const chatOf = (e) => [...chats.entries()].find(([, c]) => c.win && !c.win.isDestroyed() && c.win.webContents === e.sender);
+const chatOf = (e) => [...chats.entries()].find(([, c]) => c.view && !c.view.webContents.isDestroyed() && c.view.webContents === e.sender);
 ipcMain.on('term:ready', (e, { cols, rows }) => {
   const found = chatOf(e);
   if (!found) return;
@@ -999,9 +1081,9 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
   else {
     terminals
       .spawn({ id, cwd: c.cwd, claudeArgs: c.claudeArgs, cols, rows, title: c.title })
-      .catch((err) => send(c.win, 'term:data', `\r\n\x1b[31m${err.message}\x1b[0m\r\n`));
+      .catch((err) => send(c.view, 'term:data', `\r\n\x1b[31m${err.message}\x1b[0m\r\n`));
   }
-  send(c.win, 'term:info', chatInfo(id, c));
+  send(c.view, 'term:info', chatInfo(id, c));
 });
 ipcMain.on('term:input', (e, data) => {
   const found = chatOf(e);
@@ -1018,7 +1100,7 @@ ipcMain.on('term:end', (e) => {
 ipcMain.on('term:copy', (e, text) => {
   if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);
 });
-ipcMain.on('term:dashboard', () => showDashboard());
+ipcMain.on('term:dashboard', () => hideChat());
 ipcMain.on('term:open', (_e, uri) => {
   if (/^https?:\/\//.test(uri)) shell.openExternal(uri);
 });
@@ -1601,7 +1683,7 @@ ipcMain.handle('atl:post', async (e, name, body) => {
 
 // ---------- menu and keys ----------
 function buildMenu() {
-  const focusedChat = () => [...chats.entries()].find(([, c]) => c.win && !c.win.isDestroyed() && c.win.isFocused());
+  const focusedChat = () => [...chats.entries()].find(([, c]) => c.view && !c.view.webContents.isDestroyed() && c.view.webContents.isFocused());
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: 'File',
@@ -1615,6 +1697,8 @@ function buildMenu() {
         {
           label: 'Close Window', accelerator: 'CmdOrCtrl+W',
           click: () => {
+            // A terminal's panel goes off (what runs in it goes on), as its window used to close.
+            if (focusedChat()) return hideChat();
             const w = BrowserWindow.getFocusedWindow();
             if (!w || w === dash || w === panels.notices) return;
             if (w === over) return hideOverlay();
@@ -1751,7 +1835,7 @@ async function probe() {
     await wait(3000);
     terminals.write(id, process.platform === 'win32' ? 'echo hello from the probe\r' : 'echo hello from the probe\r');
     await wait(2000);
-    await shot(chats.get(id)?.win, 'terminal');
+    await shot(chats.get(id)?.view, 'terminal');
   }
   quitting = true;
   app.quit();

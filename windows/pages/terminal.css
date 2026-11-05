@@ -1,14 +1,51 @@
-/* A chat or terminal window: a strip with its name and status over the terminal, in the theme's colours (the app
-   inserts the theme's tokens, Themes). */
-html, body { height: 100%; margin: 0; }
-body { display: flex; flex-direction: column; overflow: hidden; background: var(--code-bg, #251200); color: var(--txt, #f5ebe0); font: 12px "Cascadia Mono", Consolas, monospace; }
-#hud { display: flex; align-items: center; gap: 10px; height: 32px; flex: none; padding: 0 10px; border-bottom: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.32); background: linear-gradient(rgba(var(--accent-rgb, 248, 128, 8), 0.1), transparent); }
-#dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st, var(--dim, #8f7a66)); box-shadow: 0 0 6px var(--st, transparent); }
+/* A chat or terminal, as a panel inside the dashboard window (main.js's termPanel): the dashboard's panel look (its
+   line, the accent's corner marks, the tag on its strip) around a strip with its name and status over the terminal, in
+   the theme's colours (the app inserts the theme's tokens, Themes). The page itself is clear, so the dashboard shows
+   around the panel while it comes on and goes off as the app's other panels do: an old TV's power on and off. */
+html { height: 100%; margin: 0; overflow: hidden; background: transparent; }
+body {
+  position: relative; display: flex; flex-direction: column; box-sizing: border-box; height: 100%; margin: 0; overflow: hidden;
+  border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.32);
+  background: var(--code-bg, #251200); color: var(--txt, #f5ebe0); font: 12px "Cascadia Mono", Consolas, monospace;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 26px rgba(var(--accent-rgb, 248, 128, 8), 0.08) inset;
+  transform-origin: 50% 50%;
+}
+/* the dashboard's panels' corner marks (style.css .panel) */
+html::before, html::after { content: ""; position: fixed; z-index: 20; width: 8px; height: 8px; border: 0 solid var(--accent, #f88008); pointer-events: none; }
+html::before { top: 0; left: 0; border-width: 2px 0 0 2px; }
+html::after { right: 0; bottom: 0; border-width: 0 2px 2px 0; }
+html.crt-on::before, html.crt-on::after, html.crt-off::before, html.crt-off::after { opacity: 0; }
+
+#hud { position: relative; display: flex; align-items: center; gap: 10px; height: 30px; flex: none; padding: 0 8px 0 0; overflow: hidden; border-bottom: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.2); background: linear-gradient(rgba(var(--accent-rgb, 248, 128, 8), 0.1), transparent); }
+/* the dashboard's panel header sweep */
+#hud::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(var(--accent-soft-rgb, 255, 176, 87), 0.14), transparent); transform: translateX(-100%); animation: hud-sweep 7s linear infinite; pointer-events: none; }
+@keyframes hud-sweep { to { transform: translateX(100%); } }
+#hud .tag { display: flex; align-items: center; align-self: stretch; padding: 0 9px; background: var(--accent, #f88008); color: var(--ink, #1a0d00); font-weight: 700; letter-spacing: 0.04em; }
+#dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--st, var(--dim, #8f7a66)); box-shadow: 0 0 6px var(--st, transparent); }
 #title { overflow: hidden; color: var(--hi, #fff8f0); white-space: nowrap; text-overflow: ellipsis; }
 #status { color: var(--st, var(--dim, #8f7a66)); font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
 #where { flex: 1; overflow: hidden; color: var(--dim, #8f7a66); white-space: nowrap; text-overflow: ellipsis; }
-#hud button { height: 22px; padding: 0 10px; border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.45); border-radius: 4px; background: transparent; color: var(--accent-soft, #ffb057); font: inherit; cursor: pointer; }
+#hud button { position: relative; z-index: 1; height: 21px; padding: 0 10px; border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.45); border-radius: 4px; background: transparent; color: var(--accent-soft, #ffb057); font: inherit; cursor: pointer; }
 #hud button:hover { border-color: var(--accent, #f88008); color: var(--hi, #fff8f0); }
 #hud #end:hover { border-color: var(--red, #ff4d4d); color: var(--red, #ff4d4d); }
 #term { flex: 1; min-height: 0; padding: 6px 4px 4px 8px; }
 .xterm .xterm-viewport { scrollbar-color: rgba(var(--accent-rgb, 248, 128, 8), 0.35) transparent; }
+
+/* ---- old-TV power on / off, as the dashboard's panels (web/chat.css) ---- */
+html.crt-on body { animation: crt-on 0.7s cubic-bezier(0.2, 0.75, 0.25, 1) both; }
+html.crt-off body { animation: crt-off 0.55s cubic-bezier(0.55, 0, 0.85, 0.4) both; }
+html.crt-on body, html.crt-off body { box-shadow: 0 0 30px 4px rgba(var(--accent-soft-rgb, 255, 176, 87), 0.85), 0 0 80px 18px rgba(var(--accent-rgb, 248, 128, 8), 0.4); }
+@keyframes crt-on {
+  0% { transform: scale(0.003, 0.003); filter: brightness(10) saturate(0); opacity: 0.4; }
+  10% { transform: scale(0.03, 0.003); filter: brightness(10) saturate(0); opacity: 1; }
+  36% { transform: scale(1, 0.006); filter: brightness(7) saturate(0.2); }
+  62% { transform: scale(1, 1.035); filter: brightness(2.4) saturate(1.3); }
+  78% { transform: scale(1, 0.988); filter: brightness(1.35) saturate(1.1); }
+  100% { transform: scale(1, 1); filter: none; opacity: 1; }
+}
+@keyframes crt-off {
+  0% { transform: scale(1, 1); filter: none; opacity: 1; }
+  38% { transform: scale(1, 0.006); filter: brightness(6) saturate(0.3); }
+  70% { transform: scale(0.004, 0.004); filter: brightness(10) saturate(0); opacity: 1; }
+  100% { transform: scale(0, 0.002); filter: brightness(10); opacity: 0; }
+}

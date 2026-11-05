@@ -34,7 +34,7 @@ window.GitView = (() => {
     tag: 0xea66, 'source-control': 0xea68, files: 0xeaf0, 'git-fetch': 0xecb2, 'collapse-all': 0xeac5, target: 0xebf8,
     bell: 0xeaa2, error: 0xea87, warning: 0xea6c, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, 'git-commit': 0xeafc,
     whitespace: 0xeb7d, map: 0xec05, remote: 0xeb3a, 'split-horizontal': 0xeb56, 'diff-single': 0xec22,
-    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e, dashboard: 0xeacd,
+    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e, dashboard: 0xeacd, terminal: 0xea85,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
   // The command key as this platform names it (the Windows app sets __platform), and how its paths are written.
@@ -97,6 +97,7 @@ window.GitView = (() => {
   bar.id = 'activity';
   bar.innerHTML =
     `<a class="vs-ab on" data-view="dash" title="Dashboard">${ci('files')}</a>` +
+    (window.__platform === 'win32' ? `<a class="vs-ab" data-view="terminal" title="Terminal: the last one open, over the dashboard (Ctrl+W closes it)">${ci('terminal')}</a>` : '') +
     `<a class="vs-ab" data-view="git" title="Source Control (${window.__platform === 'win32' ? 'Ctrl+Shift+G' : '⌃⇧G'})">${ci('source-control')}<b class="vs-badge" hidden></b></a>` +
     `<a class="vs-ab" data-view="friends" title="Friends and messages">${ci('organization')}<b class="vs-badge" hidden></b></a>` +
     `<a class="vs-ab" data-view="board" title="Leaderboard">${ci('trophy')}</a>` +
@@ -1110,6 +1111,9 @@ window.GitView = (() => {
   function switchTo(v) {
     if (v === 'feedback') return window.Cloud?.openFeedback();
     if (v === 'limits') return window.Limits?.toggle(bar.querySelector('[data-view=limits]'));
+    // The terminals' panel (Windows, termpanel.js): its button shows or closes it; any other view closes it.
+    if (v === 'terminal') return window.TermPanel?.toggle();
+    window.TermPanel?.hide();
     setOpen(v === 'git');
     if (['friends', 'board', 'themes', 'notifications'].includes(v)) {
       window.Cloud?.showView(v);

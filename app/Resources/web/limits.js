@@ -181,6 +181,8 @@ window.Limits = (() => {
       document.body.appendChild(root);
     }
     anchor?.classList.add('lim-open');
+    // The terminals' panel (Windows) would cover it: it steps aside while this is open.
+    window.TermPanel?.modal(true);
     paint();
     place();
     requestAnimationFrame(place);
@@ -199,6 +201,7 @@ window.Limits = (() => {
     removeEventListener('keydown', onKey, true);
     removeEventListener('resize', place);
     anchor?.classList.remove('lim-open');
+    if (root) window.TermPanel?.modal(false);
     root?.remove();
     root = null;
   }
