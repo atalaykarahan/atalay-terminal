@@ -344,6 +344,9 @@ function createRunaways({ onChange, onRead }) {
     ais() {
       const found = new Map();
       for (const p of table.values()) {
+        // `codex app-server` serves a program, no one at a keyboard: the engine's own reader of Codex's limits, under a
+        // cmd.exe that would pass for a terminal, flew as a Codex planet (and stayed two minutes as an ended one).
+        if (/\bapp-server\b/.test(p.cmd || '')) continue;
         const tool = aiTool(p);
         if (tool) found.set(p.pid, tool);
       }
@@ -354,7 +357,8 @@ function createRunaways({ onChange, onRead }) {
         const chain = [];
         for (let q = !p.orphan && table.get(p.ppid); q && chain.length < 12; q = !q.orphan && table.get(q.ppid)) chain.push(q);
         if (chain.some((q) => /^claude$/i.test(q.name)) || !chain.some((q) => TERMINAL_RE.test(q.name))) continue;
-        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: busy([pid]), chain: chain.map((q) => q.pid), command: shellCommand(pid) });
+        const shell = shellCommand(pid);
+        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: busy([pid]), chain: chain.map((q) => q.pid), command: shell && shell.line, commandStarted: shell && shell.started });
       }
       return out;
     },
@@ -365,7 +369,8 @@ function createRunaways({ onChange, onRead }) {
   };
 
   // The command a tool has a shell run right now (`powershell -Command "npm test"`, `cmd /c …`, `bash -c …`), from the
-  // processes under it.
+  // processes under it: the one started last, and when it started (the engine tells a turn's command from a server the
+  // tool keeps by it).
   function shellCommand(pid) {
     let level = kids.get(pid) || [], found = null;
     for (let depth = 0; depth < 3 && level.length; depth++) {
@@ -373,11 +378,11 @@ function createRunaways({ onChange, onRead }) {
         const p = table.get(c);
         if (!p || !/^(powershell|pwsh|cmd|bash|sh|zsh)$/i.test(p.name)) continue;
         const m = /\s(?:-Command|-c|-lc|\/c)\s+(.+)$/i.exec(p.cmd || '');
-        if (m) found = m[1].replace(/^"(.*)"$/, '$1');
+        if (m && (!found || p.started >= found.started)) found = { line: m[1].replace(/^"(.*)"$/, '$1').slice(0, 120), started: p.started };
       }
       level = level.flatMap((c) => kids.get(c) || []);
     }
-    return found ? found.slice(0, 120) : null;
+    return found;
   }
 
   function busy(roots) {

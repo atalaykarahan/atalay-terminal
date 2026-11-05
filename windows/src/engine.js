@@ -1455,14 +1455,16 @@ class RadarEngine {
   }
 
   // Read Codex's current account snapshot through the same local app-server protocol used by its own clients.
-  // The subprocess is isolated from the running chat and uses the user's existing Codex login.
+  // The subprocess is isolated from the running chat and uses the user's existing Codex login. Only while a Codex runs:
+  // its limits show for no other session, and here each read starts cmd.exe, Node and Codex itself, every minute, on a PC
+  // that may not even have Codex. No --stdio: stdio is the default, and older Codex (0.104) refuses the flag and exits.
   refreshCodexUsage() {
-    if (this.codexUsagePending || this.stopped) return;
+    if (this.codexUsagePending || this.stopped || !this.codexRunning()) return;
     this.codexUsagePending = true;
-    const child = spawn('codex', ['app-server', '--stdio'], {
+    const child = spawn('codex app-server', [], {
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
-      shell: WIN,
+      shell: true,
       env: process.env,
     });
     // Without codex installed the shell exits at once and a write to it fails later (EPIPE); unheard, that error
@@ -1524,6 +1526,11 @@ class RadarEngine {
     const timeout = setTimeout(() => finish(null), 20_000);
     if (!send({ method: 'initialize', id: 1,
       params: { clientInfo: { name: 'atalay-terminal', version: '0.17.0' } } })) finish(null);
+  }
+
+  codexRunning() {
+    for (const O of this.others.values()) if (O.tool === 'Codex' && O.endedAt === 0) return true;
+    return false;
   }
 
   every(seconds, fn) {
@@ -2417,6 +2424,7 @@ class RadarEngine {
         O.commandSince = now;
         this.stateDirty = true;
       }
+      O.commandStarted = a.commandStarted || 0;
       if (O.tool === 'Codex' && a.cwd) this.readCodexLog(O, a.cwd, a.started, now);
       if (O.tool === 'Antigravity' && a.cwd) this.readAntigravity(O, a.cwd, now);
       if (a.pct >= 1) O.busyUntil = now + 10_000;
@@ -2447,6 +2455,10 @@ class RadarEngine {
         this.stateDirty = true;
       }
     }
+    // A Codex just started has its limits at once, not at the next minute's read.
+    const codex = this.codexRunning();
+    if (codex && !this.codexWasRunning) this.refreshCodexUsage();
+    this.codexWasRunning = codex;
     this.matchTabs();
     this.publishState();
   }
@@ -2461,19 +2473,32 @@ class RadarEngine {
       const p = O.waitsForUser ? O.call && O.call.p : O.agentWaiting;
       return { status: 'waiting', waiting: `approval: ${p ? p.l : 'a step'}` };
     }
+    const command = this.otherCommand(O);
     // A rollout can mark its turn complete while a child command or delegated task is still working. Keep its planet
-    // orbiting until process activity settles instead of parking it as the user's turn.
-    if (O.turnOpen === false) return { status: O.busy || O.command || (O.agents || []).some((a) => a.running) ? 'busy' : 'idle', waiting: null };
+    // orbiting until process activity settles instead of parking it as the user's turn. Codex's CPU only: Antigravity's
+    // screen redraws at 1-8% while it waits for the user, and its records tell when it works.
+    if (O.turnOpen === false) return { status: (O.tool === 'Codex' && O.busy) || command || (O.agents || []).some((a) => a.running) ? 'busy' : 'idle', waiting: null };
     if (O.turnOpen === true) {
-      if (!O.stepsKnown && !O.command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
+      if (!O.stepsKnown && !command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
       return { status: 'busy', waiting: null };
     }
-    return { status: O.busy || O.command ? 'busy' : 'idle', waiting: null };
+    return { status: O.busy || command ? 'busy' : 'idle', waiting: null };
+  }
+
+  // The command it has a shell run, when that's work. Where its records tell its turns (Codex, Antigravity), a shell
+  // started before its last turn, or with none yet, is a server it keeps by it (an MCP server under `cmd /c npx …`), and
+  // would show it working for good. A turn counts from a few seconds after the tool's start: one it resumed began earlier,
+  // and the servers it starts with would pass for that turn's commands.
+  otherCommand(O) {
+    if (!O.command) return null;
+    if (O.tool !== 'Codex' && O.tool !== 'Antigravity') return O.command;
+    return O.turnStart && O.commandStarted >= Math.max(O.turnStart, O.firstTs + 5000) ? O.command : null;
   }
 
   // What it runs: a shell of its own right now, else the tool call its log has it on.
   otherRunning(O) {
-    return O.command ? { n: 'Bash', c: 'bash', l: O.command, t: O.commandSince || Date.now() } : O.call ? O.call.p : null;
+    const command = this.otherCommand(O);
+    return command ? { n: 'Bash', c: 'bash', l: command, t: O.commandSince || Date.now() } : O.call ? O.call.p : null;
   }
 
   // ----- the other AI tools' work, counted as Claude's is -----
@@ -2722,6 +2747,7 @@ class RadarEngine {
       const idx = Number(j.step_index) || 0;
       O.waitsForUser = step === 'WAITING';
       if (j.type === 'USER_INPUT') {
+        O.turnStart = ts;
         O.prompt = clip(agyRequest(j.content), 200);
         this.otherText(O, `agy:${id}:${idx}:in`, 'prompt', agyRequest(j.content), ts);
         O.call = null;
@@ -2872,6 +2898,7 @@ class RadarEngine {
       if (j.type === 'event_msg') {
         if (p.type === 'task_started') {
           O.turnOpen = true;
+          O.turnStart = ts;
           O.call = null;
           O.turns = (O.turns || 0) + 1;
         } else if (p.type === 'task_complete' || p.type === 'turn_aborted') {
