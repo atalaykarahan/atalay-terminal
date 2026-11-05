@@ -3,6 +3,16 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.17.0
+
+- Dashboard: move the small panels by their strip, hide them (the top bar's panels menu brings them back) and size them by the lines between them; the layout stays. Thanks to @OmerAktas1 on GitHub
+- Dashboard: right-click a panel to clear what it shows, for a stream or what nobody else should see; new work shows from then on, "show what was cleared" brings the rest back. The same menu hides the panel
+- Dashboard: far less energy behind a chat window or another app, and on battery. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
+- Codex: the top bar follows the terminal you touched last; with Claude Code and Codex open together it shows that AI's model, context, tokens and its own 5-hour and weekly limits, read live from Codex. Its planet keeps orbiting while a command it started still runs, and two Codex chats in one folder no longer share one log
+- Token savers: Antigravity gets rtk and caveman too, a tool installed later is set up as well, and the Windows token savers work again. Thanks to @EmirCobanOfficial on GitHub
+- What's new and notifications: links show in their own colour and open in the browser; @name is a GitHub user and opens their profile
+- Mac chats: a chat clicked while its window is closing comes back once the animation ends
+
 ## 0.16.2
 
 - Chats: a chat that needs you (an approval, a question) while the app is behind other windows pops up in the screen's corner as messages do, and stays until you answer it; a click opens it (one running in another terminal brings that terminal forward). The window's edge no longer flashes red for it: the notice says it, on the Mac and Windows. Thanks to kwa0x2 on GitHub, kwa#4873 in the app
@@ -113,16 +123,8 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
-- Dashboard: the small panels (research.feed, files.heat, tool.mix, session.log, workers, spend.ledger, your.call) can be moved by their strip, hidden (the top bar's panels menu brings them back, reset layout puts everything home) and sized by the lines between them; the layout stays. Thanks to @OmerAktas1 on GitHub
-- Dashboard: right-click a panel to clear what it shows (for a stream, or what nobody else should see): its list keeps only what comes after, its counters start again from then, until "show what was cleared" or midnight; only the view, the day's data stays whole. The same menu hides the panel (Mac and Windows)
-- Dashboard: far less energy when you aren't looking at it: behind a chat window (or another app) the map draws fewer and smaller frames and its decorations rest, a working terminal no longer keeps it at full rate there; on battery or in Low Power Mode it draws less in front too and the cinematic camera doesn't start on its own; the orbit rings take a fraction of the pixels, and the boot screen's logo, the logo's glow and the feedback beacon no longer repaint every frame. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
-- What's new and notifications: links in a release note or a notification from the developer show in their own colour and open in the browser; `@name` is a GitHub user, in another colour, and opens their profile (Mac and Windows)
-- Codex: its planet keeps orbiting while a child command or delegated worker still runs after the turn record closes, and two Codex chats in the same folder follow their own rollout instead of sharing the newest one. The top bar follows the terminal touched last: with Claude Code and Codex open together it shows that AI's model, context, session tokens/tools and its own capacity left. The countdown keeps the selected AI's limits; after reset it waits for fresh usage instead of inventing a remaining percentage (Mac and Windows)
-- Mac chats: reopening during the closing animation brings the window back once the animation ends; Codex running in another build can be mirrored in staging, as Claude can
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines. Cause (found 2026-11-04, reproduced headless with SwiftTerm + the relay + screen): screen 4.0 resizes a window bottom-anchored. Shrinking keeps the cursor's distance from the bottom, so with blank rows under the cursor (short output, after a clear) the output above it goes into screen's own history, which the view never shows, and only blank rows remain; growing pulls lines back in at the top. Fix to try: before a shrink, put the cursor on row max(0, old rows - new rows - blank rows under it) (screen then drops the blank bottom rows instead), apply the size, put the cursor back; the pty size has to wait for that (LocalProcessTerminalView.sizeChanged isn't open, so the relay holds it). Windows has no screen: check it there separately
-- Token savers (Windows, important, reported 2026-11-04): the token optimizer misbehaves in the Windows app; find out how (rtk, caveman, or the switches) and fix it
 - Runaways (bug, reported 2026-11-04): a frozen project shows on the orbit as a car, not as the burning blue box (the TARDIS) that runaway processes get; find out why it isn't taken for a runaway, or why its box is drawn as a car (Mac and Windows)
-- Notifications (requested 2026-11-04): links in a notification's text are clickable and open in the browser (in the corner pop-up and under the bell), on the Mac and Windows
 - Runaways (bug, reported 2026-11-04): a long job Claude starts in a shell (a video edit's render, for one) flies as a car of its own, and a click on it offers to end it as if it were left running loose, while it's doing the user's work; tell real work (still busy, started by a live session) from leftovers, and don't offer to end it there (Mac and Windows)
 - Chat list (requested 2026-11-04): the chat whose window is in front lights up as selected in the list, and moves with the click: with two chat windows open, the one you click to the top glows in the list (Mac and Windows)
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
