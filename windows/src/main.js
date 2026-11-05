@@ -829,12 +829,13 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
 
 // ---------- the terminals' panel, inside the dashboard window ----------
 // The terminals show over the dashboard's middle (where the activity bar's views show; the page says where: `stage`),
-// side by side when there are several (as many as fit, each at least TERM_MIN_W wide: one more and the one shown the
-// longest steps back, running on), in the dashboard's panel look; each comes on and goes off as the app's other panels
+// side by side when there are several, up to TERM_MAX of them in a grid (three in a row, then a second row; fewer to a
+// row where the place is narrow: one more and the one shown the longest steps back, running on), in the dashboard's
+// panel look; each comes on and goes off as the app's other panels
 // do (an old TV's power on and off, pages/terminal.css). Each is a view of its own above the page, with a clear
 // background, so the dashboard shows around it while it animates. A menu or popup of the page (`modal`) would be under
 // them: they step aside while one is open.
-const TERM_MIN_W = 360, TERM_GAP = 8;
+const TERM_MAX = 6, TERM_MIN_W = 300, TERM_GAP = 8;
 // shown: the terminals on screen, left to right (one going off stays until it's gone: `hiding`); active: the one with
 // the keys, or the last shown; lastSet: what showed before the panel was closed, for the activity bar's button.
 const termPanel = { shown: [], active: null, last: null, lastSet: [], stage: null, covered: false, hiding: new Map() };
@@ -858,20 +859,25 @@ function stageBounds() {
   };
 }
 
-// How many terminals fit side by side in the place.
-function termColumns(b) {
+// How many terminals go in a row: up to three side by side, four in two rows of two, five and six in rows of three;
+// fewer where a column would be narrower than TERM_MIN_W.
+function termColumns(b, n) {
   const z = dashZoom();
-  return Math.max(1, Math.floor((b.width + TERM_GAP * z) / (TERM_MIN_W * z + TERM_GAP * z)));
+  const fit = Math.max(1, Math.floor((b.width + TERM_GAP * z) / (TERM_MIN_W * z + TERM_GAP * z)));
+  return Math.max(1, Math.min(fit, n <= 3 ? n : Math.ceil(n / 2)));
 }
 
-// The terminals on screen share the place in even columns, the dashboard's gap between them; the rest wait full size.
+// The terminals on screen share the place in a grid of even cells, the dashboard's gap between them (a last row with
+// fewer of them gives each more width); the rest wait full size.
 function layoutTerms() {
   const b = stageBounds();
   if (!b) return;
   const gap = Math.round(TERM_GAP * dashZoom());
   const ids = termPanel.shown;
   const n = ids.length;
-  const w = n ? Math.floor((b.width - gap * (n - 1)) / n) : b.width;
+  const cols = n ? termColumns(b, n) : 1;
+  const rows = n ? Math.ceil(n / cols) : 1;
+  const h = Math.floor((b.height - gap * (rows - 1)) / rows);
   for (const [id, c] of chats) {
     if (!c.view || c.view.webContents.isDestroyed()) continue;
     const i = ids.indexOf(id);
@@ -879,9 +885,16 @@ function layoutTerms() {
       c.view.setBounds(b);
       continue;
     }
-    const x = b.x + i * (w + gap);
-    // The last one takes what the rounding left.
-    c.view.setBounds({ x, y: b.y, width: i === n - 1 ? b.x + b.width - x : w, height: b.height });
+    const row = Math.floor(i / cols), col = i % cols;
+    const inRow = row === rows - 1 ? n - cols * (rows - 1) : cols;
+    const w = Math.floor((b.width - gap * (inRow - 1)) / inRow);
+    const x = b.x + col * (w + gap), y = b.y + row * (h + gap);
+    // The last of a row, and the last row, take what the rounding left.
+    c.view.setBounds({
+      x, y,
+      width: col === inRow - 1 ? b.x + b.width - x : w,
+      height: row === rows - 1 ? b.y + b.height - y : h,
+    });
   }
 }
 
@@ -960,10 +973,8 @@ function showChat(id) {
   const comesOn = wasHiding || !termPanel.shown.includes(id);
   if (!termPanel.shown.includes(id)) {
     termPanel.shown.push(id);
-    // More than fit side by side: the one shown the longest steps back, at once (it runs on).
-    const b = stageBounds();
-    const max = b ? termColumns(b) : 1;
-    while (visibleTerms().length > max) {
+    // More than TERM_MAX: the one shown the longest steps back, at once (it runs on).
+    while (visibleTerms().length > TERM_MAX) {
       const old = visibleTerms()[0];
       termPanel.shown = termPanel.shown.filter((x) => x !== old);
       const o = chats.get(old);
