@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased (2026-11-05)
+
+- Dashboard: far less energy when you aren't looking at it: behind a chat window (or another app) the map draws fewer and smaller frames and its decorations rest, a working terminal no longer keeps it at full rate there; on battery or in Low Power Mode it draws less in front too and the cinematic camera doesn't start on its own; the orbit rings take a fraction of the pixels, and the boot screen's logo, the logo's glow and the feedback beacon no longer repaint every frame
+
 ## 0.16.0
 
 - Tabs: End Session in a window with tabs ends only the tab in front (its chat, its terminal or its panes), the other tabs keep running; the last one ends the window as before, and asks first when something still runs in it

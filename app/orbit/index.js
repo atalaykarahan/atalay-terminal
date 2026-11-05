@@ -12,7 +12,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { GlowPoints, LineBatch, QUAD, ringMaterial, setRing } from './batch.js';
+import { GlowPoints, LineBatch, RING_BAND, ringMaterial, setRing } from './batch.js';
 import { droneTextures, hexGlowTexture, ICON, SessionIcon } from './icons.js';
 import { buildCore } from './core.js';
 import { buildBlueBox, buildRoadster, buildStation, CAR_LENGTH, carStudio } from './models.js';
@@ -50,10 +50,9 @@ const glowTex = glowTexture();
 const hexGlow = hexGlowTexture();
 const DRONE_TEX = droneTextures();
 
-// No MSAA: the scene renders into the composer's targets, so antialias only cost memory. Full Retina
-// resolution: at 1.5x the thin lines and names of the session hexagons flickered in the glow as they moved.
+// No MSAA: the scene renders into the composer's targets, so antialias only cost memory. The resolution follows
+// QUALITY (set by resize()).
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.05;
 host.appendChild(renderer.domElement);
@@ -104,16 +103,43 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(512, 512), 0.62, 0.45, 0.6);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
+// Frame rate and resolution by where the map is. In front: 60 fps at full Retina resolution, since below either the
+// thin lines and names of the moving session hexagons flicker in the glow. Behind a chat window (or another app) the
+// map is in the corner of your eye, so it draws fewer and smaller frames. On battery or in Low Power Mode (power(),
+// from the app) it never goes past `saver`, in front either, and the cinematic camera doesn't start on its own.
+// Dragging the view, or the camera flying somewhere, gets the front rate anywhere.
+const QUALITY = {
+  front: { fps: 60, dpr: 2 },
+  behind: { fps: 20, dpr: 1.25 },
+  saver: { fps: 30, dpr: 1.5 },
+};
+// What the app reports through activity() and power(); a hidden page also stops on its own.
+const ACT = { visible: true, focused: true, saver: false, until: 0 };
+function wantDpr() {
+  const d = ACT.focused ? QUALITY.front.dpr : QUALITY.behind.dpr;
+  return Math.min(d, ACT.saver ? QUALITY.saver.dpr : d, window.devicePixelRatio || 1);
+}
+// Sharper at once; less sharp only once it has stayed that way a moment, so a menu or a click through a chat window
+// doesn't reallocate the render targets twice.
+let qualityTimer = 0;
+function applyQuality() {
+  clearTimeout(qualityTimer);
+  if (!SIZE.w) return; // the first resize() comes from the ResizeObserver
+  if (wantDpr() < SIZE.dpr) qualityTimer = setTimeout(resize, 1500);
+  else resize();
+}
+
 const SIZE = { w: 0, h: 0, dpr: 1 };
 const CAM = { right: new THREE.Vector3(), up: new THREE.Vector3(), fwd: new THREE.Vector3(), dist: 1, focal: 1, fit: 800 };
 let viewReady = false;
 
 function resize() {
-  const w = Math.max(200, host.clientWidth), h = Math.max(160, host.clientHeight);
-  if (w === SIZE.w && h === SIZE.h) return;
+  const w = Math.max(200, host.clientWidth), h = Math.max(160, host.clientHeight), dpr = wantDpr();
+  if (w === SIZE.w && h === SIZE.h && dpr === SIZE.dpr) return;
   SIZE.w = w;
   SIZE.h = h;
-  SIZE.dpr = renderer.getPixelRatio();
+  SIZE.dpr = dpr;
+  renderer.setPixelRatio(dpr);
   renderer.setSize(w, h, false);
   composer.setPixelRatio(SIZE.dpr);
   // Also sizes the bloom, which already works at half resolution. Don't shrink it further: its bright
@@ -293,14 +319,14 @@ class Session {
     this.glowSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: hexGlow, color: this.color.clone(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     this.glowSprite.scale.setScalar(ICON_W);
     this.glowSprite.renderOrder = 2;
-    this.halo = new THREE.Mesh(QUAD, ringMaterial({ glow: 1.2, dashes: 16, dashSpeed: 0.3 }));
+    this.halo = new THREE.Mesh(RING_BAND, ringMaterial({ glow: 1.2, dashes: 16, dashSpeed: 0.3 }));
     this.halo.renderOrder = 2;
     this.root = new THREE.Group();
     this.root.add(this.glowSprite, this.halo, this.sprite);
     this.root.visible = false;
     scene.add(this.root);
 
-    this.orbitRing = new THREE.Mesh(QUAD, ringMaterial({ glow: 2.2, floor: 0.38 }));
+    this.orbitRing = new THREE.Mesh(RING_BAND, ringMaterial({ glow: 2.2, floor: 0.38 }));
     scene.add(this.orbitRing);
     this.orbitAlpha = 0;
     this.quat = new THREE.Quaternion();
@@ -541,7 +567,7 @@ class Drone {
     this.sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: DRONE_TEX.running, transparent: true, depthWrite: false }));
     this.sprite.scale.setScalar((128 / 40) * DRONE_HEX);
     this.sprite.renderOrder = 3;
-    this.spin = new THREE.Mesh(QUAD, ringMaterial({ glow: 0.8, dashes: 1, dashSpeed: 0.55 }));
+    this.spin = new THREE.Mesh(RING_BAND, ringMaterial({ glow: 0.8, dashes: 1, dashSpeed: 0.55 }));
     setRing(this.spin, DRONE_HEX * 1.38, 1.3, 4);
     this.spin.renderOrder = 2;
     this.root = new THREE.Group();
@@ -788,7 +814,9 @@ function syncShips(list) {
   for (const s of SHIPS.values()) if (!seen.has(s.id) && !s.dying) explode(s, now);
   assignParking();
   if (hover?.kind === 'ship') refreshTip();
-  poke();
+  // Only wakes the loop: the list comes every couple of seconds while a terminal works (its cpu changes), and a poke
+  // kept the map at the front rate behind a chat window most of the time.
+  wake();
 }
 
 // A terminal ended: the car blows up where it is (sparks in its colours, a shockwave) and is gone in a blink.
@@ -986,7 +1014,7 @@ function syncBoxes(list) {
     sparks(b.pos, colorOf('#6f9cff'), 18, 160);
   }
   if (hover?.kind === 'box') refreshTip();
-  poke();
+  wake();
 }
 // END IT on the Details card: the box blows up at once, a big blast with a shockwave, and the camera shakes.
 function blowUp(pid) {
@@ -1168,12 +1196,12 @@ function startCinematic() {
 }
 function stepCinematic(dt, now) {
   if (!cine) {
-    if (now - lastInput > CINE.IDLE_MS) startCinematic();
+    if (now - lastInput > CINE.IDLE_MS && !ACT.saver) startCinematic();
     return;
   }
   if (now > cine.until || (cine.alarm && !subjectPos(cine))) {
-    // The alarm's shot is over: home, unless you're away and the idle camera goes on.
-    if (cine.alarm && now - lastInput < CINE.IDLE_MS) {
+    // The alarm's shot is over: home, unless you're away and the idle camera goes on (not on battery).
+    if (cine.alarm && (now - lastInput < CINE.IDLE_MS || ACT.saver)) {
       cine = null;
       resetView();
       return;
@@ -1750,11 +1778,9 @@ function refreshCore() {
 }
 
 // ---------- loop ----------
-// Frames are drawn only as often as they're needed: 60 fps while the dashboard is in front (and while you
-// drag, rotate or zoom), 30 behind a chat window, and none at all when it can't be seen. Below 60 the glow
-// on moving hexagons visibly flickers, so the front view keeps full rate. The app reports visibility
-// through activity(); a hidden page also stops on its own.
-const ACT = { visible: true, focused: true, until: 0 };
+// Frames are drawn only as often as they're needed (QUALITY): the front rate while the dashboard is in front and
+// for a moment after you zoom or something happens on the map, less behind a chat window, and none at all when it
+// can't be seen.
 let rafId = 0, lastFrame = performance.now(), lastMinimap = 0;
 function poke(ms = 1500) {
   ACT.until = performance.now() + ms;
@@ -1766,7 +1792,9 @@ function wake() {
   rafId = requestAnimationFrame(frame);
 }
 function targetFps(now) {
-  return ACT.focused || press || camAnim || now < ACT.until ? 60 : 30;
+  if (press || camAnim) return QUALITY.front.fps;
+  const fps = ACT.focused || now < ACT.until ? QUALITY.front.fps : QUALITY.behind.fps;
+  return ACT.saver ? Math.min(fps, QUALITY.saver.fps) : fps;
 }
 document.addEventListener('visibilitychange', wake);
 function frame(now) {
@@ -1850,6 +1878,18 @@ function activity(visible, focused) {
   ACT.visible = visible;
   ACT.focused = focused;
   if (visible && pendingFollow) followBox(pendingFollow);
+  applyQuality();
+  wake();
+}
+// The Mac runs on battery or in Low Power Mode (true), or neither: see QUALITY. An idle camera tour going on ends.
+function power(saver) {
+  ACT.saver = !!saver;
+  if (ACT.saver && cine && !cine.alarm) {
+    cine = null;
+    cineTag.classList.remove('on');
+    resetView();
+  }
+  applyQuality();
   wake();
 }
 // The Details card (danger.js) opened on one: the camera goes to its box.
@@ -1858,5 +1898,5 @@ function focusRunaway(pid) {
   if (b) followBox(b);
 }
 setCinematic(cineOn);
-window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
+window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);

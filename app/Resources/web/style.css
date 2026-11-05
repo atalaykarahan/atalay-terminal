@@ -129,7 +129,10 @@ body::after {
 .brand i { color: var(--accent); font-style: normal; }
 /* The logo is the picture itself, orange in every theme. (A CSS mask can't tint it: WKWebView doesn't load a mask image
    from a file:// page, and the logo vanished in the app.) */
-.brand .mark { height: 22px; filter: drop-shadow(0 0 5px rgba(var(--logo-rgb), 0.6)); animation: mark-glow 2.8s ease-in-out infinite; }
+.brand .mark { position: relative; height: 22px; filter: drop-shadow(0 0 2px rgba(var(--logo-rgb), 0.3)); }
+/* Its glow pulses on a copy behind it, by the copy's opacity alone: animating the logo's filter repainted it, blur and all,
+   on every frame for as long as the app ran. */
+.brand .mark-glow { position: absolute; left: 0; top: 50%; height: 22px; transform: translateY(-50%); filter: drop-shadow(0 0 5px rgba(var(--logo-rgb), 0.6)); animation: mark-glow 2.8s ease-in-out infinite; pointer-events: none; }
 .live { margin-left: 4px; padding: 1px 5px; font-size: 0.6em; letter-spacing: 0.1em; color: var(--ink); background: var(--accent); }
 .live.off { background: var(--red); }
 .clock { color: var(--accent-soft); font-size: 1.15em; letter-spacing: 0.08em; white-space: nowrap; }
@@ -413,8 +416,10 @@ body::after {
   pointer-events: none;
 }
 #toast.on { opacity: 1; }
-#boot { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--bg); color: var(--accent-soft); transition: opacity 0.7s; }
-#boot.gone { opacity: 0; pointer-events: none; }
+#boot { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--bg); color: var(--accent-soft); transition: opacity 0.7s, visibility 0.7s; }
+/* Faded out, it leaves the picture and its logo stops pulsing: under opacity 0 it went on repainting its glow every frame. */
+#boot.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+#boot.gone .blogo { animation-play-state: paused; }
 .blogo { width: 132px; filter: drop-shadow(0 0 16px rgba(var(--logo-rgb), 0.65)); animation: blogo 2.4s ease-in-out infinite; }
 
 @keyframes pulse { 50% { opacity: 0.35; } }
@@ -428,7 +433,7 @@ body::after {
 @keyframes bump { 0% { color: #fff; text-shadow: 0 0 14px var(--accent-soft); } }
 @keyframes edge { 0% { box-shadow: inset 0 0 0 3px var(--warn), inset 0 0 140px rgba(var(--warn-rgb), 0.5); } 100% { box-shadow: inset 0 0 0 0 transparent; } }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes mark-glow { 50% { filter: drop-shadow(0 0 2px rgba(var(--logo-rgb), 0.3)); } }
+@keyframes mark-glow { 50% { opacity: 0; } }
 @keyframes blogo { 50% { transform: scale(1.04); filter: drop-shadow(0 0 30px rgba(var(--logo-rgb), 0.95)); } }
 
 @media (max-width: 1250px) {
@@ -449,3 +454,7 @@ body::after {
 
 /* The app pauses every animation while the dashboard can't be seen (covered, minimized, hidden). */
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
+/* Behind a chat window (or another app) the dashboard is in the corner of your eye: its decorations rest, as the map draws
+   less (orbit QUALITY). The signals go on: a session running or waiting, an alarm, a station live. */
+html.behind #marquee, html.behind .panel > header::after, html.behind .brand .mark-glow,
+html.behind #activity .vs-ab.vs-ab-foot::before { animation-play-state: paused !important; }
