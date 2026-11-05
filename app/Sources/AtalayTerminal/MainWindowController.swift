@@ -16,6 +16,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var briefs: [String: SessionBrief] = [:]
     private var lastStatus: [String: String] = [:]
     private var lastWinOpen = ""
+    /// The terminal window/pane the user touched last; its AI owns the dashboard's top bar until another is touched.
+    private var activeTerminalWindow: String?
+    private var lastActiveSession = ""
     private var split: ThemedSplitView!
     private var sidebarHost: NSView!
     /// The chat list's narrowest width and the width it opens at (the one it had when it closed).
@@ -189,6 +192,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             terminalsJSON = ""
             pushTerminals()
             radar.push("runaways", runaways.json)
+            pushActiveSession(force: true)
         case "open": if let sid = msg["sid"] as? String { openSession(sid) }
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
@@ -298,6 +302,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let open = Set(chats.values.compactMap(\.sessionId))
         if sidebar.openInTabs != open { sidebar.openInTabs = open }
         pushWinOpen()
+        pushActiveSession()
     }
 
     private func route(_ events: [NativeEvent]) {
@@ -314,6 +319,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !force && js == lastWinOpen { return }
         lastWinOpen = js
         radar.webView.evaluateJavaScript("window.__winOpen = \(js);", completionHandler: nil)
+    }
+
+    /// A terminal got the keyboard or input. Resolve the AI under that exact pane, so a Claude and a Codex window can
+    /// both be open while the one touched last supplies the top bar's session stats and account limits.
+    func terminalFocused(window id: String) {
+        activeTerminalWindow = id
+        pushActiveSession()
+    }
+
+    private func pushActiveSession(force: Bool = false) {
+        let shell = activeTerminalWindow.flatMap { chats[$0]?.focusedShellPid } ?? 0
+        var best: (brief: SessionBrief, distance: Int)?
+        if shell > 0 {
+            for b in briefs.values where b.live {
+                guard var pid = b.pid else { continue }
+                for distance in 0..<10 {
+                    if pid == shell {
+                        if best == nil || distance < best!.distance { best = (b, distance) }
+                        break
+                    }
+                    guard let parent = Proc.parent(pid), parent > 1 else { break }
+                    pid = parent
+                }
+            }
+        }
+        let sid = best?.brief.id ?? ""
+        guard force || sid != lastActiveSession else { return }
+        lastActiveSession = sid
+        let json = sid.isEmpty ? "null" : "\"\(sid)\""
+        radar.push("activeSession", json)
     }
 
     // MARK: terminals, the orbit's flying cars
@@ -509,12 +544,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 return c.focusPane(hosting: pid)
             }
             // Running outside the app: its terminal (iTerm2's session, Terminal's tab) comes to the front.
-            guard let name = Detached.sessionName(hosting: pid) else { return ITerm.reveal(pid: pid) }
+            guard let name = Detached.sessionName(hosting: pid, anyBuild: true) else { return ITerm.reveal(pid: pid) }
             if parked[name] != nil { return reopenParked(name, own: true) }
             if let c = chats.values.first(where: { $0.detached?.name == (Detached.extraInfo(name)?.parent ?? name) }) {
                 c.show()
                 c.focusPane(hosting: pid)
+                return
             }
+            // Codex in the installed app can be mirrored in staging just like Claude. Previously this path returned
+            // without creating a window, so clicking its planet did nothing.
+            let own = name.hasPrefix(Detached.prefix)
+            let c = openWindow(cwd: b.cwd, claudeArgs: nil, sessionId: nil, title: b.title.isEmpty ? b.name : b.title,
+                               detached: DetachedLink(name: name), mirror: !own)
+            c.focusPane(hosting: pid)
             return
         }
         if !fork {

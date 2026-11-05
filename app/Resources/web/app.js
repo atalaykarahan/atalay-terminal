@@ -102,6 +102,7 @@ const sessName = (sid) => NAMES.get(sid) || String(sid || '?').slice(0, 6);
 
 // ---------- live data ----------
 let STATE = null;
+let ACTIVE_SID = null;
 const lastStatus = new Map();
 
 function handleInit(d) {
@@ -134,8 +135,12 @@ function setVisibility(visible, focused) {
   document.documentElement.classList.toggle('paused', !visible);
   map('activity', visible, focused);
 }
+function setActiveSession(sid) {
+  ACTIVE_SID = sid || null;
+  if (STATE) renderTop();
+}
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
 }
 
@@ -254,7 +259,10 @@ function setNum(id, value, fmt) {
     return;
   }
   n.fmt = fmt;
-  if (n.to === value) return;
+  if (n.to === value) {
+    el.textContent = fmt(n.cur);
+    return;
+  }
   n.from = n.cur;
   n.to = value;
   n.t0 = performance.now();
@@ -419,38 +427,97 @@ function renderAll() {
 }
 
 function renderTop() {
+  const active = activeTopSession();
+  if (active) {
+    renderActiveTop(active);
+    return;
+  }
   const T = STATE.totals;
+  setTopLabels(['sessions live', 'agents running', 'tools/min', 'tokens/min', 'today · api-eq', 'cache hit', 'web calls', 'tool ok']);
   setNum('k-sessions', T.live, (v) => String(Math.round(v)));
   setText($('k-sessions-sub'), `${T.sessionsToday} today`);
   setNum('k-agents', T.runningAgents, (v) => String(Math.round(v)));
   setText($('k-agents-sub'), `${T.agentsToday} today`);
   setNum('k-tpm', T.toolsPerMin, (v) => v.toFixed(1));
+  setText($('k-tpm-sub'), 'last 5 min');
   setNum('k-tokm', T.tokPerMin, fmtTok);
+  setText($('k-tokm-sub'), 'incl. cache');
   setNum('k-cost', T.cost, fmtUsd);
   setText($('k-burn'), `${fmtUsd(T.costPerHour)}/h burn`);
   setNum('k-cache', T.cacheHit * 100, (v) => v.toFixed(1) + '%');
   setText($('k-saved'), `saved ${fmtUsd(T.saved)}`);
   setNum('k-web', T.web, (v) => String(Math.round(v)));
+  setText($('k-web-sub'), 'today');
   setNum('k-ok', T.okRate * 100, (v) => v.toFixed(1) + '%');
   setText($('k-err'), `${T.errors} failed`);
   renderLimits();
 }
 
+function activeTopSession() {
+  return STATE?.sessions.find((s) => s.id === ACTIVE_SID && s.live) || null;
+}
+
+function setTopLabels(labels) {
+  ['sessions', 'agents', 'tpm', 'tokm', 'cost', 'cache', 'web', 'ok'].forEach((id, i) => setText($(`kl-${id}`), labels[i]));
+}
+function setKpiText(id, value) {
+  nums.delete(id);
+  setText($(id), value);
+}
+function renderActiveTop(s) {
+  const tool = s.tool || s.name || 'AI';
+  const tok = s.tok || {};
+  const cache = (tok.cr || 0) + (tok.cw || 0);
+  const total = (tok.in || 0) + (tok.out || 0) + cache;
+  const cacheBase = (tok.in || 0) + cache;
+  const running = s.agentsRunning || 0;
+  const okRate = s.tools ? Math.max(0, (s.tools - s.errors) / s.tools) : 1;
+  const ctxPct = s.ctxMax ? Math.min(100, (s.ctx / s.ctxMax) * 100) : 0;
+  setTopLabels(['active ai', 'model', 'context', 'session tokens', 'session · api-eq', 'cache hit', 'web calls', 'tool ok']);
+  setKpiText('k-sessions', tool);
+  setText($('k-sessions-sub'), `${STATUS[s.status]?.label || s.status || 'LIVE'} · ${clipT(s.title || s.cwd, 28)}`);
+  setKpiText('k-agents', s.model || '—');
+  setText($('k-agents-sub'), running ? `${running} agents running` : (s.effort || 'no subagents'));
+  setNum('k-tpm', ctxPct, (v) => s.ctxMax ? `${v.toFixed(1)}%` : '—');
+  setText($('k-tpm-sub'), `${fmtTok(s.ctx)} / ${s.ctxMax ? fmtTok(s.ctxMax) : '—'}`);
+  setNum('k-tokm', total, fmtTok);
+  setText($('k-tokm-sub'), `${fmtTok(tok.out)} out · ${fmtTok(cache)} cache`);
+  if (tool === 'Claude Code') setNum('k-cost', s.cost || 0, fmtUsd);
+  else setKpiText('k-cost', '—'); // No price estimate is available for the other CLIs.
+  setText($('k-burn'), `${s.prompts || 0} prompts`);
+  setNum('k-cache', cacheBase ? cache / cacheBase * 100 : 0, (v) => v.toFixed(1) + '%');
+  setText($('k-saved'), `${fmtTok(cache)} cached`);
+  setNum('k-web', s.web || 0, (v) => String(Math.round(v)));
+  setText($('k-web-sub'), 'this session');
+  setNum('k-ok', okRate * 100, (v) => v.toFixed(1) + '%');
+  setText($('k-err'), `${s.errors || 0} failed · ${s.tools || 0} calls`);
+  renderLimits(s);
+}
+
 // Usage limits from Claude Code's status line: used % of the 5-hour and the weekly window, and when each resets. Until
 // the status line has reported them (a new install), they stay out of the top bar.
-function renderLimits() {
-  const L = STATE?.limits;
+function renderLimits(active = activeTopSession()) {
+  const L = active ? (active.tool === 'Codex' ? active.limits : active.tool === 'Claude Code' ? STATE?.limits : null) : STATE?.limits;
+  const source = active?.tool || 'Claude Code';
   for (const [id, w, long] of [['lim-5h', L?.fiveHour, false], ['lim-week', L?.week, true]]) {
     const el = $(id);
     if (!el) continue;
+    const minutes = w?.windowMinutes;
+    const duration = minutes > 0 ? (minutes === 10080 ? 'week' : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`) : long ? 'week' : '5h';
+    setText(el.querySelector('label'), `${source.toLowerCase()} · ${duration} left`);
+    el.title = `${source} remaining limit for the ${long ? 'weekly' : 'current 5-hour'} window`;
     el.style.display = w ? '' : 'none';
-    const pct = w ? Math.max(0, Math.min(100, w.pct)) : null;
-    el.classList.toggle('ok', pct !== null && pct < 50);
-    el.classList.toggle('warn', pct !== null && pct >= 50 && pct < 80);
-    el.classList.toggle('hot', pct !== null && pct >= 80);
-    setText(el.querySelector('b'), pct === null ? '—' : `${Math.round(pct)}%`);
-    setText(el.querySelector('small'), !w ? 'no data yet' : w.resetsAt ? `resets ${resetLabel(w.resetsAt, long)}` : '');
-    el.querySelector('.lim-bar i').style.width = `${pct ?? 0}%`;
+    // Both CLIs report percentage used. A passed reset only invalidates that measurement: usage elsewhere may already
+    // have consumed the next window, so never invent 100% remaining without a fresh report from the CLI.
+    const resetPassed = !!(w?.resetsAt && w.resetsAt <= Date.now());
+    const used = w && !resetPassed && Number.isFinite(w.pct) ? Math.max(0, Math.min(100, w.pct)) : null;
+    const left = used === null ? null : 100 - used;
+    el.classList.toggle('ok', left !== null && left >= 50);
+    el.classList.toggle('warn', left !== null && left >= 20 && left < 50);
+    el.classList.toggle('hot', left !== null && left < 20);
+    setText(el.querySelector('b'), left === null ? '—' : `${Math.round(left)}%`);
+    setText(el.querySelector('small'), !w ? 'no data yet' : resetPassed ? 'awaiting update' : w.resetsAt ? `resets ${resetLabel(w.resetsAt, long)}` : '');
+    el.querySelector('.lim-bar i').style.width = `${left ?? 0}%`;
   }
 }
 function resetLabel(at, long) {
@@ -885,7 +952,7 @@ window.RADAR = { CAT, CATS, STATUS, FONT, MAPQ, sessColor, colorIndex, sessName,
 // ---------- start ----------
 setInterval(() => {
   setText($('clock'), new Date().toTimeString().slice(0, 8));
-  if (STATE?.limits) renderLimits(); // keeps the reset countdowns current
+  if (STATE) renderLimits(); // Refresh the selected AI's countdown, including when only Codex has limits.
 }, 1000);
 connect();
 

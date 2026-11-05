@@ -95,7 +95,17 @@ fi
 # from build to build, so macOS keeps the permissions given to the app (screen recording, accessibility) across its
 # updates; without it, an ad-hoc signature, which every build changes, and the permissions go with each update.
 SIGN_ID=${ATALAY_SIGN_ID:-"Atalay's Terminal"}
-if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$SIGN_ID\""; then SIGN="$SIGN_ID"; else SIGN=-; fi
+# A self-signed development identity can have a usable certificate and private key while `find-identity` excludes it
+# from its "valid" trust list. It still gives this app the same designated identity on every staging build, which keeps
+# macOS permissions and shortcuts attached to the app. Falling back to ad-hoc here changes that identity every build.
+KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$SIGN_ID\"" \
+   || { security find-certificate -c "$SIGN_ID" "$KEYCHAIN" >/dev/null 2>&1 \
+        && security find-key -l "$SIGN_ID" "$KEYCHAIN" >/dev/null 2>&1; }; then
+  SIGN="$SIGN_ID"
+else
+  SIGN=-
+fi
 codesign --force --deep --sign "$SIGN" "$APP" >/dev/null
 echo "built $APP"
 

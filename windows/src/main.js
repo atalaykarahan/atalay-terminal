@@ -73,6 +73,7 @@ const settings = (() => {
 let dash = null, dashView = null, chatsView = null;
 const boots = new Map(); // webContents id -> what its preload asks for before the page loads
 const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt, steppedAside }
+let activeTerminalId = null, lastActiveSession;
 const panels = { notices: null, chats: new Map(), showing: new Set() }; // the messages panels: the corner's notices, friends' chats
 
 // The AI tools in the theme's colours (Settings · INTERFACE): Claude Code, Codex and Antigravity on their themes that use
@@ -172,10 +173,12 @@ const engine = createEngine({
   onInit(json) {
     toDash(`init(${json})`);
     pushWinOpen(true);
+    pushActiveSession(true);
   },
   onState(json) {
     toDash(`state(${json})`);
     matchChats();
+    pushActiveSession();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
     badge();
     updateWaits();
@@ -302,6 +305,23 @@ function runPanel(win, js) {
 }
 const toDash = (call) => run(dashView, `window.__radar && window.__radar.${call}`);
 const toNotices = (call) => runPanel(panels.notices, `window.__messages && __messages.${call}`);
+
+// The AI in the terminal window touched last owns the top bar. Prefer a working/waiting nested AI (Codex, etc.) over
+// the parent Claude process if both happen to be under the same shell.
+function touchTerminal(id) {
+  activeTerminalId = id;
+  pushActiveSession();
+}
+function pushActiveSession(force = false) {
+  const rank = (s) => (s.status === 'waiting' ? 0 : s.status === 'busy' ? 1 : 2) + (s.ai ? 0 : 0.1);
+  const active = activeTerminalId
+    ? engine.live().filter((s) => s.tab === activeTerminalId).sort((a, b) => rank(a) - rank(b))[0]
+    : null;
+  const sid = active ? active.sessionId : null;
+  if (!force && sid === lastActiveSession) return;
+  lastActiveSession = sid;
+  toDash(`activeSession(${JSON.stringify(sid)})`);
+}
 
 // The page's Cloud state, with the Windows app's own updates in it (they come from GitHub releases, not the API).
 function cloudState() {
@@ -629,6 +649,7 @@ function handleRadar(msg) {
       pushCloud();
       pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
+      pushActiveSession(true);
       return true;
     case 'open':
       return openSession(msg.sid, false);
@@ -759,6 +780,7 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
   bootFor(win.webContents);
   const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
   chats.set(id, c);
+  win.on('focus', () => touchTerminal(id));
   win.loadFile(path.join(__dirname, '..', 'pages', 'terminal.html'));
   win.once('ready-to-show', () => {
     if (!show) return;
@@ -814,6 +836,7 @@ function showChat(id) {
   pinToDash(c.win);
   c.win.show();
   c.win.focus();
+  touchTerminal(id);
   pushWinOpen();
   return true;
 }
@@ -998,7 +1021,10 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
 });
 ipcMain.on('term:input', (e, data) => {
   const found = chatOf(e);
-  if (found) terminals.write(found[0], data);
+  if (found) {
+    touchTerminal(found[0]);
+    terminals.write(found[0], data);
+  }
 });
 ipcMain.on('term:resize', (e, { cols, rows }) => {
   const found = chatOf(e);

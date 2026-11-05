@@ -61,6 +61,9 @@ final class RadarEngine {
     /// What of their records today's counts already have (otherOnce), and their calls by name, for their results.
     private var otherSeen = Set<String>()
     private var otherCalls: [String: (p: Pending, done: Bool)] = [:]
+    /// Fresh account-wide Codex limits, read from Codex app-server rather than inferred from a rollout file.
+    private var codexUsage: [String: Any]?
+    private var codexUsagePending = false
 
     init() {
         claudeDir = CLAUDE_DIR
@@ -127,6 +130,7 @@ final class RadarEngine {
         scanHistory(force: true)
         startWatch()
         lastScan = nowMs()
+        refreshCodexUsage()
         // FSEvents delivers transcript and registry changes as they happen; these timers are only
         // slow safety nets. Their leeway lets macOS batch the wake-ups with other work.
         every(5) { self.pollRegistry() }
@@ -143,6 +147,7 @@ final class RadarEngine {
             for fp in self.collectFiles(since: since) { self.pump(fp) }
         }
         every(120) { self.scanHistory(force: false) }
+        every(60) { self.refreshCodexUsage() }
         every(60) { self.maybeNewDay() }
         every(1) { self.publishState() }
     }
@@ -153,6 +158,23 @@ final class RadarEngine {
         t.setEventHandler(handler: block)
         t.resume()
         timers.append(t)
+    }
+
+    /// Codex app-server reads the authenticated account's current server-side rate limits. Keep this off the
+    /// transcript/indexing queue: starting the local app-server and waiting for its response can take a moment.
+    private func refreshCodexUsage() {
+        guard !codexUsagePending else { return }
+        codexUsagePending = true
+        DispatchQueue.global(qos: .utility).async {
+            let fresh = CodexUsage.read()
+            self.queue.async {
+                self.codexUsagePending = false
+                // A failed request clears the display rather than presenting an old snapshot as current.
+                self.codexUsage = fresh
+                self.stateDirty = true
+                self.publishState()
+            }
+        }
     }
 
     private func registryChanged() {
@@ -959,7 +981,9 @@ final class RadarEngine {
         if O.waitsForUser || O.agentWaiting != nil {
             return ("waiting", "approval: " + ((O.waitsForUser ? O.call?.p : O.agentWaiting)?.l ?? "a step"))
         }
-        if !open { return (O.agents.contains { $0["running"] as? Bool == true } ? "busy" : "idle", nil) }
+        // A completed Codex turn can still have a command or delegated work running. CPU/children are the ground truth
+        // until they settle; parking the planet here made an actively working Codex look idle.
+        if !open { return (O.busy || O.command != nil || O.agents.contains { $0["running"] as? Bool == true } ? "busy" : "idle", nil) }
         if !O.stepsKnown, O.command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 { return ("waiting", "approval: " + call.p.l) }
         return ("busy", nil)
     }
@@ -1072,7 +1096,8 @@ final class RadarEngine {
     private func readCodexLog(_ O: OtherAI, cwd: String, since: Double, now: Double) {
         if O.log == nil, now - O.logChecked > 30_000 {
             O.logChecked = now
-            if let path = Self.codexLog(cwd: cwd, since: since) {
+            let claimed = Set(others.values.compactMap { $0 !== O && $0.endedAt == 0 ? $0.log : nil })
+            if let path = Self.codexLog(cwd: cwd, since: since, excluding: claimed) {
                 O.log = path
                 O.logOffset = 0
             }
@@ -1627,26 +1652,32 @@ final class RadarEngine {
         }
     }
 
-    /// The newest Codex log of the last week begun in `cwd` and written since `since` (seconds).
-    private static func codexLog(cwd: String, since: Double) -> String? {
+    /// The newest unclaimed Codex log of the last week begun in `cwd` and written since `since` (seconds). A log belongs
+    /// to one live process: without `excluding`, two Codex chats in the same folder both followed whichever wrote last.
+    private static func codexLog(cwd: String, since: Double, excluding: Set<String>) -> String? {
         let root = (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? HOME + "/.codex") + "/sessions"
         let fm = FileManager.default
-        var found: (path: String, mtime: Double)?
+        var found: (path: String, score: Double, mtime: Double)?
         let day = DateFormatter()
         day.dateFormat = "yyyy/MM/dd"
         for back in 0..<7 {
             let dir = root + "/" + day.string(from: Date().addingTimeInterval(Double(-back) * 86_400))
             for name in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where name.hasSuffix(".jsonl") {
                 let path = dir + "/" + name
+                guard !excluding.contains(path) else { continue }
                 guard let mtime = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
-                      mtime.timeIntervalSince1970 >= since - 5, mtime.timeIntervalSince1970 > found?.mtime ?? 0,
+                      mtime.timeIntervalSince1970 >= since - 5,
                       let fh = FileHandle(forReadingAtPath: path) else { continue }
                 let head = fh.readData(ofLength: 64 << 10)
                 try? fh.close()
                 guard let first = head.split(separator: 0x0A).first,
                       let j = try? JSONSerialization.jsonObject(with: Data(first)) as? [String: Any],
                       (j["payload"] as? [String: Any])?["cwd"] as? String == cwd else { continue }
-                found = (path, mtime.timeIntervalSince1970)
+                let created = parseISO(j["timestamp"] as? String)
+                let score = created > 0 ? abs(created / 1000 - since) : abs(mtime.timeIntervalSince1970 - since)
+                if found == nil || score < found!.score || (score == found!.score && mtime.timeIntervalSince1970 > found!.mtime) {
+                    found = (path, score, mtime.timeIntervalSince1970)
+                }
             }
         }
         return found?.path
@@ -1659,7 +1690,17 @@ final class RadarEngine {
             S.hostTab = tab
         }
         for O in others.values {
-            let tab = O.endedAt == 0 ? appShells[O.ppid] : nil
+            // Codex may be behind an npm/node launcher. Walk to the shell as Windows already does instead of requiring
+            // its direct parent to be the app's shell.
+            var tab: String?
+            var pid = O.pid
+            if O.endedAt == 0 {
+                for _ in 0..<8 {
+                    if let hit = appShells[pid] { tab = hit; break }
+                    guard let parent = Proc.parent(pid), parent > 1 else { break }
+                    pid = parent
+                }
+            }
             if tab != O.hostTab { stateDirty = true }
             O.hostTab = tab
         }
@@ -1748,6 +1789,7 @@ final class RadarEngine {
             if S.ctxMax > 0, Double(S.ctx) / S.ctxMax > 0.8 { flags.append("ctx 80%+") }
             var item: [String: Any] = [
                 "id": S.id, "name": displayName(S),
+                "tool": "Claude Code",
                 "title": S.title, "lastPrompt": S.lastPrompt, "cwd": cwdLabel(S.cwd), "branch": S.branch,
                 "model": shortModel(S.model), "effort": S.effort, "status": status, "live": S.live,
                 "statusSince": S.live ? S.statusSince : (S.endedAt > 0 ? S.endedAt : S.lastTs),
@@ -1809,6 +1851,7 @@ final class RadarEngine {
             let flags = O.ctxMax > 0 && Double(O.ctx) / O.ctxMax > 0.8 ? ["ctx 80%+"] : [String]()
             var item: [String: Any] = [
                 "id": O.id, "name": O.tool, "title": O.title.isEmpty ? folder : O.title, "lastPrompt": O.prompt, "cwd": cwdLabel(O.cwd), "branch": "",
+                "tool": O.tool,
                 "model": O.model.isEmpty ? O.tool : O.model, "effort": O.effort, "status": status, "live": live,
                 "statusSince": live ? O.statusSince : O.endedAt, "cpu": O.cpu, "mem": O.mem, "kind": "", "entry": "",
                 "firstTs": O.firstTs, "lastTs": O.lastTs, "ctx": O.ctx, "ctxMax": O.ctxMax, "turnMs": 0.0,
@@ -1822,6 +1865,9 @@ final class RadarEngine {
             item["pid"] = Int(O.pid)
             item["host"] = orNull(host)
             item["tab"] = orNull(O.hostTab)
+            // Codex limits are account-wide and come live from Codex app-server. Rollout logs only feed
+            // conversation token/model statistics; they may be stale or belong to a resumed session elsewhere.
+            item["limits"] = orNull(codexUsage)
             list.append(item)
             var brief = SessionBrief(id: O.id, name: O.tool, title: !O.title.isEmpty ? O.title : O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
                                      cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab)
@@ -1907,7 +1953,11 @@ final class RadarEngine {
             "files": files,
         ]
         var out = json
-        if let st = fileStat(Limits.path), st.mtime != limits.mtime { limits = (st.mtime, Limits.parse(mtime: st.mtime)) }
+        if let st = fileStat(Limits.path) {
+            if st.mtime != limits.mtime { limits = (st.mtime, Limits.parse(mtime: st.mtime)) }
+        } else {
+            limits = (-1, nil)
+        }
         out["limits"] = limits.json ?? NSNull()
         return (out, briefs)
     }

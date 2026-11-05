@@ -52,7 +52,9 @@ const commandLine = (file, args) =>
 function childEnvironment(extraPath) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (/^(CLAUDECODE|CLAUDE_CODE_|WT_)/i.test(k) || /^(CLAUDE_PID|TERM_SESSION_ID|TERM_PROGRAM_VERSION)$/i.test(k)) continue;
+    // Codex's tool environment too (the app started from a Codex command): NO_COLOR turned every chat's Claude white.
+    if (/^(CLAUDECODE|CLAUDE_CODE_|WT_|CODEX_)/i.test(k)) continue;
+    if (/^(CLAUDE_PID|TERM_SESSION_ID|TERM_PROGRAM_VERSION|NO_COLOR|LC_ALL|LC_CTYPE|GIT_PAGER|GH_PAGER)$/i.test(k)) continue;
     env[k] = v;
   }
   // The app's rtk (savers.js), last, so one of the user's own comes first. Windows spells the variable "Path" and

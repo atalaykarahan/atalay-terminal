@@ -23,14 +23,14 @@
     <div class="brand" title="Settings · hacker name"><img class="mark" src="logo.png" alt=""><span class="stack"><small>ATALAY'S</small><b>TERMINAL</b></span><span class="live" id="live">LIVE</span></div>
     <div class="clock" id="clock">--:--:--</div>
     <div class="kpis">
-      <div class="kpi"><label>sessions live</label><b id="k-sessions">0</b><small id="k-sessions-sub"></small></div>
-      <div class="kpi"><label>agents running</label><b id="k-agents">0</b><small id="k-agents-sub"></small></div>
-      <div class="kpi"><label>tools/min</label><b id="k-tpm">0</b><small>last 5 min</small></div>
-      <div class="kpi"><label>tokens/min</label><b id="k-tokm">0</b><small>incl. cache</small></div>
-      <div class="kpi hot"><label>today · api-eq</label><b id="k-cost">$0</b><small id="k-burn"></small></div>
-      <div class="kpi"><label>cache hit</label><b id="k-cache">0%</b><small id="k-saved"></small></div>
-      <div class="kpi"><label>web calls</label><b id="k-web">0</b><small>today</small></div>
-      <div class="kpi"><label>tool ok</label><b id="k-ok">0%</b><small id="k-err"></small></div>
+      <div class="kpi"><label id="kl-sessions">sessions live</label><b id="k-sessions">0</b><small id="k-sessions-sub"></small></div>
+      <div class="kpi"><label id="kl-agents">agents running</label><b id="k-agents">0</b><small id="k-agents-sub"></small></div>
+      <div class="kpi"><label id="kl-tpm">tools/min</label><b id="k-tpm">0</b><small id="k-tpm-sub">last 5 min</small></div>
+      <div class="kpi"><label id="kl-tokm">tokens/min</label><b id="k-tokm">0</b><small id="k-tokm-sub">incl. cache</small></div>
+      <div class="kpi hot"><label id="kl-cost">today · api-eq</label><b id="k-cost">$0</b><small id="k-burn"></small></div>
+      <div class="kpi"><label id="kl-cache">cache hit</label><b id="k-cache">0%</b><small id="k-saved"></small></div>
+      <div class="kpi"><label id="kl-web">web calls</label><b id="k-web">0</b><small id="k-web-sub">today</small></div>
+      <div class="kpi"><label id="kl-ok">tool ok</label><b id="k-ok">0%</b><small id="k-err"></small></div>
       <div class="kpi lim" id="lim-5h" title="Claude usage limit for the current 5-hour window, as Claude Code reports it"><label>limit · 5h</label><b>—</b><small>no data yet</small><i class="lim-bar"><i></i></i></div>
       <div class="kpi lim" id="lim-week" title="Claude weekly usage limit, as Claude Code reports it"><label>limit · week</label><b>—</b><small>no data yet</small><i class="lim-bar"><i></i></i></div>
     </div>

@@ -9,7 +9,9 @@ set -euo pipefail
 NAME=${ATALAY_SIGN_ID:-"Atalay's Terminal"}
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 P12="$HOME/.atalay-terminal/signing.p12" PASSFILE="$HOME/.atalay-terminal/signing.pass"
-if security find-identity -p codesigning "$KEYCHAIN" | grep -qF "\"$NAME\""; then
+if security find-identity -p codesigning "$KEYCHAIN" | grep -qF "\"$NAME\"" \
+   || { security find-certificate -c "$NAME" "$KEYCHAIN" >/dev/null 2>&1 \
+        && security find-key -l "$NAME" "$KEYCHAIN" >/dev/null 2>&1; }; then
   echo "\"$NAME\" is in the keychain already"
   exit 0
 fi

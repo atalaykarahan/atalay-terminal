@@ -639,6 +639,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     weak var manager: MainWindowController?
     private(set) var isShown = false
     private var animating = false
+    private var hiding = false
+    private var reopenAfterHide = false
     private let container = NSView()
     private let border = NeonBorderView()
     private let flash = FlashView()
@@ -904,6 +906,19 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     func show() {
         guard let w = window else { return }
+        if hiding {
+            reopenAfterHide = true
+            return
+        }
+        // A card can be clicked while this window is still considered shown but was ordered out for a dashboard modal,
+        // or while another app owns the foreground. Reclaim and repin it before ordering it front; otherwise the click
+        // reaches openSession successfully yet appears to do nothing.
+        steppedAside = false
+        if hud.attached, let parent = manager?.window, parent.isVisible, w.parent != parent {
+            w.parent?.removeChildWindow(w)
+            parent.addChildWindow(w, ordered: .above)
+        }
+        NSApp.activate(ignoringOtherApps: true)
         if isShown {
             w.makeKeyAndOrderFront(nil)
             focus(focusTarget(in: activeTab))
@@ -929,8 +944,10 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     @discardableResult
     func hide(then: (() -> Void)? = nil) -> Bool {
         guard let w = window, isShown, !animating else { return false }
+        hiding = true
         runPowerOff { [weak self] in
             guard let self else { return }
+            self.hiding = false
             w.parent?.removeChildWindow(w)
             w.orderOut(nil)
             self.isShown = false
@@ -939,7 +956,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             for tv in self.allTerminals { tv.suspendsRenderingWhenNotVisible = true }
             self.resetEffect()
             self.manager?.chatVisibilityChanged()
+            let reopen = self.reopenAfterHide
+            self.reopenAfterHide = false
             then?()
+            // A destructive close owns its completion. Only a normal hide may be reversed by a card click.
+            if reopen, then == nil { self.show() }
         }
         return true
     }
@@ -1184,6 +1205,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     var focusedTerminal: ChatTerminalView {
         if let tv = window?.firstResponder as? ChatTerminalView, allTerminals.contains(where: { $0 === tv }) { return tv }
         return focusTarget(in: activeTab)
+    }
+
+    /// The shell in the pane the user interacted with last, for selecting that pane's AI in the dashboard top bar.
+    var focusedShellPid: Int32 {
+        let tv = focusedTerminal
+        if tv === terminal { return shellPid }
+        return extra(of: tv)?.shellPid ?? 0
     }
 
     private func focusTarget(in tab: Int) -> ChatTerminalView {
@@ -1598,6 +1626,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         focusHistory.removeAll { $0 === tv }
         focusHistory.append(tv)
         dimInactive()
+        manager?.terminalFocused(window: id)
     }
 
     /// The dashboard's menus (friends, settings, updates) open on the dashboard, under the windows pinned above it:
@@ -1813,6 +1842,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     // The window clicked last comes to the front of the others pinned above the dashboard: AppKit doesn't reorder a
     // parent's child windows on a click.
     func windowDidBecomeKey(_ notification: Notification) {
+        focusChanged()
         guard let w = window, let parent = w.parent, parent.childWindows?.last != w else { return }
         parent.removeChildWindow(w)
         parent.addChildWindow(w, ordered: .above)

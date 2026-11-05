@@ -455,8 +455,13 @@ enum TerminalFactory {
 
     nonisolated static func childEnvironmentDict() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
+        // Started from a Codex command (a staging build it launched), the app had Codex's tool environment: NO_COLOR
+        // turned every chat's Claude white, and its C.UTF-8 locale and pagers reached the shells. The login shell sets
+        // whatever the user really wants again.
         for key in env.keys where key.hasPrefix("ITERM_") || key.hasPrefix("CLAUDECODE") || key.hasPrefix("CLAUDE_CODE_")
-            || ["TERM_SESSION_ID", "LC_TERMINAL", "LC_TERMINAL_VERSION", "TERM_PROGRAM_VERSION", "OLDPWD"].contains(key) {
+            || key.hasPrefix("CODEX_")
+            || ["TERM_SESSION_ID", "LC_TERMINAL", "LC_TERMINAL_VERSION", "TERM_PROGRAM_VERSION", "OLDPWD",
+                "NO_COLOR", "LC_ALL", "LC_CTYPE", "GIT_PAGER", "GH_PAGER"].contains(key) {
             env.removeValue(forKey: key)
         }
         // Claude's full-screen renderer keeps the whole conversation scrollable inside Claude (the wheel goes there,

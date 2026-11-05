@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 
 const HOME = os.homedir();
@@ -633,8 +633,9 @@ function agyLog(file, mtime, id) {
   return log;
 }
 
-// The newest Codex log of the last week begun in `cwd` and written since `since` (ms).
-function codexLog(cwd, since) {
+// The newest unclaimed Codex log of the last week begun in `cwd` and written since `since` (ms). One live process owns
+// one rollout; otherwise two Codex terminals in the same folder both follow whichever rollout was written last.
+function codexLog(cwd, since, excluding = new Set()) {
   const root = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'sessions');
   const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
   let found = null;
@@ -650,20 +651,25 @@ function codexLog(cwd, since) {
     for (const name of names) {
       if (!name.endsWith('.jsonl')) continue;
       const file = path.join(dir, name);
+      if (excluding.has(file)) continue;
       let st;
       try {
         st = fs.statSync(file);
       } catch {
         continue;
       }
-      if (st.mtimeMs < since - 5000 || (found && st.mtimeMs <= found.mtime)) continue;
+      if (st.mtimeMs < since - 5000) continue;
       try {
         const fd = fs.openSync(file, 'r');
         const head = Buffer.alloc(Math.min(st.size, 64 << 10));
         fs.readSync(fd, head, 0, head.length, 0);
         fs.closeSync(fd);
         const meta = JSON.parse(head.toString('utf8').split('\n')[0]);
-        if (meta && meta.payload && meta.payload.cwd && same(meta.payload.cwd, cwd)) found = { file, mtime: st.mtimeMs };
+        if (meta && meta.payload && meta.payload.cwd && same(meta.payload.cwd, cwd)) {
+          const created = parseISO(meta.timestamp) || st.mtimeMs;
+          const score = Math.abs(created - since);
+          if (!found || score < found.score || (score === found.score && st.mtimeMs > found.mtime)) found = { file, score, mtime: st.mtimeMs };
+        }
       } catch {}
     }
   }
@@ -1230,6 +1236,9 @@ class RadarEngine {
     this.others = new Map();
     this.otherSeen = new Set();
     this.otherCalls = new Map();
+    // Account-wide Codex limits fetched from its authenticated app-server, not rollout history.
+    this.codexUsage = null;
+    this.codexUsagePending = false;
     this.agents = new Map();
     this.cursors = new Map();
     this.seenMsg = new Set();
@@ -1425,6 +1434,7 @@ class RadarEngine {
     this.scanHistory(true).catch(report);
     this.startWatch();
     this.lastScan = Date.now();
+    this.refreshCodexUsage();
     for (const k of ['registry', 'recent', 'scan']) this.lastRun[k] = Date.now();
     // The watches deliver transcript and registry changes as they happen; these timers are only safety nets, and the
     // way changes arrive where a watch couldn't start or broke (then at the old server's pace).
@@ -1441,6 +1451,79 @@ class RadarEngine {
       this.startWatch();
     });
     this.every(120, () => this.scanHistory(false));
+    this.every(60, () => this.refreshCodexUsage());
+  }
+
+  // Read Codex's current account snapshot through the same local app-server protocol used by its own clients.
+  // The subprocess is isolated from the running chat and uses the user's existing Codex login.
+  refreshCodexUsage() {
+    if (this.codexUsagePending || this.stopped) return;
+    this.codexUsagePending = true;
+    const child = spawn('codex', ['app-server', '--stdio'], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true,
+      shell: WIN,
+      env: process.env,
+    });
+    // Without codex installed the shell exits at once and a write to it fails later (EPIPE); unheard, that error
+    // would take the whole app down.
+    child.stdin.on('error', () => {});
+    let buffer = '';
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      this.codexUsagePending = false;
+      // Do not leave a previous snapshot on screen after a failed live request.
+      this.codexUsage = value;
+      this.stateDirty = true;
+      this.publishState();
+      // With shell on Windows, kill() only ends cmd.exe; the closed stdin is what ends codex itself.
+      try { child.stdin.end(); } catch {}
+      if (!child.killed) child.kill();
+    };
+    const send = (message) => {
+      try { child.stdin.write(`${JSON.stringify(message)}\n`); return true; }
+      catch { return false; }
+    };
+    const normalize = (result) => {
+      const snapshot = result && (result.rateLimits || result.rate_limits);
+      if (!snapshot) return null;
+      const window = (name) => {
+        const w = snapshot[name];
+        if (!w || !Number.isFinite(Number(w.usedPercent ?? w.used_percent ?? w.used_percentage))) return null;
+        const reset = Number(w.resetsAt ?? w.resets_at) || 0;
+        return { pct: Number(w.usedPercent ?? w.used_percent ?? w.used_percentage),
+          resetsAt: reset > 0 && reset < 1e12 ? reset * 1000 : reset,
+          windowMinutes: Number(w.windowDurationMins ?? w.window_duration_mins ?? w.window_minutes) || 0 };
+      };
+      const primary = window('primary'), secondary = window('secondary');
+      if (!primary && !secondary) return null;
+      return { fiveHour: primary, week: secondary, at: Date.now(),
+        plan: snapshot.planType || snapshot.plan_type || '', source: 'Codex' };
+    };
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      let end;
+      while ((end = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        let message;
+        try { message = JSON.parse(line); } catch { continue; }
+        if (message.id === 1) {
+          if (message.error || !send({ method: 'initialized', params: {} }) ||
+              !send({ method: 'account/rateLimits/read', id: 2 })) finish(null);
+        } else if (message.id === 2) {
+          finish(message.error ? null : normalize(message.result));
+        }
+      }
+    });
+    child.on('error', () => finish(null));
+    child.on('exit', () => { if (!settled) finish(null); });
+    const timeout = setTimeout(() => finish(null), 20_000);
+    if (!send({ method: 'initialize', id: 1,
+      params: { clientInfo: { name: 'atalay-terminal', version: '0.17.0' } } })) finish(null);
   }
 
   every(seconds, fn) {
@@ -2378,7 +2461,9 @@ class RadarEngine {
       const p = O.waitsForUser ? O.call && O.call.p : O.agentWaiting;
       return { status: 'waiting', waiting: `approval: ${p ? p.l : 'a step'}` };
     }
-    if (O.turnOpen === false) return { status: (O.agents || []).some((a) => a.running) ? 'busy' : 'idle', waiting: null };
+    // A rollout can mark its turn complete while a child command or delegated task is still working. Keep its planet
+    // orbiting until process activity settles instead of parking it as the user's turn.
+    if (O.turnOpen === false) return { status: O.busy || O.command || (O.agents || []).some((a) => a.running) ? 'busy' : 'idle', waiting: null };
     if (O.turnOpen === true) {
       if (!O.stepsKnown && !O.command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
       return { status: 'busy', waiting: null };
@@ -2745,7 +2830,8 @@ class RadarEngine {
   readCodexLog(O, cwd, started, now) {
     if (!O.log && now - (O.logChecked || 0) > 30_000) {
       O.logChecked = now;
-      const found = codexLog(cwd, started);
+      const claimed = new Set([...this.others.values()].filter((x) => x !== O && x.endedAt === 0 && x.log).map((x) => x.log));
+      const found = codexLog(cwd, started, claimed);
       if (found) {
         O.log = found;
         O.logOffset = 0;
@@ -2807,15 +2893,15 @@ class RadarEngine {
           this.otherText(O, `${turn}:in`, 'prompt', p.message, ts);
         } else if (p.type === 'agent_message' && typeof p.message === 'string') {
           this.otherText(O, `${turn}:say:${p.message}`, 'say', p.message, ts);
-        } else if (p.type === 'token_count' && p.info) {
-          const u = p.info.last_token_usage;
+        } else if (p.type === 'token_count') {
+          const u = p.info && p.info.last_token_usage;
           if (u) {
             O.ctx = Number(u.input_tokens) || 0;
             // Its input counts the cached part too: the rest is what was new.
             const cached = Number(u.cached_input_tokens) || 0;
             this.otherTokens(O, `${at}:tok`, ts, Math.max(0, (Number(u.input_tokens) || 0) - cached), Number(u.output_tokens) || 0, cached);
           }
-          if (p.info.model_context_window) O.ctxMax = Number(p.info.model_context_window) || 0;
+          if (p.info && p.info.model_context_window) O.ctxMax = Number(p.info.model_context_window) || 0;
         } else if (p.type === 'thread_settings_applied' && p.thread_settings && p.thread_settings.model) {
           O.model = String(p.thread_settings.model);
         }
@@ -2971,6 +3057,7 @@ class RadarEngine {
       if (S.ctxMax > 0 && S.ctx / S.ctxMax > 0.8) flags.push('ctx 80%+');
       const item = {
         id: S.id, name: this.displayName(S),
+        tool: 'Claude Code',
         title: S.title, lastPrompt: S.lastPrompt, cwd: cwdLabel(S.cwd), branch: S.branch,
         model: shortModel(S.model), effort: S.effort, status, live: S.live,
         statusSince: S.live ? S.statusSince : S.endedAt > 0 ? S.endedAt : S.lastTs,
@@ -3000,12 +3087,14 @@ class RadarEngine {
       const flags = O.ctxMax > 0 && O.ctx / O.ctxMax > 0.8 ? ['ctx 80%+'] : [];
       list.push({
         id: O.id, name: O.tool, title: O.title || baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
+        tool: O.tool,
         model: O.model || O.tool, effort: O.effort || '', status, live, statusSince: live ? O.statusSince : O.endedAt,
         cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: 0,
         tok: { ...O.tok }, cost: 0, tools: O.tools, errors: O.errors, web: O.web, prompts: O.prompts,
         byCat: O.byCat, pending: running ? [running] : [], spark, flags, agents, agentsRunning: nRun,
         waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
         tab: typeof O.hostTab === 'string' ? O.hostTab : null,
+        limits: this.codexUsage || null,
         ...(running && { last: running }),
       });
     }
