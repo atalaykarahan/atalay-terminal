@@ -304,9 +304,9 @@ window.Cloud = (() => {
             <div class="hk-row"><span>AI tools in the theme's colours<small>Claude Code, Codex and Antigravity draw in the terminal's colours, so a theme recolours their text too · from their next session</small></span>
               <button type="button" class="hk-sw ui-ai" role="switch" aria-checked="true" title="AI tools in the theme's colours"><i></i></button></div>` : ''}
             ${SAVERS ? `<div class="hk-h">TOKEN SAVERS</div>
-            <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code and Codex<small class="ts-note" data-which="rtk">…</small></span>
+            <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code, Codex and Antigravity<small class="ts-note" data-which="rtk">…</small></span>
               <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
-            <div class="hk-row ts-row"><span>caveman · short answers from Claude Code and Codex<small class="ts-note" data-which="caveman">…</small></span>
+            <div class="hk-row ts-row"><span>caveman · short answers from Claude Code, Codex and Antigravity<small class="ts-note" data-which="caveman">…</small></span>
               <button type="button" class="hk-sw ts" data-which="caveman" role="switch" aria-checked="false" title="Turn caveman on or off"><i></i></button></div>` : ''}
             ${ARCHIVE() ? `<div class="hk-h">CHATS</div>
             <div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
@@ -546,12 +546,12 @@ window.Cloud = (() => {
   }
 
   // ---------- the token savers ----------
-  // rtk and caveman, which the Mac app ships and turns on for Claude Code and Codex (TokenSavers.swift): a switch each,
-  // and what rtk saved. One the user set up themselves switches the same way.
+  // rtk and caveman, which the app ships and turns on for Claude Code, Codex and Antigravity (TokenSavers.swift / savers.js):
+  // a switch each, and what rtk saved. One the user set up themselves switches the same way.
   const SAVERS = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.savers);
   const saversCall = (msg) => window.webkit.messageHandlers.savers.postMessage(msg);
   const compact = (n) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
-  const SAVER_OFF = { rtk: "off · Claude Code and Codex read commands' output in full", caveman: 'off · full-length answers' };
+  const SAVER_OFF = { rtk: "off · Claude Code, Codex and Antigravity read commands' output in full", caveman: 'off · full-length answers' };
   function showSavers(all) {
     if (!all) return;
     for (const which of ['rtk', 'caveman']) {

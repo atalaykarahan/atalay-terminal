@@ -1,12 +1,14 @@
 'use strict';
 // The token savers for the AI tools on this PC, as the Mac app's TokenSavers.swift has them: both ship in the app and are
 // on from its first launch that has them, without asking; Settings turns each off (and on again).
-// - rtk (github.com/rtk-ai/rtk, Apache-2.0) shortens what commands print before Claude Code or Codex reads it: the app's
-//   copy goes to %LOCALAPPDATA%\atalay-terminal\bin (an update's installer replaces the app's own folder) and sets itself
-//   up as `rtk init` does, a hook in Claude Code and its notes and hook in Codex. Off: `rtk init --uninstall`.
-// - caveman (github.com/JuliusBrussee/caveman, MIT) makes Claude Code and Codex answer tersely: its rules at the start of
-//   every session and a one-line reminder with every prompt (two hooks in Claude Code's settings that print the app's
-//   copies), and the rules in Codex's AGENTS.md. Off: the hooks and the rules go.
+// - rtk (github.com/rtk-ai/rtk, Apache-2.0) shortens what commands print before Claude Code, Codex or Antigravity reads it:
+//   the app's copy goes to %LOCALAPPDATA%\atalay-terminal\bin (an update's installer replaces the app's own folder) and
+//   sets itself up as `rtk init` does, a hook in Claude Code, its notes and hook in Codex, and its plugin in Antigravity.
+//   Off: `rtk init --uninstall`.
+// - caveman (github.com/JuliusBrussee/caveman, MIT) makes Claude Code, Codex and Antigravity answer tersely: its rules at
+//   the start of every session and a one-line reminder with every prompt (two hooks in Claude Code's settings that print
+//   the app's copies), the rules in Codex's AGENTS.md, and a plugin in Antigravity. Off: the hooks, the rules and the
+//   plugin go.
 // One the user set up themselves (their own rtk hook, the caveman plugin or the hooks its installer wires) takes the app's
 // place and switches the same way: off takes it out of the tools' settings and keeps it, on puts it back as it was. The
 // app keeps it current too: an rtk older than the app's is replaced by it where it lies (rtk has no updater; one a
@@ -15,6 +17,7 @@
 const { execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const KINDS = ['rtk', 'caveman'];
@@ -25,35 +28,53 @@ const STATE_KEY = 'tokenSaversState';
 
 /**
  * `ownDir`: the app's folder for them; `bundled`: { rtk, caveman }, what the app ships (rtk.exe, the caveman folder);
- * `claudeDir` and `codexDir`: where Claude Code and Codex keep their settings (CLAUDE_CONFIG_DIR, CODEX_HOME), which rtk
- * reads too. `which(name)`: a program on PATH, for an rtk of the user's own.
+ * `claudeDir`, `codexDir` and `home`: where Claude Code, Codex and Antigravity keep their settings, which rtk reads too.
+ * `which(name)`: a program on PATH, for an rtk of the user's own.
  */
-function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, usable = true }) {
+function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = os.homedir(), which, usable = true }) {
   const binDir = path.join(ownDir, 'bin');
   const ourRtk = path.join(binDir, 'rtk.exe');
+  const localRtk = path.join(home, '.local', 'bin', 'rtk.exe');
+  const localMark = path.join(binDir, 'local-rtk.sha256');
   const ourCaveman = path.join(ownDir, 'caveman');
   const settingsFile = path.join(claudeDir, 'settings.json');
+  const codexHooks = path.join(codexDir, 'hooks.json');
+  const geminiDir = path.join(home, '.gemini');
+  const agyConfig = path.join(geminiDir, 'config', 'config.json');
+  const agyPlugins = path.join(geminiDir, 'config', 'plugins');
+  const agyRtkHooks = path.join(agyPlugins, 'rtk', 'hooks.json');
+  const agyCaveman = path.join(agyPlugins, 'caveman');
   const codex = () => fs.existsSync(codexDir);
+  const agy = () => ['antigravity-cli', 'antigravity', 'antigravity-ide'].some((d) => fs.existsSync(path.join(geminiDir, d)));
   const exists = (p) => !!p && fs.existsSync(p);
 
   // rtk's hook rewrites `git status` into `rtk git status` and its own hook command is a plain `rtk`, so it has to be on
-  // the PATH: the app's terminals have binDir on theirs (terminals.js). Where it isn't (Claude started elsewhere), the
-  // hook does nothing at all and commands run as they are. Claude Code runs hooks with Git Bash, Codex with cmd.exe (its
-  // `commandWindows`, which it takes over `command` on Windows), so each gets the guard in its own shell.
+  // the PATH: the app's terminals have binDir on theirs (terminals.js), and ~/.local/bin gets a copy unless an rtk is
+  // there already. Where it's on neither (Claude started elsewhere), the hook does nothing at all and commands run as they
+  // are. Claude Code runs hooks with Git Bash, Codex and Antigravity with cmd.exe, so each gets the guard in its own shell.
   const GUARD_MARK = 'atalay-terminal-rtk';
   const guarded = (tool) => `sh -c 'command -v rtk >/dev/null 2>&1 && exec rtk hook ${tool}; cat >/dev/null' ${GUARD_MARK}`;
-  const CODEX_GUARD = 'where /q rtk && rtk hook codex || more >nul';
+  const CODEX_GUARD = 'where /q rtk & if errorlevel 1 (more >nul) else (rtk hook codex)';
+  const OLD_CODEX_GUARD = 'where /q rtk && rtk hook codex || more >nul';
+  const isCodexGuard = (cmd) => cmd === CODEX_GUARD || cmd === OLD_CODEX_GUARD;
+  const AGY_GUARD = 'where /q rtk & if errorlevel 1 (more >nul & echo {"decision":"allow"}) else (rtk hook antigravity)';
   // What marks the app's caveman hooks and Codex notes, so they come out again and nothing else does.
   const MARK = 'atalay-terminal/caveman/';
+  const hasMark = (cmd) => typeof cmd === 'string' && cmd.replace(/\\/g, '/').includes(MARK);
   const CODEX_START = '<!-- atalay-terminal: caveman -->', CODEX_END = '<!-- /atalay-terminal: caveman -->';
 
+  const decisionsFile = path.join(ownDir, 'token-savers.json');
   const shipped = (kind) => usable && (kind === 'rtk' ? exists(bundled.rtk) : exists(bundled.caveman && path.join(bundled.caveman, 'rules.md')));
-  const record = (kind) => ({ ...((settings.get(STATE_KEY) || {})[kind] || {}) });
-  const saveRecord = (kind, rec) => settings.set(STATE_KEY, { ...(settings.get(STATE_KEY) || {}), [kind]: rec });
+  const record = (kind) => ({ ...((readJSON(decisionsFile) || {})[kind] || (settings.get(STATE_KEY) || {})[kind] || {}) });
+  const saveRecord = (kind, rec) => {
+    const all = { ...(settings.get(STATE_KEY) || {}), ...(readJSON(decisionsFile) || {}), [kind]: rec };
+    writeJSON(decisionsFile, all);
+    settings.set(STATE_KEY, all);
+  };
   const decided = (kind) => (typeof record(kind).on === 'boolean' ? record(kind).on : settings.get(KEY[kind]));
   const available = (kind) => shipped(kind) || !!theirs(kind) || !!record(kind).kept;
 
-  // ---------- Claude Code's settings ----------
+  // ---------- JSON settings files ----------
   // Unreadable settings (a stray comma while the user edits them) are left as they are: writing them back would lose
   // the rest of what's in them.
   function readJSON(file) {
@@ -63,6 +84,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     } catch {
       return {};
     }
+    if (!text.trim()) return {};
     try {
       const j = JSON.parse(text.replace(/^﻿/, ''));
       return j && typeof j === 'object' && !Array.isArray(j) ? j : null;
@@ -71,10 +93,22 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     }
   }
   function writeJSON(file, json) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n');
-    fs.renameSync(tmp, file);
+    let target = file;
+    try {
+      target = fs.realpathSync(file);
+    } catch {}
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const data = JSON.stringify(json, null, 2) + '\n';
+    const tmp = `${target}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, data);
+    try {
+      fs.renameSync(tmp, target);
+    } catch {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {}
+      fs.writeFileSync(target, data);
+    }
   }
   /** Claude Code's settings with their hooks changed, the rest as they were (and the file untouched when nothing is). */
   function editSettings(change) {
@@ -88,11 +122,11 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     if (JSON.stringify(json) !== was) writeJSON(settingsFile, json);
   }
 
-  /** Every hook (its command and where it is) in a settings file: Claude Code's, or Codex's hooks.json. */
-  function hooksOf(file) {
+  /** Every hook (its command and where it is) in a settings file: Claude Code's, Codex's or Antigravity's hooks.json. */
+  function hooksOf(file, key = 'hooks') {
     const json = readJSON(file) || {};
     const out = [];
-    for (const [event, list] of Object.entries(json.hooks && typeof json.hooks === 'object' ? json.hooks : {})) {
+    for (const [event, list] of Object.entries(json[key] && typeof json[key] === 'object' ? json[key] : {})) {
       for (const entry of Array.isArray(list) ? list : []) {
         for (const h of (entry && entry.hooks) || []) if (h && typeof h.command === 'string') out.push({ event, entry, hook: h });
       }
@@ -103,19 +137,43 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
   const words = (cmd) => [...cmd.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
   function isRtkHook(h) {
     const cmd = h.command;
-    if (cmd.includes(GUARD_MARK) || h.commandWindows === CODEX_GUARD) return false;
+    if (cmd.includes(GUARD_MARK) || isCodexGuard(h.commandWindows) || cmd === AGY_GUARD) return false;
     if (cmd.includes('rtk-rewrite')) return true;
     const w = words(cmd);
     return w.length >= 2 && path.basename(w[0].replace(/\\/g, '/')).replace(/\.exe$/i, '').toLowerCase() === 'rtk' && w[1] === 'hook';
   }
-  const isTheirCaveman = (h) => h.command.includes('caveman') && !h.command.includes(MARK);
+  const isTheirCaveman = (h) => h.command.includes('caveman') && !hasMark(h.command);
+
+  function agyPluginEnabled(name) {
+    if (!exists(path.join(agyPlugins, name, 'plugin.json'))) return false;
+    const plugins = (readJSON(agyConfig) || {}).plugins;
+    const entry = plugins && typeof plugins === 'object' ? plugins[name] : null;
+    return !entry || entry.enabled !== false;
+  }
+
+  function setAgyPlugin(name, on) {
+    if (!exists(path.join(agyPlugins, name, 'plugin.json'))) return false;
+    const json = readJSON(agyConfig);
+    if (!json) return false;
+    const plugins = json.plugins && typeof json.plugins === 'object' && !Array.isArray(json.plugins) ? { ...json.plugins } : {};
+    const entry = plugins[name] && typeof plugins[name] === 'object' ? { ...plugins[name] } : {};
+    if ((entry.enabled ?? true) === on) return false;
+    entry.enabled = on;
+    plugins[name] = entry;
+    json.plugins = plugins;
+    writeJSON(agyConfig, json);
+    return true;
+  }
 
   /** What one the user set up themselves runs: their rtk hook's program, the caveman plugin, or "hooks" for the hooks
    *  caveman's installer wires into Claude Code's settings where its plugin wouldn't install. */
   function theirs(kind) {
     if (kind === 'rtk') {
-      const own = hooksOf(settingsFile).find((x) => isRtkHook(x.hook));
-      return own ? words(own.hook.command)[0] || 'rtk' : null;
+      const claudeOwn = hooksOf(settingsFile).find((x) => isRtkHook(x.hook));
+      if (claudeOwn) return words(claudeOwn.hook.command)[0] || 'rtk';
+      if (hooksOf(settingsFile).some((x) => x.hook.command.includes(GUARD_MARK))) return null;
+      const other = [...hooksOf(codexHooks), ...hooksOf(agyRtkHooks, 'rtk-rewrite')].find((x) => isRtkHook(x.hook));
+      return other ? words(other.hook.command)[0] || 'rtk' : null;
     }
     const plugins = (readJSON(settingsFile) || {}).enabledPlugins || {};
     const plugin = Object.keys(plugins).find((k) => k.startsWith('caveman@') && plugins[k] === true);
@@ -123,39 +181,96 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     return hooksOf(settingsFile).some((x) => isTheirCaveman(x.hook)) ? 'hooks' : null;
   }
 
-  /** Whether the app's own is set up: its hook in Claude Code's settings. */
-  const installed = (kind) => hooksOf(settingsFile).some((x) => x.hook.command.includes(kind === 'rtk' ? GUARD_MARK : MARK));
+  const ourAgyRtk = () => hooksOf(agyRtkHooks, 'rtk-rewrite').some((x) => x.hook.command === AGY_GUARD);
+
+  function ourAgyCaveman() {
+    const json = readJSON(path.join(agyCaveman, 'hooks.json')) || {};
+    const list = (json.caveman && Array.isArray(json.caveman.PreInvocation) && json.caveman.PreInvocation) || [];
+    return list.some((h) => h && hasMark(h.command));
+  }
+
+  /** Whether the app's own is set up: its hook in Claude Code's settings, Codex's hooks or Antigravity's plugins. */
+  function installed(kind) {
+    if (kind === 'rtk') {
+      return (
+        hooksOf(settingsFile).some((x) => x.hook.command.includes(GUARD_MARK)) ||
+        hooksOf(codexHooks).some((x) => isCodexGuard(x.hook.commandWindows)) ||
+        (ourAgyRtk() && agyPluginEnabled('rtk')) ||
+        (!theirs('rtk') && agyPluginEnabled('rtk'))
+      );
+    }
+    let codexOn = false;
+    try {
+      codexOn = fs.readFileSync(path.join(codexDir, 'AGENTS.md'), 'utf8').includes(CODEX_START);
+    } catch {}
+    return (
+      hooksOf(settingsFile).some((x) => hasMark(x.hook.command)) ||
+      codexOn ||
+      (ourAgyCaveman() && agyPluginEnabled('caveman')) ||
+      (!theirs('caveman') && agyPluginEnabled('caveman'))
+    );
+  }
+
+  /** Whether the app's copy and every installed tool's hook/plugin are current (a tool installed later gets it too). */
+  function synced(kind) {
+    if (!hooksOf(settingsFile).some((x) => (kind === 'rtk' ? x.hook.command.includes(GUARD_MARK) : hasMark(x.hook.command)))) return false;
+    if (kind === 'rtk') {
+      if (exists(bundled.rtk) && !sameFile(bundled.rtk, ourRtk)) return false;
+      if (exists(bundled.rtk) && (!exists(localRtk) || ourLocalRtk()) && !sameFile(bundled.rtk, localRtk)) return false;
+      if (codex() && !hooksOf(codexHooks).some((x) => x.hook.commandWindows === CODEX_GUARD)) return false;
+      if (agy() && ((!ourAgyRtk() && !exists(path.join(agyPlugins, 'rtk', 'plugin.json'))) || !agyPluginEnabled('rtk'))) return false;
+      return true;
+    }
+    if (exists(bundled.caveman) && !sameFile(path.join(bundled.caveman, 'rules.md'), path.join(ourCaveman, 'rules.md'))) return false;
+    if (codex()) {
+      let notes = '';
+      try {
+        notes = fs.readFileSync(path.join(codexDir, 'AGENTS.md'), 'utf8');
+      } catch {}
+      if (!notes.includes(CODEX_START)) return false;
+    }
+    if (agy() && (!exists(agyCaveman) || !agyPluginEnabled('caveman'))) return false;
+    return true;
+  }
 
   /** Takes the hooks `match` picks out of a settings file (an entry left with none goes too), and returns them with
    *  where they were, to put back later. */
-  function takeOutHooks(file, match) {
+  function takeOutHooks(file, match, key = 'hooks') {
     const json = exists(file) ? readJSON(file) : null;
-    if (!json || !json.hooks || typeof json.hooks !== 'object') return [];
+    if (!json || !json[key] || typeof json[key] !== 'object') return [];
     const taken = [];
-    for (const [event, list] of Object.entries(json.hooks)) {
+    for (const [event, list] of Object.entries(json[key])) {
       if (!Array.isArray(list)) continue;
-      json.hooks[event] = list
+      json[key][event] = list
         .map((entry) => {
           if (!entry || !Array.isArray(entry.hooks)) return entry;
           const picked = entry.hooks.filter((h) => h && typeof h.command === 'string' && match(h));
           if (!picked.length) return entry;
-          for (const hook of picked) taken.push({ file, event, matcher: entry.matcher ?? null, hook });
+          for (const hook of picked) taken.push({ file, key, event, matcher: entry.matcher ?? null, hook });
           const rest = entry.hooks.filter((h) => !picked.includes(h));
           return rest.length ? { ...entry, hooks: rest } : null;
         })
         .filter(Boolean);
-      if (!json.hooks[event].length) delete json.hooks[event];
+      if (!json[key][event].length) delete json[key][event];
     }
-    if (!Object.keys(json.hooks).length) delete json.hooks;
+    if (!Object.keys(json[key]).length) delete json[key];
     if (taken.length) writeJSON(file, json);
     return taken;
   }
 
-  /** The user's own out of the tools' settings, and what it takes to put it back: their rtk hooks (Claude Code's and
-   *  Codex's), the caveman plugin turned off as `claude plugin disable` leaves it, or its installer's hooks. */
+  /** The user's own out of the tools' settings, and what it takes to put it back: their rtk hooks (Claude Code's,
+   *  Codex's and Antigravity's), the caveman plugin turned off as `claude plugin disable` leaves it, or its installer's hooks. */
   function takeOut(kind) {
     if (kind === 'rtk') {
-      return { hooks: [...takeOutHooks(settingsFile, isRtkHook), ...takeOutHooks(path.join(codexDir, 'hooks.json'), isRtkHook)] };
+      const out = {
+        hooks: [
+          ...takeOutHooks(settingsFile, isRtkHook),
+          ...takeOutHooks(codexHooks, isRtkHook),
+          ...takeOutHooks(agyRtkHooks, isRtkHook, 'rtk-rewrite'),
+        ],
+      };
+      if (setAgyPlugin('rtk', false)) out.agyPlugin = 'rtk';
+      return out;
     }
     const json = readJSON(settingsFile);
     const plugins = [];
@@ -164,10 +279,13 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
       for (const k of plugins) json.enabledPlugins[k] = false;
       if (plugins.length) writeJSON(settingsFile, json);
     }
-    return { plugins, hooks: takeOutHooks(settingsFile, isTheirCaveman) };
+    const out = { plugins, hooks: takeOutHooks(settingsFile, isTheirCaveman) };
+    if (!ourAgyCaveman() && setAgyPlugin('caveman', false)) out.agyPlugin = 'caveman';
+    return out;
   }
 
   function putBack(kept) {
+    if (typeof kept.agyPlugin === 'string') setAgyPlugin(kept.agyPlugin, true);
     if (Array.isArray(kept.plugins) && kept.plugins.length) {
       const json = readJSON(settingsFile);
       if (json) {
@@ -185,13 +303,14 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     for (const [file, taken] of byFile) {
       const json = exists(file) ? readJSON(file) : {};
       if (!json) continue;
-      json.hooks = json.hooks && typeof json.hooks === 'object' ? json.hooks : {};
       for (const r of taken) {
-        const entries = Array.isArray(json.hooks[r.event]) ? json.hooks[r.event] : [];
+        const key = r.key || 'hooks';
+        json[key] = json[key] && typeof json[key] === 'object' ? json[key] : {};
+        const entries = Array.isArray(json[key][r.event]) ? json[key][r.event] : [];
         // Set up again by the user meanwhile: not twice.
         if (entries.some((e) => e && Array.isArray(e.hooks) && e.hooks.some((h) => h && h.command === r.hook.command))) continue;
         entries.push({ ...(r.matcher != null && { matcher: r.matcher }), hooks: [r.hook] });
-        json.hooks[r.event] = entries;
+        json[key][r.event] = entries;
       }
       writeJSON(file, json);
     }
@@ -202,7 +321,30 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
   function removeOurs(kind) {
     if (kind === 'caveman') return uninstallCaveman();
     takeOutHooks(settingsFile, (h) => h.command.includes(GUARD_MARK));
-    takeOutHooks(path.join(codexDir, 'hooks.json'), (h) => h.commandWindows === CODEX_GUARD);
+    takeOutHooks(codexHooks, (h) => isCodexGuard(h.commandWindows));
+    if (ourAgyRtk()) {
+      fs.rmSync(path.join(agyPlugins, 'rtk'), { recursive: true, force: true });
+    }
+    const userBin = rtkBinary(theirs('rtk'));
+    if (!userBin || path.resolve(userBin) !== path.resolve(localRtk)) {
+      removeLocalRtk();
+    }
+  }
+
+  /** The rtk binary a user's hook runs: its path, or for a plain `rtk` the first of the places installers put it. */
+  function rtkBinary(bin) {
+    if (!bin) return null;
+    const expanded = bin.startsWith('~/') || bin.startsWith('~\\') ? path.join(home, bin.slice(2)) : bin;
+    if (!/^rtk(\.exe)?$/i.test(path.basename(expanded.replace(/\\/g, '/')))) return null;
+    if (path.isAbsolute(expanded)) {
+      if (exists(expanded)) return expanded;
+      if (!/\.exe$/i.test(expanded) && exists(`${expanded}.exe`)) return `${expanded}.exe`;
+      return null;
+    }
+    const found = which && which('rtk');
+    if (found && exists(found)) return found;
+    const places = [path.join(home, '.local', 'bin', 'rtk.exe'), path.join(home, '.cargo', 'bin', 'rtk.exe')];
+    return places.find(exists) || null;
   }
 
   /** `rtk --version`'s numbers ("rtk 1.1.0"). */
@@ -223,7 +365,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
       if (at > 0) autoUpdate(own.slice(at + 1));
       return;
     }
-    const named = own && own !== 'rtk' && path.isAbsolute(own) ? own : which('rtk');
+    const named = rtkBinary(own);
     if (!named || !exists(bundled.rtk) || path.resolve(named) === path.resolve(ourRtk)) return;
     if (/[\\/](WinGet|scoop|chocolatey)[\\/]/i.test(named) || !/^rtk(\.exe)?$/i.test(path.basename(named))) return;
     // What an earlier update moved aside (it was running, so it couldn't be deleted then) goes now.
@@ -275,33 +417,84 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
   // ---------- rtk ----------
   function run(args, bin = ourRtk) {
     return new Promise((resolve) => {
-      execFile(bin, args, { windowsHide: true, timeout: 30_000, maxBuffer: 4 << 20 }, (err, stdout) => resolve(err && !stdout ? '' : String(stdout || '')));
+      execFile(
+        bin,
+        args,
+        {
+          windowsHide: true,
+          timeout: 30_000,
+          maxBuffer: 4 << 20,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexDir, HOME: home, USERPROFILE: home },
+        },
+        (err, stdout) => resolve(err && !stdout ? '' : String(stdout || '')),
+      );
     });
   }
+
+  const fileHash = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 
   const sameFile = (a, b) => {
     try {
       if (fs.statSync(a).size !== fs.statSync(b).size) return false;
-      const hash = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
-      return hash(a) === hash(b);
+      return fileHash(a) === fileHash(b);
     } catch {
       return false;
     }
   };
 
-  /** The app's rtk in its own folder: a running one (a hook at work) can't be written over, but it can be moved aside. */
+  /** Whether ~/.local/bin/rtk.exe is the copy the app placed there (tracked by its SHA-256 in localMark, or matching ourRtk). */
+  function ourLocalRtk() {
+    if (!exists(localRtk)) return false;
+    try {
+      const mark = fs.readFileSync(localMark, 'utf8').trim();
+      if (mark) return fileHash(localRtk) === mark;
+    } catch {}
+    return exists(ourRtk) && sameFile(localRtk, ourRtk);
+  }
+
+  function removeLocalRtk() {
+    if (ourLocalRtk()) {
+      try {
+        fs.unlinkSync(localRtk);
+      } catch {}
+    }
+    try {
+      fs.unlinkSync(localMark);
+    } catch {}
+  }
+
+  /** The app's rtk in its own folder (and ~/.local/bin unless another rtk is there): a running one can be moved aside. */
   function placeRtk() {
     fs.mkdirSync(binDir, { recursive: true });
     for (const f of fs.readdirSync(binDir)) if (/^rtk\.exe\.old-/.test(f)) fs.rm(path.join(binDir, f), { force: true }, () => {});
-    if (sameFile(bundled.rtk, ourRtk)) return;
-    try {
-      fs.copyFileSync(bundled.rtk, ourRtk);
-    } catch {
-      fs.renameSync(ourRtk, `${ourRtk}.old-${Date.now()}`);
-      fs.copyFileSync(bundled.rtk, ourRtk);
+    const updateLocal = !exists(localRtk) || ourLocalRtk();
+    if (!sameFile(bundled.rtk, ourRtk)) {
+      try {
+        fs.copyFileSync(bundled.rtk, ourRtk);
+      } catch {
+        fs.renameSync(ourRtk, `${ourRtk}.old-${Date.now()}`);
+        fs.copyFileSync(bundled.rtk, ourRtk);
+      }
+      const licence = path.join(path.dirname(bundled.rtk), 'rtk-LICENSE');
+      if (exists(licence)) fs.copyFileSync(licence, path.join(binDir, 'rtk-LICENSE'));
     }
-    const licence = path.join(path.dirname(bundled.rtk), 'rtk-LICENSE');
-    if (exists(licence)) fs.copyFileSync(licence, path.join(binDir, 'rtk-LICENSE'));
+    if (updateLocal) {
+      try {
+        const localDir = path.dirname(localRtk);
+        fs.mkdirSync(localDir, { recursive: true });
+        for (const f of fs.readdirSync(localDir)) if (/^rtk\.exe\.old-/.test(f)) fs.rm(path.join(localDir, f), { force: true }, () => {});
+        if (!sameFile(ourRtk, localRtk)) {
+          try {
+            fs.copyFileSync(ourRtk, localRtk);
+          } catch {
+            fs.renameSync(localRtk, `${localRtk}.old-${Date.now()}`);
+            fs.copyFileSync(ourRtk, localRtk);
+          }
+        }
+        fs.writeFileSync(localMark, fileHash(localRtk) + '\n');
+      } catch {}
+    }
   }
 
   /** Every hook command `from` in every event becomes `to`; the same hook twice in one event goes once. */
@@ -327,23 +520,29 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     }
   }
 
-  /** rtk's hooks in Claude Code's settings and Codex's hooks.json, guarded (`guarding`) or plain again. */
+  /** rtk's hooks in Claude Code's settings, Codex's hooks.json and Antigravity's rtk plugin, guarded (`guarding`) or plain again. */
   function rewriteRtkHooks(guarding) {
     editSettings((hooks) => (guarding ? rewrite(hooks, 'rtk hook claude', guarded('claude')) : rewrite(hooks, guarded('claude'), 'rtk hook claude')));
-    const file = path.join(codexDir, 'hooks.json');
-    const json = exists(file) ? readJSON(file) : null;
-    if (!json || !json.hooks || typeof json.hooks !== 'object') return;
-    const was = JSON.stringify(json);
-    for (const list of Object.values(json.hooks)) {
-      for (const entry of Array.isArray(list) ? list : []) {
-        for (const h of (entry && entry.hooks) || []) {
-          if (!h || h.command !== 'rtk hook codex') continue;
-          if (guarding) h.commandWindows = CODEX_GUARD;
-          else if (h.commandWindows === CODEX_GUARD) delete h.commandWindows;
+    const codexJson = exists(codexHooks) ? readJSON(codexHooks) : null;
+    if (codexJson && codexJson.hooks && typeof codexJson.hooks === 'object') {
+      const was = JSON.stringify(codexJson);
+      for (const list of Object.values(codexJson.hooks)) {
+        for (const entry of Array.isArray(list) ? list : []) {
+          for (const h of (entry && entry.hooks) || []) {
+            if (!h || h.command !== 'rtk hook codex') continue;
+            if (guarding) h.commandWindows = CODEX_GUARD;
+            else if (isCodexGuard(h.commandWindows)) delete h.commandWindows;
+          }
         }
       }
+      if (JSON.stringify(codexJson) !== was) writeJSON(codexHooks, codexJson);
     }
-    if (JSON.stringify(json) !== was) writeJSON(file, json);
+    const agyJson = exists(agyRtkHooks) ? readJSON(agyRtkHooks) : null;
+    if (agyJson && agyJson['rtk-rewrite'] && typeof agyJson['rtk-rewrite'] === 'object') {
+      const was = JSON.stringify(agyJson);
+      rewrite(agyJson['rtk-rewrite'], guarding ? 'rtk hook antigravity' : AGY_GUARD, guarding ? AGY_GUARD : 'rtk hook antigravity');
+      if (JSON.stringify(agyJson) !== was) writeJSON(agyRtkHooks, agyJson);
+    }
   }
 
   async function installRtk() {
@@ -353,15 +552,24 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     rewriteRtkHooks(false);
     await run(['init', '-g', '--auto-patch']);
     if (codex()) await run(['init', '-g', '--codex']);
+    if (agy()) {
+      if (!exists(path.join(agyPlugins, 'rtk', 'plugin.json')) || ourAgyRtk()) {
+        await run(['init', '-g', '--agent', 'antigravity']);
+      }
+      setAgyPlugin('rtk', true);
+    }
     rewriteRtkHooks(true);
   }
 
   async function uninstallRtk() {
     if (!exists(ourRtk)) return removeOurs('rtk');
+    const hadOurAgy = ourAgyRtk();
     // rtk takes out the hooks it knows, the plain ones.
     rewriteRtkHooks(false);
     await run(['init', '-g', '--uninstall']);
     if (codex()) await run(['init', '-g', '--codex', '--uninstall']);
+    if (hadOurAgy) await run(['init', '-g', '--agent', 'antigravity', '--uninstall']);
+    removeLocalRtk();
   }
 
   // ---------- caveman ----------
@@ -378,7 +586,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     const list = hooks[event]
       .map((entry) => {
         if (!entry || !Array.isArray(entry.hooks)) return entry;
-        const kept = entry.hooks.filter((h) => !(h && typeof h.command === 'string' && h.command.includes(MARK)));
+        const kept = entry.hooks.filter((h) => !(h && hasMark(h.command)));
         return kept.length ? { ...entry, hooks: kept } : null;
       })
       .filter(Boolean);
@@ -399,6 +607,8 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
       // The notes go with the line break put before them and the one after.
       let lo = a, hi = b + CODEX_END.length;
       if (lo > 0 && text[lo - 1] === '\n') lo--;
+      if (lo > 0 && text[lo - 1] === '\r') lo--;
+      if (text[hi] === '\r') hi++;
       if (text[hi] === '\n') hi++;
       text = text.slice(0, lo) + text.slice(hi);
     }
@@ -410,6 +620,37 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
     fs.writeFileSync(file, next);
   }
 
+  /** Antigravity's caveman plugin: its rules at the start of every session, its skill, and the one-line reminder before
+   *  every prompt (`PreInvocation`, run via `cmd /c`). One the user installed themselves stays theirs. */
+  function installAgyCaveman(text, remind) {
+    if (exists(agyCaveman) && !ourAgyCaveman()) {
+      setAgyPlugin('caveman', true);
+      return;
+    }
+    const agyRemind = path.join(ourCaveman, 'agy-remind.json');
+    const prompt = ((readJSON(remind) || {}).hookSpecificOutput || {}).additionalContext;
+    if (prompt) fs.writeFileSync(agyRemind, JSON.stringify({ injectSteps: [{ ephemeralMessage: prompt }] }) + '\n');
+    const rulesDir = path.join(agyCaveman, 'rules');
+    const skillDir = path.join(agyCaveman, 'skills', 'caveman');
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.mkdirSync(skillDir, { recursive: true });
+    const desc = 'Terse caveman responses that cut output tokens while keeping full technical accuracy.';
+    writeJSON(path.join(agyCaveman, 'plugin.json'), {
+      name: 'caveman',
+      version: '1.0.0',
+      description: desc,
+      repository: 'https://github.com/JuliusBrussee/caveman',
+    });
+    fs.writeFileSync(path.join(rulesDir, 'AGENTS.md'), `${CODEX_START}\n${text}\n${CODEX_END}\n`);
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: caveman\ndescription: ${desc}\n---\n\n${text}\n`);
+    writeJSON(path.join(agyCaveman, 'hooks.json'), {
+      caveman: {
+        PreInvocation: [{ type: 'command', command: `type "${agyRemind}"`, timeout: 5 }],
+      },
+    });
+    setAgyPlugin('caveman', true);
+  }
+
   function installCaveman() {
     if (!exists(bundled.caveman)) return;
     fs.mkdirSync(ourCaveman, { recursive: true });
@@ -419,10 +660,12 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
       addHook(hooks, 'SessionStart', `cat ${shellQuote(rules)}`);
       addHook(hooks, 'UserPromptSubmit', `cat ${shellQuote(remind)}`);
     });
+    const text = fs.readFileSync(rules, 'utf8').trim();
     if (codex()) {
-      const block = `${CODEX_START}\n${fs.readFileSync(rules, 'utf8').trim()}\n${CODEX_END}\n`;
+      const block = `${CODEX_START}\n${text}\n${CODEX_END}\n`;
       editCodexNotes((notes) => `${notes}\n${block}`);
     }
+    if (agy()) installAgyCaveman(text, remind);
   }
 
   function uninstallCaveman() {
@@ -430,6 +673,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
       for (const event of ['SessionStart', 'UserPromptSubmit']) removeHook(hooks, event);
     });
     editCodexNotes((notes) => notes);
+    if (ourAgyCaveman()) fs.rmSync(agyCaveman, { recursive: true, force: true });
     fs.rmSync(ourCaveman, { recursive: true, force: true });
   }
 
@@ -454,11 +698,16 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
         }
         const own = theirs(kind);
         if (own) await keepCurrent(kind, own);
-        else if (!installed(kind)) await (kind === 'rtk' ? installRtk() : installCaveman());
+        else if (!synced(kind)) await (kind === 'rtk' ? installRtk() : installCaveman());
       } else if (theirs(kind)) {
         rec.kept = takeOut(kind);
         if (installed(kind)) removeOurs(kind);
       } else if (installed(kind)) {
+        if (kind === 'rtk' && !ourAgyRtk() && setAgyPlugin('rtk', false)) {
+          rec.kept = { agyPlugin: 'rtk' };
+        } else if (kind === 'caveman' && !ourAgyCaveman() && setAgyPlugin('caveman', false)) {
+          rec.kept = { agyPlugin: 'caveman' };
+        }
         await (kind === 'rtk' ? uninstallRtk() : uninstallCaveman());
       }
     } catch (e) {
@@ -481,7 +730,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
         const on = !!own || installed(kind);
         const s = { available: available(kind), on };
         if (kind === 'rtk' && on) {
-          const bin = own ? (exists(own) ? own : which('rtk')) : exists(ourRtk) ? ourRtk : null;
+          const bin = (own && rtkBinary(own)) || (exists(ourRtk) ? ourRtk : null);
           try {
             const sum = bin && JSON.parse(await run(['gain', '--format', 'json'], bin)).summary;
             if (sum) Object.assign(s, { saved: sum.total_saved, pct: sum.avg_savings_pct, commands: sum.total_commands });
@@ -511,7 +760,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, which, u
             } catch (e) {
               console.error(`savers: ${kind}:`, e.message);
             }
-          } else if (decided(kind) !== false && !installed(kind)) {
+          } else if (decided(kind) !== false && !synced(kind)) {
             await turn(kind, true);
           }
         }

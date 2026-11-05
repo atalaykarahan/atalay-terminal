@@ -3,12 +3,14 @@ import WebKit
 
 /// The token savers for the AI tools on this Mac, both shipped in the app and on from its first launch that has them,
 /// without asking; Settings turns each off (and on again).
-/// - rtk (github.com/rtk-ai/rtk, Apache-2.0) shortens what commands print before Claude Code or Codex reads it: the
-///   app's copy goes to Application Support (a path that outlives the app's updates) and sets itself up as `rtk init`
-///   does, a hook in Claude Code and its notes in Codex's AGENTS.md. Off: `rtk init --uninstall`.
-/// - caveman (github.com/JuliusBrussee/caveman, MIT) makes Claude Code and Codex answer tersely: its rules at the start
-///   of every session and a one-line reminder with every prompt (two hooks in Claude Code's settings that print the
-///   app's copies, no Node needed), and the rules in Codex's AGENTS.md. Off: the hooks and the rules go.
+/// - rtk (github.com/rtk-ai/rtk, Apache-2.0) shortens what commands print before Claude Code, Codex or Antigravity
+///   reads it: the app's copy goes to Application Support (a path that outlives the app's updates) and sets itself up as
+///   `rtk init` does, a hook in Claude Code, its notes and hook in Codex, and its plugin in Antigravity. Off: `rtk init
+///   --uninstall`.
+/// - caveman (github.com/JuliusBrussee/caveman, MIT) makes Claude Code, Codex and Antigravity answer tersely: its rules
+///   at the start of every session and a one-line reminder with every prompt (two hooks in Claude Code's settings that
+///   print the app's copies, no Node needed), the rules in Codex's AGENTS.md, and a plugin in Antigravity. Off: the
+///   hooks, the rules and the plugin go.
 /// One the user set up themselves (their own rtk hook, the caveman plugin or the hooks its installer wires) takes the
 /// app's place and switches the same way: off takes it out of the tools' settings and keeps it, on puts it back as it
 /// was. The app keeps it current too: an rtk older than the app's is replaced by it where it lies (rtk has no updater;
@@ -22,8 +24,17 @@ enum TokenSavers {
     private static let support = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         ?? URL(fileURLWithPath: HOME + "/Library/Application Support")).appendingPathComponent("atalay-terminal")
     private static var codex: Bool { FileManager.default.fileExists(atPath: HOME + "/.codex") }
+    private static var agy: Bool {
+        ["antigravity-cli", "antigravity", "antigravity-ide"].contains {
+            FileManager.default.fileExists(atPath: HOME + "/.gemini/" + $0)
+        }
+    }
     private static var settingsFile: String { CLAUDE_DIR + "/settings.json" }
     private static var codexHooks: String { HOME + "/.codex/hooks.json" }
+    private static var agyConfig: String { HOME + "/.gemini/config/config.json" }
+    private static var agyPlugins: String { HOME + "/.gemini/config/plugins" }
+    private static var agyRtkHooks: String { agyPlugins + "/rtk/hooks.json" }
+    private static var agyCaveman: URL { URL(fileURLWithPath: agyPlugins + "/caveman") }
 
     /// What the user decided for each, and what of their own the app took out when they turned it off: one file that
     /// every build of the app shares (the staging one sets up the same Claude Code). Before it, the decision was a default.
@@ -56,7 +67,7 @@ enum TokenSavers {
                 if let theirs = theirs(kind) {
                     keepCurrent(kind, theirs)
                     if installed(kind) { removeOurs(kind) }
-                } else if decided(kind) != false, !installed(kind) {
+                } else if decided(kind) != false, !synced(kind) {
                     turn(kind, true)
                 }
             }
@@ -88,11 +99,16 @@ enum TokenSavers {
                 putBack(kept)
                 rec["kept"] = nil
             }
-            if let theirs = theirs(kind) { keepCurrent(kind, theirs) } else if !installed(kind) { install(kind) }
+            if let theirs = theirs(kind) { keepCurrent(kind, theirs) } else if !synced(kind) { install(kind) }
         } else if theirs(kind) != nil {
             rec["kept"] = takeOut(kind)
             if installed(kind) { removeOurs(kind) }
         } else if installed(kind) {
+            if kind == .rtk, !ourAgyRtk, setAgyPlugin("rtk", false) {
+                rec["kept"] = ["agyPlugin": "rtk"]
+            } else if kind == .caveman, !ourAgyCaveman, setAgyPlugin("caveman", false) {
+                rec["kept"] = ["agyPlugin": "caveman"]
+            }
             uninstall(kind)
         }
         save(kind, rec)
@@ -103,7 +119,12 @@ enum TokenSavers {
     static func theirs(_ kind: Kind) -> String? {
         switch kind {
         case .rtk:
-            return commands(settingsFile).first(where: isRtkHook).map { String($0.split(separator: " ").first ?? "") }
+            if let own = commands(settingsFile).first(where: isRtkHook) {
+                return String(own.split(separator: " ").first ?? "")
+            }
+            guard !commands(settingsFile).contains(where: { $0.contains(guardMark) }) else { return nil }
+            let other = commands(codexHooks) + commands(agyRtkHooks, key: "rtk-rewrite")
+            return other.first(where: isRtkHook).map { String($0.split(separator: " ").first ?? "") }
         case .caveman:
             let plugins = readJSON(settingsFile)?["enabledPlugins"] as? [String: Any] ?? [:]
             if let plugin = plugins.first(where: { $0.key.hasPrefix("caveman@") && $0.value as? Bool == true })?.key { return plugin }
@@ -111,9 +132,41 @@ enum TokenSavers {
         }
     }
 
-    /// Whether the app's own is set up: its hook in Claude Code's settings.
+    /// Whether the app's own is set up: its hook in Claude Code's settings, Codex's hooks or Antigravity's plugins.
     private static func installed(_ kind: Kind) -> Bool {
-        commands(settingsFile).contains { $0.contains(kind == .rtk ? guardMark : mark) }
+        switch kind {
+        case .rtk:
+            return commands(settingsFile).contains { $0.contains(guardMark) }
+                || commands(codexHooks).contains { $0.contains(guardMark) }
+                || (ourAgyRtk && agyPluginEnabled("rtk"))
+                || (theirs(.rtk) == nil && agyPluginEnabled("rtk"))
+        case .caveman:
+            return commands(settingsFile).contains { $0.contains(mark) }
+                || ((try? String(contentsOfFile: HOME + "/.codex/AGENTS.md", encoding: .utf8))?.contains(codexStart) == true)
+                || (ourAgyCaveman && agyPluginEnabled("caveman"))
+                || (theirs(.caveman) == nil && agyPluginEnabled("caveman"))
+        }
+    }
+
+    /// Whether the app's copy and every installed tool's hook/plugin are current (a tool installed later gets it too).
+    private static func synced(_ kind: Kind) -> Bool {
+        guard commands(settingsFile).contains(where: { $0.contains(kind == .rtk ? guardMark : mark) }) else { return false }
+        let fm = FileManager.default
+        switch kind {
+        case .rtk:
+            if let src = bundledRtk, !fm.contentsEqual(atPath: src.path, andPath: ourRtk.path) { return false }
+            if codex, !commands(codexHooks).contains(where: { $0.contains(guardMark) }) { return false }
+            if agy, (!ourAgyRtk && !fm.fileExists(atPath: agyPlugins + "/rtk/plugin.json")) || !agyPluginEnabled("rtk") { return false }
+            return true
+        case .caveman:
+            if let src = bundledCaveman,
+               !fm.contentsEqual(atPath: src.appendingPathComponent("rules.md").path, andPath: ourCaveman.appendingPathComponent("rules.md").path) {
+                return false
+            }
+            if codex, ((try? String(contentsOfFile: HOME + "/.codex/AGENTS.md", encoding: .utf8))?.contains(codexStart) != true) { return false }
+            if agy, !fm.fileExists(atPath: agyCaveman.path) || !agyPluginEnabled("caveman") { return false }
+            return true
+        }
     }
 
     private static func install(_ kind: Kind) {
@@ -136,6 +189,9 @@ enum TokenSavers {
         switch kind {
         case .rtk:
             for file in [settingsFile, codexHooks] { _ = takeOutHooks(file) { $0.contains(guardMark) } }
+            if ourAgyRtk {
+                try? FileManager.default.removeItem(atPath: agyPlugins + "/rtk")
+            }
             if (try? FileManager.default.destinationOfSymbolicLink(atPath: localLink.path)) == ourRtk.path {
                 try? FileManager.default.removeItem(at: localLink)
             }
@@ -156,12 +212,40 @@ enum TokenSavers {
 
     private static func isTheirCaveman(_ cmd: String) -> Bool { cmd.contains("caveman") && !cmd.contains(mark) }
 
-    /// The user's own out of the tools' settings, and what it takes to put it back: their rtk hooks (Claude Code's and
-    /// Codex's), the caveman plugin turned off as `claude plugin disable` leaves it, or its installer's hooks.
+    private static func agyPluginEnabled(_ name: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: agyPlugins + "/" + name + "/plugin.json") else { return false }
+        let plugins = readJSON(agyConfig)?["plugins"] as? [String: Any]
+        let entry = plugins?[name] as? [String: Any]
+        return entry?["enabled"] as? Bool != false
+    }
+
+    @discardableResult
+    private static func setAgyPlugin(_ name: String, _ on: Bool) -> Bool {
+        guard FileManager.default.fileExists(atPath: agyPlugins + "/" + name + "/plugin.json") else { return false }
+        var changed = false
+        editJSON(agyConfig, create: true) { json in
+            var plugins = json["plugins"] as? [String: Any] ?? [:]
+            var entry = plugins[name] as? [String: Any] ?? [:]
+            guard (entry["enabled"] as? Bool ?? true) != on else { return false }
+            entry["enabled"] = on
+            plugins[name] = entry
+            json["plugins"] = plugins
+            changed = true
+            return true
+        }
+        return changed
+    }
+
+    /// The user's own out of the tools' settings, and what it takes to put it back: their rtk hooks (Claude Code's,
+    /// Codex's and Antigravity's), the caveman plugin turned off as `claude plugin disable` leaves it, or its installer's hooks.
     private static func takeOut(_ kind: Kind) -> [String: Any] {
         switch kind {
         case .rtk:
-            return ["hooks": takeOutHooks(settingsFile, isRtkHook) + takeOutHooks(codexHooks, isRtkHook)]
+            var out: [String: Any] = ["hooks": takeOutHooks(settingsFile, isRtkHook)
+                + takeOutHooks(codexHooks, isRtkHook)
+                + takeOutHooks(agyRtkHooks, key: "rtk-rewrite", isRtkHook)]
+            if setAgyPlugin("rtk", false) { out["agyPlugin"] = "rtk" }
+            return out
         case .caveman:
             var plugins: [String] = []
             editJSON(settingsFile) { json in
@@ -171,11 +255,16 @@ enum TokenSavers {
                 json["enabledPlugins"] = enabled
                 return !plugins.isEmpty
             }
-            return ["plugins": plugins, "hooks": takeOutHooks(settingsFile, isTheirCaveman)]
+            var out: [String: Any] = ["plugins": plugins, "hooks": takeOutHooks(settingsFile, isTheirCaveman)]
+            if !ourAgyCaveman, setAgyPlugin("caveman", false) { out["agyPlugin"] = "caveman" }
+            return out
         }
     }
 
     private static func putBack(_ kept: [String: Any]) {
+        if let agyPlugin = kept["agyPlugin"] as? String {
+            setAgyPlugin(agyPlugin, true)
+        }
         if let plugins = kept["plugins"] as? [String], !plugins.isEmpty {
             editJSON(settingsFile) { json in
                 var enabled = json["enabledPlugins"] as? [String: Any] ?? [:]
@@ -187,8 +276,9 @@ enum TokenSavers {
         let hooks = kept["hooks"] as? [[String: Any]] ?? []
         for (file, taken) in Dictionary(grouping: hooks, by: { $0["file"] as? String ?? "" }) where !file.isEmpty {
             editJSON(file, create: true) { json in
-                var all = json["hooks"] as? [String: Any] ?? [:]
                 for r in taken {
+                    let key = r["key"] as? String ?? "hooks"
+                    var all = json[key] as? [String: Any] ?? [:]
                     guard let event = r["event"] as? String, let hook = r["hook"] as? [String: Any], let cmd = hook["command"] as? String
                     else { continue }
                     var entries = all[event] as? [[String: Any]] ?? []
@@ -199,19 +289,19 @@ enum TokenSavers {
                     entry["matcher"] = r["matcher"]
                     entries.append(entry)
                     all[event] = entries
+                    json[key] = all
                 }
-                json["hooks"] = all
                 return true
             }
         }
     }
 
-    /// Takes the hooks `match` picks out of a settings file (Claude Code's, or Codex's hooks.json, laid out alike), an
-    /// entry left with none going too, and returns each with where it was.
-    private static func takeOutHooks(_ file: String, _ match: (String) -> Bool) -> [[String: Any]] {
+    /// Takes the hooks `match` picks out of a settings file (Claude Code's, Codex's hooks.json or Antigravity's
+    /// hooks.json, laid out alike under `key`), an entry left with none going too, and returns each with where it was.
+    private static func takeOutHooks(_ file: String, key: String = "hooks", _ match: (String) -> Bool) -> [[String: Any]] {
         var taken: [[String: Any]] = []
         editJSON(file) { json in
-            guard var hooks = json["hooks"] as? [String: Any] else { return false }
+            guard var hooks = json[key] as? [String: Any] else { return false }
             for (event, value) in hooks {
                 guard let list = value as? [[String: Any]] else { continue }
                 let left = list.compactMap { entry -> [String: Any]? in
@@ -220,7 +310,7 @@ enum TokenSavers {
                     let picked = all.filter { match($0["command"] as? String ?? "") }
                     guard !picked.isEmpty else { return e }
                     for hook in picked {
-                        var r: [String: Any] = ["file": file, "event": event, "hook": hook]
+                        var r: [String: Any] = ["file": file, "key": key, "event": event, "hook": hook]
                         r["matcher"] = e["matcher"]
                         taken.append(r)
                     }
@@ -231,7 +321,7 @@ enum TokenSavers {
                 }
                 hooks[event] = left.isEmpty ? nil : left
             }
-            json["hooks"] = hooks.isEmpty ? nil : hooks
+            json[key] = hooks.isEmpty ? nil : hooks
             return !taken.isEmpty
         }
         return taken
@@ -316,8 +406,12 @@ enum TokenSavers {
     private static let ourRtk = binDir.appendingPathComponent("rtk")
     private static let localLink = URL(fileURLWithPath: HOME + "/.local/bin/rtk")
     private static let guardMark = "atalay-terminal-rtk"
+    private static var ourAgyRtk: Bool {
+        commands(agyRtkHooks, key: "rtk-rewrite").contains { $0.contains(guardMark) }
+    }
     private static func guarded(_ tool: String) -> String {
-        "sh -c 'command -v rtk >/dev/null 2>&1 && exec rtk hook \(tool); cat >/dev/null' \(guardMark)"
+        let fallback = tool == "antigravity" ? "; printf \"%s\\n\" \"{\\\"decision\\\":\\\"allow\\\"}\"" : ""
+        return "sh -c 'command -v rtk >/dev/null 2>&1 && exec rtk hook \(tool); cat >/dev/null\(fallback)' \(guardMark)"
     }
     private static var bundledRtk: URL? {
         Bundle.main.resourceURL.map { $0.appendingPathComponent("bin/rtk") }.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
@@ -333,8 +427,16 @@ enum TokenSavers {
         }
         // A downloaded app's files are quarantined; this one is the app's own and runs from Claude's hook.
         removexattr(ourRtk.path, "com.apple.quarantine", 0)
+        // rtk knows its hook only as it writes it: plain while it looks, or it puts a second one in.
+        rewriteRtkHooks(guarding: false)
         run(["init", "-g", "--auto-patch"])
         if codex { run(["init", "-g", "--codex"]) }
+        if agy {
+            if !fm.fileExists(atPath: agyPlugins + "/rtk/plugin.json") || ourAgyRtk {
+                run(["init", "-g", "--agent", "antigravity"])
+            }
+            setAgyPlugin("rtk", true)
+        }
         if (try? fm.destinationOfSymbolicLink(atPath: localLink.path)) == nil, !fm.fileExists(atPath: localLink.path) {
             try? fm.createDirectory(at: localLink.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? fm.createSymbolicLink(at: localLink, withDestinationURL: ourRtk)
@@ -344,27 +446,33 @@ enum TokenSavers {
 
     private static func uninstallRtk() {
         guard FileManager.default.isExecutableFile(atPath: ourRtk.path) else { return removeOurs(.rtk) }
+        let hadOurAgy = ourAgyRtk
         // rtk takes out the hooks it knows, the plain ones.
         rewriteRtkHooks(guarding: false)
         run(["init", "-g", "--uninstall"])
         if codex { run(["init", "-g", "--codex", "--uninstall"]) }
+        if hadOurAgy {
+            run(["init", "-g", "--agent", "antigravity", "--uninstall"])
+        }
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: localLink.path)) == ourRtk.path {
             try? FileManager.default.removeItem(at: localLink)
         }
     }
 
-    /// rtk's hooks in Claude Code's settings and Codex's hooks.json, guarded (`guarding`) or plain again.
+    /// rtk's hooks in Claude Code's settings, Codex's hooks.json and Antigravity's rtk plugin, guarded (`guarding`) or plain again.
     private static func rewriteRtkHooks(guarding: Bool) {
         let swap = { (hooks: inout [String: Any], tool: String) in
             let plain = "rtk hook " + tool, safe = guarded(tool)
             rewrite(&hooks, from: guarding ? plain : safe, to: guarding ? safe : plain)
         }
         editSettings { swap(&$0, "claude") }
-        editJSON(codexHooks) { json in
-            guard var hooks = json["hooks"] as? [String: Any] else { return false }
-            swap(&hooks, "codex")
-            json["hooks"] = hooks
-            return true
+        for (file, key, tool) in [(codexHooks, "hooks", "codex"), (agyRtkHooks, "rtk-rewrite", "antigravity")] {
+            editJSON(file) { json in
+                guard var hooks = json[key] as? [String: Any] else { return false }
+                swap(&hooks, tool)
+                json[key] = hooks
+                return true
+            }
         }
     }
 
@@ -408,6 +516,11 @@ enum TokenSavers {
     /// What marks the app's caveman hooks and Codex notes, so they come out again and nothing else does.
     private static let mark = "atalay-terminal/caveman/"
     private static let codexStart = "<!-- atalay-terminal: caveman -->", codexEnd = "<!-- /atalay-terminal: caveman -->"
+    private static var ourAgyCaveman: Bool {
+        let hooks = readJSON(agyCaveman.appendingPathComponent("hooks.json").path)?["caveman"] as? [String: Any]
+        let list = hooks?["PreInvocation"] as? [[String: Any]] ?? []
+        return list.contains { ($0["command"] as? String)?.contains(mark) == true }
+    }
 
     private static func installCaveman() {
         guard let src = bundledCaveman else { return }
@@ -423,10 +536,60 @@ enum TokenSavers {
             add(&hooks, "SessionStart", command: "cat " + shellQuote(rules))
             add(&hooks, "UserPromptSubmit", command: "cat " + shellQuote(remind))
         }
-        if codex, let text = try? String(contentsOfFile: rules, encoding: .utf8) {
-            let block = "\(codexStart)\n\(text.trimmingCharacters(in: .whitespacesAndNewlines))\n\(codexEnd)\n"
+        let text = (try? String(contentsOfFile: rules, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if codex, let text {
+            let block = "\(codexStart)\n\(text)\n\(codexEnd)\n"
             editCodexNotes { notes in notes + "\n" + block }
         }
+        if agy, let text {
+            installAgyCaveman(rules: text, remind: remind)
+        }
+    }
+
+    /// Antigravity's caveman plugin: its rules at the start of every session, its skill, and the one-line reminder before
+    /// every prompt (`PreInvocation`). One the user installed themselves stays theirs.
+    private static func installAgyCaveman(rules: String, remind: String) {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: agyCaveman.path), !ourAgyCaveman {
+            setAgyPlugin("caveman", true)
+            return
+        }
+        let agyRemind = ourCaveman.appendingPathComponent("agy-remind.json")
+        if let prompt = (readJSON(remind)?["hookSpecificOutput"] as? [String: Any])?["additionalContext"] as? String,
+           let data = try? JSONSerialization.data(withJSONObject: ["injectSteps": [["ephemeralMessage": prompt]]], options: [.withoutEscapingSlashes]) {
+            try? data.write(to: agyRemind, options: .atomic)
+        }
+        let rulesDir = agyCaveman.appendingPathComponent("rules")
+        let skillDir = agyCaveman.appendingPathComponent("skills/caveman")
+        try? fm.createDirectory(at: rulesDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: skillDir, withIntermediateDirectories: true)
+        let desc = "Terse caveman responses that cut output tokens while keeping full technical accuracy."
+        if let manifest = try? JSONSerialization.data(
+            withJSONObject: [
+                "name": "caveman",
+                "version": "1.0.0",
+                "description": desc,
+                "repository": "https://github.com/JuliusBrussee/caveman"
+            ],
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        ) {
+            try? manifest.write(to: agyCaveman.appendingPathComponent("plugin.json"), options: .atomic)
+        }
+        let block = "\(codexStart)\n\(rules)\n\(codexEnd)\n"
+        try? block.write(to: rulesDir.appendingPathComponent("AGENTS.md"), atomically: true, encoding: .utf8)
+        let skill = "---\nname: caveman\ndescription: \(desc)\n---\n\n\(rules)\n"
+        try? skill.write(to: skillDir.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        let hooks: [String: Any] = [
+            "caveman": [
+                "PreInvocation": [
+                    ["type": "command", "command": "cat " + shellQuote(agyRemind.path), "timeout": 5]
+                ]
+            ]
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: hooks, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) {
+            try? data.write(to: agyCaveman.appendingPathComponent("hooks.json"), options: .atomic)
+        }
+        setAgyPlugin("caveman", true)
     }
 
     private static func uninstallCaveman() {
@@ -434,6 +597,7 @@ enum TokenSavers {
             for event in ["SessionStart", "UserPromptSubmit"] { remove(&hooks, event) }
         }
         editCodexNotes { $0 }
+        if ourAgyCaveman { try? FileManager.default.removeItem(at: agyCaveman) }
         try? FileManager.default.removeItem(at: ourCaveman)
     }
 
@@ -463,9 +627,9 @@ enum TokenSavers {
         FileManager.default.contents(atPath: file).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     }
 
-    /// Every hook command in a settings file (Claude Code's, or Codex's hooks.json).
-    private static func commands(_ file: String) -> [String] {
-        let hooks = readJSON(file)?["hooks"] as? [String: Any] ?? [:]
+    /// Every hook command in a settings file (Claude Code's, Codex's hooks.json or Antigravity's hooks.json under `key`).
+    private static func commands(_ file: String, key: String = "hooks") -> [String] {
+        let hooks = readJSON(file)?[key] as? [String: Any] ?? [:]
         return hooks.values.flatMap { list in
             (list as? [[String: Any]] ?? []).flatMap { ($0["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String } }
         }
