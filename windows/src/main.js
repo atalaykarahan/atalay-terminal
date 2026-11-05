@@ -23,6 +23,7 @@ const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
+const { createUsage } = require('./usage');
 
 let autoUpdater = null;
 try {
@@ -154,6 +155,12 @@ function profileSuffix() {
 function quitIfIdle() {
   if (!quitting && !dash && !terminals.list().length) app.quit();
 }
+
+// The activity bar's limit panel: each AI tool's limits and its tokens today and over 30 days (usage.js), on request.
+const usage = createUsage({
+  claudeDir: path.join(os.homedir(), '.claude'),
+  limitsFile: path.join(app.getPath('userData'), 'limits.json'),
+});
 
 const engine = createEngine({
   claudeDir: path.join(os.homedir(), '.claude'),
@@ -1268,6 +1275,7 @@ ipcMain.handle('atl:post', async (e, name, body) => {
   try {
     switch (name) {
       case 'radar':
+        if (body.type === 'usage') return await usage.report();
         return handleRadar(body);
       case 'git':
         return await git.handle(body);
@@ -1374,6 +1382,8 @@ app.whenReady().then(() => {
   buildMenu();
   createDashboard();
   engine.start();
+  // The limit panel's first read of 30 days of logs, done ahead in the background so the panel opens at once.
+  setTimeout(() => usage.report().catch(() => {}), 20_000);
   cloud.start();
   runaways.start();
   // The corner's notices can cover the screen (a level-up): never during a development check.

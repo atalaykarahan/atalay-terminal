@@ -3144,4 +3144,4 @@ function createEngine(opts = {}) {
   };
 }
 
-module.exports = { createEngine };
+module.exports = { createEngine, costOf, shortModel, parseLimits };
