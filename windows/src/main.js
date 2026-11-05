@@ -509,14 +509,41 @@ let chatsJSON = '', chatsVersion = -1;
 function pushChats(force) {
   if (!chatsView) return;
   const live = chatlist.setLive(engine.live());
-  // A chat with a window of the app, shown or not: "in a window".
+  // A chat with a panel of the app, shown or not: "in the app".
   const open = chatlist.setOpen([...chats.values()].map((c) => c.sessionId).filter(Boolean));
-  if (!force && !live && !open && chatlist.version() === chatsVersion) return;
+  const terms = chatlist.setTerms(listTerms());
+  if (!force && !live && !open && !terms && chatlist.version() === chatsVersion) return;
   chatsVersion = chatlist.version();
   const json = JSON.stringify(chatlist.snapshot());
   if (json === chatsJSON && !force) return;
   chatsJSON = json;
   run(chatsView, `window.__chats && __chats.update(${json})`);
+}
+
+// The app's terminals with no Claude in them, for the chats list's folders (the folder each was opened in): its name,
+// what runs in it, whether it's the one the panel shows. The same as the orbit's cars, ended ones aside.
+function listTerms() {
+  const live = engine.live(), out = [];
+  for (const t of terminals.list()) {
+    const c = chats.get(t.id);
+    if (!c || !t.pid || live.some((s) => s.tab === t.id) || (c.claude && chatInfo(t.id, c).status !== 'terminal')) continue;
+    const kids = runaways.children(t.pid);
+    if (kids.some((k) => /^claude$/i.test(k.name))) continue;
+    const job = kids[0];
+    out.push({ id: t.id, cwd: c.cwd || os.homedir(), title: c.title, job: job ? commandLabel(job.cmd || job.name) : '', shown: termPanel.active === t.id });
+  }
+  return out;
+}
+
+// The chats list's open folder button: a folder from the system's picker, kept in the list, with a terminal in it.
+async function openFolder() {
+  const r = await dialog.showOpenDialog(dash || undefined, { title: 'Open a folder in the chats list', properties: ['openDirectory'] });
+  const d = !r.canceled && r.filePaths && r.filePaths[0];
+  if (!d || !fs.existsSync(d)) return null;
+  chatlist.pin(d);
+  pushChats(true);
+  openChatWindow({ cwd: d, claudeArgs: null, title: path.basename(d) || d });
+  return d;
 }
 
 // The chats list's requests (pages/chats.js).
@@ -545,6 +572,17 @@ function handleChats(msg) {
     }
     case 'copyId':
       if (typeof msg.id === 'string' && msg.id) clipboard.writeText(msg.id);
+      return true;
+    case 'openFolder':
+      return openFolder();
+    case 'unpin':
+      chatlist.unpin(String(msg.cwd || ''));
+      break;
+    // One of the app's terminals in a folder: its panel shows, or it ends (the panel's end button).
+    case 'showTerminal':
+      return chats.has(msg.id) && showChat(msg.id);
+    case 'endTerminal':
+      if (chats.has(msg.id)) endTerminal(msg.id);
       return true;
     case 'favorite':
       chatlist.toggleFavorite(String(msg.id || ''));
@@ -875,6 +913,7 @@ function showChat(id) {
   if (!modalOpen) c.view.webContents.focus();
   tellTermPanel();
   pushWinOpen();
+  pushChats();
   return true;
 }
 
@@ -886,6 +925,7 @@ function hideChat() {
   termPanel.covered = false;
   tellTermPanel();
   pushWinOpen();
+  pushChats();
   if (dashView && !dashView.webContents.isDestroyed()) dashView.webContents.focus();
   const c = chats.get(id);
   if (!c || !c.view) return true;

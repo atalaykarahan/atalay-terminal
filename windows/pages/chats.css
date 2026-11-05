@@ -23,8 +23,20 @@ button { display: flex; align-items: center; padding: 0; border: 0; background: 
 #count { overflow: hidden; color: var(--dim); font-size: 9.5px; text-overflow: ellipsis; }
 #key { color: var(--dim2); font-size: 9.5px; }
 
+/* Open folder: a folder from the system's picker, kept at the top of the list, with a terminal in it. */
+#openFolder {
+  gap: 7px; height: 28px; margin: 10px 10px 0; padding: 0 9px; box-sizing: border-box; width: calc(100% - 20px);
+  border: 1px solid rgba(var(--accent-rgb), 0.45); border-radius: 4px; background: linear-gradient(rgba(var(--accent-rgb), 0.16), rgba(var(--accent-rgb), 0.06));
+  color: var(--accent-soft); font-size: 10.5px; white-space: nowrap; transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+#openFolder .ic { display: flex; font-size: 12px; color: var(--accent); }
+#openFolder b { font-weight: 700; letter-spacing: 0.04em; }
+#openFolder .hint { color: var(--dim); font-size: 9px; }
+#openFolder:hover { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.22); color: var(--hi); box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.25); }
+#openFolder:hover .hint { color: var(--accent-soft); }
+
 #search {
-  display: flex; align-items: center; gap: 6px; height: 26px; margin: 10px; padding: 0 8px; box-sizing: border-box;
+  display: flex; align-items: center; gap: 6px; height: 26px; margin: 8px 10px 10px; padding: 0 8px; box-sizing: border-box;
   border: 1px solid rgba(var(--accent-rgb), 0.13); border-radius: 4px; background: rgba(0, 0, 0, 0.25); color: var(--dim);
 }
 #search:focus-within { border-color: rgba(var(--accent-rgb), 0.32); }
@@ -37,17 +49,39 @@ button { display: flex; align-items: center; padding: 0; border: 0; background: 
 #picked { color: var(--accent-soft); font-size: 10px; font-weight: 600; white-space: nowrap; }
 #bulkArchive { height: 18px; padding: 0 8px; border-radius: 3px; background: var(--accent); color: var(--ink); font-size: 10px; font-weight: 600; }
 
-#list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 12px; }
+#list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 0 12px; }
+.none { padding: 24px 14px; color: var(--dim2); text-align: center; }
+
+/* A folder: a panel of its own, as the dashboard's are (its line, the accent's corner marks, a strip on top), with its
+   terminals over its chats. */
+.grp { position: relative; margin: 0 8px 8px; padding-bottom: 3px; border: 1px solid rgba(var(--accent-rgb), 0.16); background: rgba(0, 0, 0, 0.16); transition: border-color 0.15s; }
+.grp::before, .grp::after { content: ""; position: absolute; width: 6px; height: 6px; border: 0 solid rgba(var(--accent-rgb), 0.55); pointer-events: none; }
+.grp::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.grp::after { right: -1px; bottom: -1px; border-width: 0 2px 2px 0; }
+.grp:hover { border-color: rgba(var(--accent-rgb), 0.3); }
+.grp.live { border-color: rgba(var(--accent-rgb), 0.34); }
+.grp.live::before, .grp.live::after { border-color: var(--accent); }
+.grp.pinned { background: rgba(var(--accent-rgb), 0.035); }
+.grp.shut { padding-bottom: 0; }
+.grp.fav { padding-bottom: 4px; }
 
 /* FAVORITES, at the top */
-.sec { display: flex; align-items: center; gap: 6px; padding: 10px 10px 3px; }
+.sec { display: flex; align-items: center; gap: 6px; padding: 6px 8px 4px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.1); background: linear-gradient(rgba(var(--accent-rgb), 0.08), transparent); }
 .sec svg { color: rgba(var(--accent-rgb), 0.85); fill: currentColor; font-size: 9.5px; }
 .sec b { color: var(--accent-soft); font-size: 10px; font-weight: 600; }
 
 /* A folder: a click picks it for archiving several at once; its buttons show on hover. */
-.head { display: flex; align-items: center; gap: 6px; margin: 6px 6px 0; padding: 4px 4px 3px; border-radius: 4px; }
-.head.sel { background: rgba(var(--accent-rgb), 0.16); }
-.head > svg { color: rgba(var(--accent-rgb), 0.8); font-size: 9.5px; }
+.head { display: flex; align-items: center; gap: 6px; margin: 0 0 3px; padding: 5px 6px 4px 4px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.1); background: linear-gradient(rgba(var(--accent-rgb), 0.08), transparent); cursor: pointer; }
+.grp.shut .head { margin: 0; border-bottom-color: transparent; }
+.head:hover { background: linear-gradient(rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0.03)); }
+.head.sel { background: rgba(var(--accent-rgb), 0.2); }
+.head > svg, .head .pin { color: rgba(var(--accent-rgb), 0.8); font-size: 9.5px; display: flex; }
+.head .pin { color: var(--accent); }
+.head .chev { display: flex; color: var(--dim); font-size: 8.5px; transition: transform 0.15s; transform: rotate(90deg); }
+.head .chev svg { stroke-width: 2; }
+.grp.shut .head .chev { transform: none; }
+.head .tn { display: flex; align-items: center; gap: 2px; color: var(--cyan); font-size: 9px; }
+.head .tn svg { font-size: 9px; }
 /* Cut at its start, so the folder's own name stays. */
 .lbl { min-width: 0; overflow: hidden; color: var(--accent-soft); font-size: 10px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .head button { color: var(--dim); font-size: 9.5px; }
@@ -59,7 +93,14 @@ button { display: flex; align-items: center; padding: 0; border: 0; background: 
 .head:hover .plus { opacity: 1; }
 
 /* A chat */
-.row { display: flex; align-items: center; gap: 8px; margin: 1px 6px 0; padding: 4px 8px 4px 14px; border-radius: 4px; }
+.row { display: flex; align-items: center; gap: 8px; margin: 1px 4px 0; padding: 4px 6px 4px 12px; border-radius: 3px; }
+/* one of the app's terminals: a terminal mark for its light */
+.row.term .ti { display: flex; flex: none; color: var(--cyan); font-size: 10px; }
+.row.term .ti.busy { color: var(--accent); }
+.row.term.open { box-shadow: inset 2px 0 0 var(--cyan); }
+.empty { display: flex; align-items: center; gap: 4px; padding: 5px 12px 3px; color: var(--dim2); font-size: 9.5px; }
+.empty button { color: var(--accent-soft); font-size: 9.5px; text-decoration: underline; text-underline-offset: 2px; }
+.empty button:hover { color: var(--hi); }
 .row:hover { background: rgba(var(--accent-rgb), 0.06); }
 .row.open { background: rgba(var(--accent-rgb), 0.1); }
 .txt { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
