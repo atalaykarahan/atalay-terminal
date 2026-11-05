@@ -67,7 +67,7 @@
 /* a chat needs you (an approval): the alarm's colour and a quicker border; a × since it stays until the chat moves on */
 .mb.wait { --glow: var(--warn-rgb); cursor: pointer; }
 .mb.wait:hover { filter: brightness(1.15); }
-.mb.wait .mb-tag { background: var(--warn); }
+.mb.wait .mb-tag { flex: none; white-space: nowrap; background: var(--warn); }
 .mb.wait .mb-border { background: conic-gradient(from var(--ang), var(--warn), var(--amber), var(--accent), var(--warn)); animation-duration: 2.4s; }
 .mb.wait .mb-x { margin-left: auto; }
 .mb.wait .mb-text { padding-bottom: 11px; }
