@@ -52,7 +52,13 @@ const commandLine = (file, args) =>
 function childEnvironment(extraPath) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    // Codex's tool environment too (the app started from a Codex command): NO_COLOR turned every chat's Claude white.
+    // Codex's tool environment too (the app started from a Codex command): NO_COLOR turned every chat's Claude white. What
+    // the user set for themselves stays: where Codex's home is (the engine and the token savers look for it there, and
+    // nothing here sets it again as a Mac's login shell does) and where Claude Code finds Git Bash.
+    if (/^(CODEX_HOME|CLAUDE_CODE_GIT_BASH_PATH)$/i.test(k)) {
+      env[k] = v;
+      continue;
+    }
     if (/^(CLAUDECODE|CLAUDE_CODE_|WT_|CODEX_)/i.test(k)) continue;
     if (/^(CLAUDE_PID|TERM_SESSION_ID|TERM_PROGRAM_VERSION|NO_COLOR|LC_ALL|LC_CTYPE|GIT_PAGER|GH_PAGER)$/i.test(k)) continue;
     env[k] = v;

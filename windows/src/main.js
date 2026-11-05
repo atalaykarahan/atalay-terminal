@@ -310,6 +310,9 @@ const toNotices = (call) => runPanel(panels.notices, `window.__messages && __mes
 // The AI in the terminal window touched last owns the top bar. Prefer a working/waiting nested AI (Codex, etc.) over
 // the parent Claude process if both happen to be under the same shell.
 function touchTerminal(id) {
+  // Every key typed comes here: only a change of terminal has anything to tell (a change of what runs in it comes with
+  // the engine's state).
+  if (id === activeTerminalId) return;
   activeTerminalId = id;
   pushActiveSession();
 }

@@ -57,7 +57,11 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
   const CODEX_GUARD = 'where /q rtk & if errorlevel 1 (more >nul) else (rtk hook codex)';
   const OLD_CODEX_GUARD = 'where /q rtk && rtk hook codex || more >nul';
   const isCodexGuard = (cmd) => cmd === CODEX_GUARD || cmd === OLD_CODEX_GUARD;
-  const AGY_GUARD = 'where /q rtk & if errorlevel 1 (more >nul & echo {"decision":"allow"}) else (rtk hook antigravity)';
+  // Antigravity runs a hook as Go does a program, `cmd /c "<command>"` with each double quote in it as \": a command here
+  // can't hold one. An `echo {"decision":"allow"}` printed its backslashes too, and that broken JSON blocked every command
+  // where rtk isn't on the PATH. Nothing printed lets the command through to Antigravity's own permissions.
+  const AGY_GUARD = 'where /q rtk & if errorlevel 1 (more >nul) else (rtk hook antigravity)';
+  const cmdWord = (s) => s.replace(/([\s^&()<>|,;=!'])/g, '^$1');
   // What marks the app's caveman hooks and Codex notes, so they come out again and nothing else does.
   const MARK = 'atalay-terminal/caveman/';
   const hasMark = (cmd) => typeof cmd === 'string' && cmd.replace(/\\/g, '/').includes(MARK);
@@ -417,18 +421,20 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
   // ---------- rtk ----------
   function run(args, bin = ourRtk) {
     return new Promise((resolve) => {
-      execFile(
+      const child = execFile(
         bin,
         args,
         {
           windowsHide: true,
           timeout: 30_000,
           maxBuffer: 4 << 20,
-          stdio: ['ignore', 'pipe', 'ignore'],
           env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexDir, HOME: home, USERPROFILE: home },
         },
         (err, stdout) => resolve(err && !stdout ? '' : String(stdout || '')),
       );
+      // Its stdin closed, so a prompt can't hold it for those 30 seconds (execFile takes no `stdio`: it always opens pipes).
+      child.stdin.on('error', () => {});
+      child.stdin.end();
     });
   }
 
@@ -645,7 +651,8 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: caveman\ndescription: ${desc}\n---\n\n${text}\n`);
     writeJSON(path.join(agyCaveman, 'hooks.json'), {
       caveman: {
-        PreInvocation: [{ type: 'command', command: `type "${agyRemind}"`, timeout: 5 }],
+        // No quotes around the path (AGY_GUARD says why): its spaces escaped, read by `more`, as `type` won't take those.
+        PreInvocation: [{ type: 'command', command: `more < ${cmdWord(agyRemind)}`, timeout: 5 }],
       },
     });
     setAgyPlugin('caveman', true);
