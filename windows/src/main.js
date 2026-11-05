@@ -23,6 +23,7 @@ const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
+const { createLimits } = require('./limits');
 
 let autoUpdater = null;
 try {
@@ -155,9 +156,15 @@ function quitIfIdle() {
   if (!quitting && !dash && !terminals.list().length) app.quit();
 }
 
+// Claude's 5-hour and weekly limits: Claude Code's status line hands its JSON to a script of ours (src/limits.js).
+const limits = createLimits({
+  dir: path.join(app.getPath('userData')),
+  claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+});
+
 const engine = createEngine({
   claudeDir: path.join(os.homedir(), '.claude'),
-  limitsFile: path.join(app.getPath('userData'), 'limits.json'),
+  limitsFile: limits.file,
   // A Claude process under one of the app's terminals belongs to that window (its id becomes the session's `tab`).
   isAppPid: (pid) => (terminals.list().find((t) => t.pid === pid) || {}).id || false,
   onInit: (json) => toDash(`init(${json})`),
@@ -1373,6 +1380,8 @@ app.whenReady().then(() => {
   if (PROBE && app.dock) app.dock.hide();
   buildMenu();
   createDashboard();
+  // Only the app's usual profile hooks Claude Code's settings: a profile of its own (npm run staging) leaves them be.
+  if (process.platform === 'win32' && !PROBE && !profileSuffix()) limits.install();
   engine.start();
   cloud.start();
   runaways.start();
