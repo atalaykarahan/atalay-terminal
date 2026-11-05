@@ -112,6 +112,7 @@ const savers = createSavers({
     : { rtk: path.join(__dirname, '..', 'vendor', 'rtk', 'rtk.exe'), caveman: path.join(__dirname, '..', '..', 'app', 'Resources', 'caveman') },
   claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
   codexDir: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+  home: os.homedir(),
   which,
   usable: process.platform === 'win32' && !PROBE,
 });
