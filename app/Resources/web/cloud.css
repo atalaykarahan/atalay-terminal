@@ -305,6 +305,11 @@
 .nt-head em { padding: 0 6px; background: var(--accent); color: var(--ink); font-size: 0.75em; font-style: normal; font-weight: 700; letter-spacing: 0.1em; }
 .nt-time { margin-left: auto; color: var(--dim); font-size: 0.85em; white-space: nowrap; }
 .nt-body { margin-top: 8px; color: var(--txt); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Links and @GitHub names in release notes and notifications: their own colours, a click opens the browser. */
+.rt-link, .rt-user { cursor: pointer; text-decoration: none; overflow-wrap: anywhere; }
+.rt-link { color: var(--cyan); border-bottom: 1px solid rgba(var(--cyan-rgb), 0.45); }
+.rt-user { color: var(--violet); font-weight: 600; }
+.rt-link:hover, .rt-user:hover { text-decoration: underline; text-underline-offset: 2px; border-bottom-color: transparent; }
 #friends-view .cv-friends { flex: 1.3; }
 #friends-view .cv-requests { flex: 1; }
 #board-view .cv-list { flex: 1.3; }

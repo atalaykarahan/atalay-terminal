@@ -123,6 +123,34 @@ window.Cloud = (() => {
       .split(/\n+/)
       .map((l) => l.replace(/^\s*[-•*]\s*/, '').trim())
       .filter(Boolean);
+  // Release notes and the developer's notifications, escaped, with their links and GitHub names marked: a link opens in
+  // the browser (the app sends every web link the page follows there, Mac and Windows), @name is that GitHub user and
+  // opens their profile.
+  function richText(text) {
+    const s = String(text ?? '');
+    const re = /(https?:\/\/[^\s<>"'`]+)|(^|[^\w@./-])@([A-Za-z0-9](?:-?[A-Za-z0-9]){0,38})(?![\w-])/g;
+    let out = '', last = 0, m;
+    while ((m = re.exec(s))) {
+      if (m[1]) {
+        // The sentence's punctuation isn't part of the link, nor a ")" opened before it.
+        let url = m[1];
+        for (;;) {
+          if (/[.,;:!?'"\]]$/.test(url)) url = url.slice(0, -1);
+          else if (url.endsWith(')') && url.split('(').length < url.split(')').length) url = url.slice(0, -1);
+          else break;
+        }
+        try { new URL(url); } catch { continue; }
+        out += esc(s.slice(last, m.index)) + `<a class="rt-link" href="${esc(url)}" title="${esc(url)}">${esc(url)}</a>`;
+        last = re.lastIndex = m.index + url.length;
+      } else {
+        const name = m[3];
+        out += esc(s.slice(last, m.index) + m[2]) +
+          `<a class="rt-user" href="https://github.com/${name}" title="github.com/${name}">@${name}</a>`;
+        last = re.lastIndex;
+      }
+    }
+    return out + esc(s.slice(last));
+  }
   function openUpdate() {
     if (!S || !S.update || modal === 'first' || modal === 'update') return;
     const u = S.update, lines = noteLines(u.notes);
@@ -135,7 +163,7 @@ window.Cloud = (() => {
         <div class="pk-title"><img class="hk-logo" src="logo.png" alt=""><b>UPDATE AVAILABLE</b><span class="for">${esc(S.version || '?')} → ${esc(u.version)}</span></div>
         <div class="hk-body">
           <div class="hk-h">WHAT'S NEW IN ${esc(u.version)}</div>
-          <ul class="up-notes">${(lines.length ? lines : ['fixes and improvements']).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
+          <ul class="up-notes">${(lines.length ? lines : ['fixes and improvements']).map((l) => `<li>${richText(l)}</li>`).join('')}</ul>
           <div class="up-bar" hidden><i></i></div>
           <p class="hk-status up-status"></p>
         </div>
@@ -1286,9 +1314,9 @@ window.Cloud = (() => {
     if (!N) return setHTML(el, `<div class="mn-empty">${S && S.reachable ? 'loading…' : "can't reach the server · notifications come back with the connection"}</div>`);
     setHTML(el, N.list.length
       ? N.list.map((n) =>
-          `<div class="nt-item${fresh.has(n.id) ? ' new' : ''}"><div class="nt-head"><b>${esc(n.title)}</b>${fresh.has(n.id) ? '<em>NEW</em>' : ''}` +
+          `<div class="nt-item${fresh.has(n.id) ? ' new' : ''}"><div class="nt-head"><b>${richText(n.title)}</b>${fresh.has(n.id) ? '<em>NEW</em>' : ''}` +
           `<span class="nt-time" title="${esc(new Date(n.at).toLocaleString())}">${ago(n.at)}</span></div>` +
-          `${n.body ? `<div class="nt-body">${esc(n.body)}</div>` : ''}</div>`).join('')
+          `${n.body ? `<div class="nt-body">${richText(n.body)}</div>` : ''}</div>`).join('')
       : '<div class="mn-empty">no notifications yet · news from the developer shows up here</div>');
   }
   function openNotes() {
