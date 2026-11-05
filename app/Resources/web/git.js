@@ -34,7 +34,7 @@ window.GitView = (() => {
     tag: 0xea66, 'source-control': 0xea68, files: 0xeaf0, 'git-fetch': 0xecb2, 'collapse-all': 0xeac5, target: 0xebf8,
     bell: 0xeaa2, error: 0xea87, warning: 0xea6c, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, 'git-commit': 0xeafc,
     whitespace: 0xeb7d, map: 0xec05, remote: 0xeb3a, 'split-horizontal': 0xeb56, 'diff-single': 0xec22,
-    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e,
+    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e, dashboard: 0xeacd,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
   // The command key as this platform names it (the Windows app sets __platform), and how its paths are written.
@@ -91,8 +91,8 @@ window.GitView = (() => {
 
   // ---------- the frame: activity bar, side bar (CHANGES and GRAPH), editor ----------
   // The activity bar switches what the dashboard's middle shows: the dashboard, Source Control (here), friends and
-  // messages, the leaderboard, the themes or the notifications (cloud.js); feedback, at its foot, opens its window over
-  // whatever shows.
+  // messages, the leaderboard, the themes or the notifications (cloud.js); limits (limits.js) opens a small panel beside
+  // it and feedback, at its foot, its window, over whatever shows.
   const bar = document.createElement('nav');
   bar.id = 'activity';
   bar.innerHTML =
@@ -102,6 +102,7 @@ window.GitView = (() => {
     `<a class="vs-ab" data-view="board" title="Leaderboard">${ci('trophy')}</a>` +
     `<a class="vs-ab" data-view="themes" title="Themes">${ci('symbol-color')}</a>` +
     `<a class="vs-ab" data-view="notifications" title="Notifications">${ci('bell')}<b class="vs-badge" hidden></b></a>` +
+    `<a class="vs-ab" data-view="limits" title="AI limits and token usage">${ci('dashboard')}</a>` +
     `<a class="vs-ab vs-ab-foot" data-view="feedback" title="Send feedback to the developer">${ci('feedback')}</a>`;
   app.appendChild(bar);
   const view = document.createElement('section');
@@ -1108,6 +1109,7 @@ window.GitView = (() => {
   // in cloud.js.
   function switchTo(v) {
     if (v === 'feedback') return window.Cloud?.openFeedback();
+    if (v === 'limits') return window.Limits?.toggle(bar.querySelector('[data-view=limits]'));
     setOpen(v === 'git');
     if (['friends', 'board', 'themes', 'notifications'].includes(v)) {
       window.Cloud?.showView(v);

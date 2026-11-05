@@ -1,0 +1,63 @@
+/* ===== the activity bar's limit panel (limits.js): a small panel beside the bar, in the dashboard's panel look ===== */
+#activity .vs-ab.lim-open .vs-ci { color: var(--accent); }
+#activity .vs-ab.lim-open::before { content: ""; position: absolute; inset: 2px; border-radius: 6px; background: rgba(var(--accent-rgb), 0.18); }
+
+#limits-pop {
+  position: fixed;
+  z-index: 55;
+  width: 340px;
+  max-width: calc(100vw - 80px);
+  background: rgb(var(--panel-rgb));
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(var(--accent-rgb), 0.08);
+  animation: lp-in 0.14s ease-out;
+}
+@keyframes lp-in { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+#limits-pop > header .lp-x { flex: none; width: 19px; height: 19px; margin-right: 2px; padding: 0; border: 0; background: none; color: var(--dim); font: 14px/19px var(--font); cursor: pointer; }
+#limits-pop > header .lp-x:hover { color: var(--accent-soft); }
+#limits-pop .lp-body { flex: 1; overflow-y: auto; padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+#limits-pop .lp-empty { padding: 14px 2px; color: var(--dim); }
+
+#limits-pop .lp-total { display: flex; flex-direction: column; gap: 2px; padding: 5px 8px; border: 1px solid var(--line-soft); background: rgba(var(--accent-rgb), 0.06); color: var(--txt2); }
+#limits-pop .lp-total b { color: var(--amber); }
+#limits-pop .lp-total small { color: var(--dim); }
+
+#limits-pop .lp-ai { display: flex; flex-direction: column; gap: 4px; padding: 7px 8px 8px; border: 1px solid var(--line-soft); background: rgba(var(--bg-rgb), 0.45); }
+#limits-pop .lp-ai.off { opacity: 0.6; }
+#limits-pop .lp-ai-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+#limits-pop .lp-ai-h b { color: var(--hi); letter-spacing: 0.08em; text-transform: uppercase; }
+#limits-pop .lp-ai-h em { margin-left: auto; color: var(--dim); font-style: normal; font-size: 0.9em; }
+#limits-pop .lp-ai[data-ai="claude"] .lp-ai-h b { color: var(--accent-soft); }
+#limits-pop .lp-ai[data-ai="codex"] .lp-ai-h b { color: var(--cyan); }
+#limits-pop .lp-ai[data-ai="antigravity"] .lp-ai-h b { color: var(--violet); }
+
+#limits-pop .lp-gauge { display: grid; grid-template-columns: 92px 1fr 36px; grid-template-rows: auto auto; column-gap: 8px; align-items: center; }
+#limits-pop .lp-gauge .lp-gl { color: var(--txt3); }
+#limits-pop .lp-gauge .lp-bar { display: block; height: 5px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+#limits-pop .lp-gauge .lp-bar i { display: block; height: 100%; background: currentColor; transition: width 0.5s ease; }
+#limits-pop .lp-gauge b { text-align: right; color: inherit; }
+#limits-pop .lp-gauge small { grid-column: 2 / 4; color: var(--dim); font-size: 0.88em; }
+#limits-pop .lp-gauge.ok { color: var(--green); }
+#limits-pop .lp-gauge.warn { color: var(--amber); }
+#limits-pop .lp-gauge.hot { color: var(--red); }
+
+#limits-pop .lp-row { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; }
+#limits-pop .lp-k { width: 56px; flex: none; color: var(--txt3); }
+#limits-pop .lp-v { color: var(--txt2); }
+#limits-pop .lp-v b { color: var(--hi); }
+#limits-pop .lp-v.dim { color: var(--dim); }
+#limits-pop .lp-c { margin-left: auto; color: var(--amber); }
+#limits-pop .lp-sub { color: var(--dim); font-size: 0.88em; padding-left: 64px; }
+#limits-pop .lp-ai.off .lp-sub, #limits-pop .lp-nolim, #limits-pop .lp-note { padding-left: 0; }
+
+#limits-pop .lp-chart { display: block; width: 100%; height: 32px; margin-top: 5px; }
+#limits-pop .lp-chart rect { fill: rgba(var(--accent-rgb), 0.45); }
+#limits-pop .lp-chart rect.now { fill: var(--accent); }
+#limits-pop .lp-chart rect:hover { fill: var(--accent-soft); }
+#limits-pop .lp-ai[data-ai="codex"] .lp-chart rect { fill: rgba(var(--cyan-rgb), 0.45); }
+#limits-pop .lp-ai[data-ai="codex"] .lp-chart rect.now { fill: var(--cyan); }
+#limits-pop .lp-ai[data-ai="antigravity"] .lp-chart rect { fill: rgba(var(--violet-rgb), 0.45); }
+#limits-pop .lp-ai[data-ai="antigravity"] .lp-chart rect.now { fill: var(--violet); }
+#limits-pop .lp-axis { display: flex; justify-content: space-between; color: var(--dim2); font-size: 0.82em; }
+
+#limits-pop .lp-models { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 3px; color: var(--dim); font-size: 0.88em; }
+#limits-pop .lp-models b { color: var(--txt3); font-weight: normal; }

@@ -24,6 +24,7 @@ const { createRunaways } = require('./runaways');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
+const { createUsage } = require('./usage');
 
 let autoUpdater = null;
 try {
@@ -162,6 +163,12 @@ function quitIfIdle() {
 const limits = createLimits({
   dir: path.join(app.getPath('userData')),
   claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+});
+
+// The activity bar's limit panel: each AI tool's limits and its tokens today and over 30 days (usage.js), on request.
+const usage = createUsage({
+  claudeDir: path.join(os.homedir(), '.claude'),
+  limitsFile: limits.file,
 });
 
 const engine = createEngine({
@@ -1541,6 +1548,7 @@ ipcMain.handle('atl:post', async (e, name, body) => {
   try {
     switch (name) {
       case 'radar':
+        if (body.type === 'usage') return await usage.report();
         return handleRadar(body);
       case 'git':
         return await git.handle(body);
@@ -1666,6 +1674,8 @@ app.whenReady().then(() => {
   // Only the app's usual profile hooks Claude Code's settings: a profile of its own (npm run staging) leaves them be.
   if (process.platform === 'win32' && !PROBE && !profileSuffix()) limits.install();
   engine.start();
+  // The limit panel's first read of 30 days of logs, done ahead in the background so the panel opens at once.
+  setTimeout(() => usage.report().catch(() => {}), 20_000);
   cloud.start();
   runaways.start();
   // The corner's notices can cover the screen (a level-up): never during a development check.
