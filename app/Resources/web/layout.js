@@ -445,6 +445,8 @@ window.PanelLayout = (() => {
   return {
     // app.js: whether a panel is drawn at all.
     visible: (id) => !isHidden(id),
+    // app.js: a panel's right-click menu hides it, as its strip's "–" does.
+    hide: (id) => ALL.includes(id) && setHidden(id, true),
     reset() {
       L = fresh();
       apply();

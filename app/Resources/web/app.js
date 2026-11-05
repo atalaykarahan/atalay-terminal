@@ -368,6 +368,9 @@ function logLine(ev, live) {
   el.className = `ln ${ev.k}${ev.err || ev.cls === 'err' ? ' err' : ''}${live ? ' enter' : ''}`;
   el.innerHTML = `<span class="tm">${hhmmss(ev.t || Date.now())}</span><span class="who" style="color:${sessCss(ev.s)}">${esc(sessName(ev.s))}${ev.a ? ' ⤷' : ''}</span><span class="cat" style="color:${col}">${esc(cat)}</span><span class="txt">${esc(text)}</span><span class="st"></span>`;
   el.dataset.sid = ev.s || '';
+  // session.log cleared (its right-click menu): what came before stays out of sight.
+  const lc = clearedOf('p-log');
+  if (lc && (ev.t || Date.now()) < lc.t) el.classList.add('gone');
   if (ev.k === 'tool') {
     el.__id = ev.id;
     LOGEL.set(ev.id, el);
@@ -427,6 +430,8 @@ function renderAll() {
   renderTicker();
   map('state', STATE);
   const T = STATE.totals;
+  const lc = clearedOf('p-log');
+  setText($('m-log'), lc ? `live tool stream · ${since(lc)}` : 'live tool stream');
   setText($('m-map'), `${T.live} live · ${T.runningAgents} agents running · ${T.sessionsToday} sessions today`);
 }
 
@@ -674,13 +679,97 @@ function renderSessions() {
   keyed(box, STATE.sessions, (s) => s.id, createCard, updateCard);
 }
 
+// ---------- clearing a panel (its right-click menu) ----------
+// What a panel shows can be cleared, for a stream or what nobody else should see: its list keeps only what comes after,
+// its counters start again from that moment. Only this page's view: the engine's day stays whole. Kept for the day in
+// the page's storage (radar.cleared), so a reload doesn't bring it back; "show what was cleared" undoes it.
+const CLEARABLE = ['p-research', 'p-files', 'p-mix', 'p-log', 'p-workers', 'p-spend'];
+const CLEAR_KEY = 'radar.cleared';
+const today = () => new Date().toDateString();
+let CLEARED = (() => {
+  try {
+    const c = JSON.parse(localStorage.getItem(CLEAR_KEY) || 'null');
+    if (c && c.day === today() && c.panels && typeof c.panels === 'object') return c;
+  } catch {}
+  return { day: today(), panels: {} };
+})();
+function clearedOf(id) {
+  // The engine's counters start from nothing at midnight anyway.
+  if (CLEARED.day !== today()) CLEARED = { day: today(), panels: {} };
+  return CLEARED.panels[id] || null;
+}
+// Where a panel's counters stood when it was cleared, to count on from there.
+function clearBase(id) {
+  const T = STATE.totals;
+  if (id === 'p-research') return { web: T.web };
+  if (id === 'p-files') return { files: Object.fromEntries(STATE.files.map((f) => [f.p, [f.r, f.w]])) };
+  if (id === 'p-mix') return { tools: T.tools, cats: { ...STATE.byCat } };
+  if (id === 'p-spend')
+    return {
+      cost: T.cost, out: T.tok.out, cr: T.tok.cr, cw: T.tok.cw, saved: T.saved,
+      models: Object.fromEntries(STATE.byModel.map((m) => [m.model, [m.calls, m.tok.out, m.cost]])),
+    };
+  return {};
+}
+function setCleared(id, on) {
+  if (!STATE) return;
+  clearedOf(id);
+  if (on) CLEARED.panels[id] = { t: Date.now(), ...clearBase(id) };
+  else delete CLEARED.panels[id];
+  try {
+    localStorage.setItem(CLEAR_KEY, JSON.stringify(CLEARED));
+  } catch {}
+  if (id === 'p-log') for (const el of $('log').children) el.classList.toggle('gone', on);
+  renderAll();
+}
+const since = (c) => `since ${hhmmss(c.t).slice(0, 5)}`;
+// The minute buckets (oldest first, the last one this minute's) up to the clearing minute go blank.
+function sparkSince(spark, c) {
+  if (!c) return spark;
+  const m0 = Math.floor(Date.now() / 60_000), mc = Math.floor(c.t / 60_000);
+  return spark.map((v, i) => (m0 - (spark.length - 1 - i) <= mc ? 0 : v));
+}
+
+function panelMenu(e) {
+  document.querySelector('.pn-ctx')?.remove();
+  const p = e.target.closest('section.panel[id^="p-"]');
+  if (!p || !(CLEARABLE.includes(p.id) || window.PanelLayout?.hide)) return;
+  e.preventDefault();
+  const menu = document.createElement('div');
+  menu.className = 'pn-ctx';
+  const can = CLEARABLE.includes(p.id) && STATE;
+  menu.innerHTML =
+    (can ? `<button type="button" data-ctx="clear">⌫ clear this panel</button>` : '') +
+    (can && clearedOf(p.id) ? `<button type="button" data-ctx="restore">↺ show what was cleared</button>` : '') +
+    (window.PanelLayout?.hide ? `${can ? '<hr>' : ''}<button type="button" data-ctx="hide">– hide this panel</button>` : '');
+  document.body.appendChild(menu);
+  menu.style.left = `${Math.max(4, Math.min(e.clientX, innerWidth - menu.offsetWidth - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(e.clientY, innerHeight - menu.offsetHeight - 4))}px`;
+  menu.onclick = (ev) => {
+    const b = ev.target.closest('[data-ctx]');
+    if (!b) return;
+    menu.remove();
+    if (b.dataset.ctx === 'hide') return PanelLayout.hide(p.id);
+    setCleared(p.id, b.dataset.ctx === 'clear');
+  };
+}
+document.addEventListener('contextmenu', panelMenu);
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.pn-ctx')) document.querySelector('.pn-ctx')?.remove();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.querySelector('.pn-ctx')?.remove();
+});
+
 function renderResearch() {
   const box = $('research');
-  setText($('m-research'), `${STATE.totals.web} web calls today`);
-  if (!STATE.research.length) return placeholder(box, 'no web search or fetch yet today');
+  const c = clearedOf('p-research');
+  const items = c ? STATE.research.filter((r) => r.t >= c.t) : STATE.research;
+  setText($('m-research'), c ? `${Math.max(0, STATE.totals.web - c.web)} web calls ${since(c)}` : `${STATE.totals.web} web calls today`);
+  if (!items.length) return placeholder(box, c ? `cleared · no web search or fetch ${since(c)}` : 'no web search or fetch yet today');
   keyed(
     box,
-    STATE.research,
+    items,
     (r) => r.id,
     () => {
       const el = document.createElement('div');
@@ -710,10 +799,21 @@ function renderResearch() {
 
 function renderFiles() {
   const box = $('files');
-  const items = STATE.files;
+  const c = clearedOf('p-files');
+  let items = STATE.files;
+  if (c) {
+    items = items
+      .filter((f) => f.last >= c.t)
+      .map((f) => {
+        const b = c.files[f.p] || [0, 0];
+        return { ...f, r: Math.max(0, f.r - b[0]), w: Math.max(0, f.w - b[1]) };
+      })
+      .filter((f) => f.r + f.w > 0)
+      .sort((a, b) => b.r + b.w - (a.r + a.w));
+  }
   const collisions = items.filter((f) => f.collision).length;
-  setText($('m-files'), collisions ? `⚠ ${collisions} file edited by 2+ agents` : `${items.length} most-touched today`);
-  if (!items.length) return placeholder(box, 'no file reads or edits yet today');
+  setText($('m-files'), collisions ? `⚠ ${collisions} file edited by 2+ agents` : c ? `${items.length} touched ${since(c)}` : `${items.length} most-touched today`);
+  if (!items.length) return placeholder(box, c ? `cleared · no file reads or edits ${since(c)}` : 'no file reads or edits yet today');
   const max = Math.max(1, ...items.map((f) => f.r + f.w));
   keyed(
     box,
@@ -738,24 +838,27 @@ function renderFiles() {
 }
 
 function renderMix() {
-  const total = CATS.reduce((a, c) => a + (STATE.byCat[c] || 0), 0);
-  setText($('m-mix'), `${STATE.totals.tools} calls today · 30 min trend`);
+  const cl = clearedOf('p-mix');
+  const by = Object.fromEntries(CATS.map((c) => [c, Math.max(0, (STATE.byCat[c] || 0) - (cl?.cats[c] || 0))]));
+  const total = CATS.reduce((a, c) => a + by[c], 0);
+  setText($('m-mix'), cl ? `${Math.max(0, STATE.totals.tools - cl.tools)} calls ${since(cl)} · 30 min trend` : `${STATE.totals.tools} calls today · 30 min trend`);
   setHTML(
     $('mix'),
-    `<div class="mixbar">${CATS.map((c) => `<i style="width:${total ? (((STATE.byCat[c] || 0) / total) * 100).toFixed(2) : 0}%;background:${CAT[c].css}"></i>`).join('')}</div>` +
-      `<div class="mixlegend">${CATS.map((c) => `<span><i style="background:${CAT[c].css}"></i>${CAT[c].label} <b>${STATE.byCat[c] || 0}</b></span>`).join('')}</div>` +
-      `<svg class="chart" viewBox="0 0 300 34" preserveAspectRatio="none">${areaChart(STATE.toolSpark, 'var(--accent)', 300, 34)}</svg>`,
+    `<div class="mixbar">${CATS.map((c) => `<i style="width:${total ? ((by[c] / total) * 100).toFixed(2) : 0}%;background:${CAT[c].css}"></i>`).join('')}</div>` +
+      `<div class="mixlegend">${CATS.map((c) => `<span><i style="background:${CAT[c].css}"></i>${CAT[c].label} <b>${by[c]}</b></span>`).join('')}</div>` +
+      `<svg class="chart" viewBox="0 0 300 34" preserveAspectRatio="none">${areaChart(sparkSince(STATE.toolSpark, cl), 'var(--accent)', 300, 34)}</svg>`,
   );
 }
 
 function renderWorkers() {
   const list = [];
-  for (const s of STATE.sessions) for (const a of s.agents) list.push({ ...a, sname: s.name });
+  const c = clearedOf('p-workers');
+  for (const s of STATE.sessions) for (const a of s.agents) if (!c || a.lastTs >= c.t) list.push({ ...a, sname: s.name });
   list.sort((a, b) => b.running - a.running || b.lastTs - a.lastTs);
   const running = list.filter((a) => a.running).length;
-  setText($('m-workers'), list.length ? `${running} running · ${list.length} in last 15 min` : 'subagents & forks');
+  setText($('m-workers'), list.length ? `${running} running · ${list.length} ${c ? since(c) : 'in last 15 min'}` : 'subagents & forks');
   const box = $('workers');
-  if (!list.length) return placeholder(box, 'no subagents in the last 15 min');
+  if (!list.length) return placeholder(box, c ? `cleared · no subagents ${since(c)}` : 'no subagents in the last 15 min');
   keyed(
     box,
     list.slice(0, 12),
@@ -791,13 +894,30 @@ function renderSpend() {
       '<div class="spend-rows" id="spend-rows"></div><div class="spend-kv" id="spend-kv"></div>';
     box.dataset.ready = '1';
   }
-  const T = STATE.totals;
+  const c = clearedOf('p-spend');
+  let T = STATE.totals, models = STATE.byModel;
+  const spark = sparkSince(STATE.costSpark, c);
+  if (c) {
+    // Counted on from the clearing; the burn is the last 15 minutes' again, without what came before it.
+    const less = (a, b) => Math.max(0, a - b);
+    T = {
+      ...T, cost: less(T.cost, c.cost), saved: less(T.saved, c.saved), costPerHour: spark.slice(-15).reduce((a, b) => a + b, 0) * 4,
+      tok: { ...T.tok, out: less(T.tok.out, c.out), cr: less(T.tok.cr, c.cr), cw: less(T.tok.cw, c.cw) },
+    };
+    models = models
+      .map((m) => {
+        const b = c.models[m.model] || [0, 0, 0];
+        return { ...m, calls: less(m.calls, b[0]), tok: { ...m.tok, out: less(m.tok.out, b[1]) }, cost: less(m.cost, b[2]) };
+      })
+      .filter((m) => m.calls > 0)
+      .sort((a, b) => b.cost - a.cost);
+  }
   setNum('spend-big', T.cost, fmtUsd);
-  setText($('spend-sub'), `today · ${fmtTok(T.tok.out)} out · ${fmtTok(T.tok.cr)} cache read · ${fmtTok(T.tok.cw)} cache write`);
-  setHTML($('spend-chart'), areaChart(STATE.costSpark, 'var(--amber)', 300, 34));
+  setText($('spend-sub'), `${c ? since(c) : 'today'} · ${fmtTok(T.tok.out)} out · ${fmtTok(T.tok.cr)} cache read · ${fmtTok(T.tok.cw)} cache write`);
+  setHTML($('spend-chart'), areaChart(spark, 'var(--amber)', 300, 34));
   setHTML(
     $('spend-rows'),
-    STATE.byModel
+    models
       .slice(0, 3)
       .map((m) => `<div class="sr"><span><b>${esc(m.model)}</b> · ${m.calls} calls</span><span>${fmtTok(m.tok.out)} out</span><span class="c">${m.priced ? fmtUsd(m.cost) : 'no price'}</span></div>`)
       .join(''),
