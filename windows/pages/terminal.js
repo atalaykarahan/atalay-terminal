@@ -27,7 +27,9 @@
   term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => atl.send('term:open', uri)));
   term.open(document.getElementById('term'));
   try {
-    term.loadAddon(new WebglAddon.WebglAddon());
+    const webgl = new WebglAddon.WebglAddon();
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
   } catch {}
   const size = () => ({ cols: term.cols, rows: term.rows });
   const refit = () => {
@@ -36,7 +38,13 @@
     } catch {}
   };
   refit();
+  new ResizeObserver(refit).observe(document.getElementById('term'));
   addEventListener('resize', refit);
+  addEventListener('focus', () => {
+    refit();
+    term.focus();
+  });
+  document.addEventListener('visibilitychange', () => !document.hidden && refit());
   addEventListener('themechange', () => (term.options.theme = palette()));
   term.onResize(({ cols, rows }) => atl.send('term:resize', { cols, rows }));
   term.onData((data) => atl.send('term:input', data));
@@ -74,7 +82,11 @@
     document.getElementById('where').textContent = i.cwd || '';
     document.body.style.setProperty('--st', `var(${color})`);
   });
-  document.getElementById('dash').onclick = () => atl.send('term:dashboard');
+  document.getElementById('hud').addEventListener('mousedown', (e) => e.preventDefault());
+  document.getElementById('dash').onclick = () => {
+    term.focus();
+    atl.send('term:dashboard');
+  };
   document.getElementById('end').onclick = () => atl.send('term:end');
   term.focus();
   atl.send('term:ready', size());
