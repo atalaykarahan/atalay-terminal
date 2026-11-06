@@ -798,7 +798,10 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     win.focus();
     pushWinOpen();
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
+  });
   // A window pinned above the dashboard is its child, and Windows minimizes an owned window to a bar on the desktop
   // rather than the taskbar: it lets go of the dashboard on its way to the taskbar and pins again when it comes back,
   // as on the Mac.
@@ -1043,7 +1046,9 @@ ipcMain.on('term:copy', (e, text) => {
 });
 ipcMain.on('term:dashboard', () => showDashboard());
 ipcMain.on('term:open', (_e, uri) => {
-  if (/^https?:\/\//.test(uri)) shell.openExternal(uri);
+  if (typeof uri !== 'string') return;
+  const clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
+  if (/^https?:\/\//i.test(clean)) shell.openExternal(clean).catch(() => {});
 });
 
 // ---------- the overlay: the shortcut wheel and the new-terminal folder picker, over the whole screen ----------

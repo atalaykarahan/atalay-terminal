@@ -75,6 +75,8 @@ static class Native
     public const int STARTF_USESTDHANDLES = 0x00000100;
     public static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
     public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+    public const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
+    public const uint JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000;
     public const int JobObjectBasicAccountingInformation = 1, JobObjectExtendedLimitInformation = 9;
     public const uint INFINITE = 0xFFFFFFFF;
 
@@ -290,7 +292,9 @@ sealed class Session
             }
             var job = Native.CreateJobObjectW(IntPtr.Zero, null);
             var info = new Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
-            info.BasicLimitInformation.LimitFlags = Native.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // Allow child processes (such as browsers opened by CLI tools) to break away from the job so sandboxed
+            // renderers (Chrome, Edge) do not fail with ACCESS_DENIED.
+            info.BasicLimitInformation.LimitFlags = Native.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | Native.JOB_OBJECT_LIMIT_BREAKAWAY_OK | Native.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
             Native.SetInformationJobObject(job, Native.JobObjectExtendedLimitInformation, ref info, Marshal.SizeOf(typeof(Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION)));
             Native.AssignProcessToJobObject(job, pi.hProcess);
             Native.ResumeThread(pi.hThread);
