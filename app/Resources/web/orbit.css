@@ -80,3 +80,97 @@
 .cine-tag { position: absolute; left: 50%; bottom: 30px; z-index: 6; padding: 3px 11px; border: 1px solid rgba(var(--accent-rgb), 0.35); background: rgba(10, 6, 3, 0.55); color: var(--accent-soft); font: 10px/1.4 var(--font); letter-spacing: 0.16em; white-space: nowrap; opacity: 0; transform: translateX(-50%); transition: opacity 0.8s; pointer-events: none; }
 .cine-tag.on { opacity: 0.85; animation: cine-pulse 2.6s ease-in-out infinite; }
 @keyframes cine-pulse { 50% { opacity: 0.45; } }
+
+/* ---------- time-machine scrubber HUD ---------- */
+#time-machine {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 6px;
+  border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.24);
+  border-radius: 999px;
+  background: rgba(12, 7, 4, 0.58);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.42);
+  opacity: 0.68;
+  transition: opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+#time-machine:hover,
+#time-machine.is-replay {
+  opacity: 1;
+  border-color: rgba(var(--accent-rgb, 248, 128, 8), 0.58);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.58), 0 0 12px rgba(var(--accent-rgb, 248, 128, 8), 0.16);
+}
+.tm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid rgba(61, 255, 168, 0.35);
+  border-radius: 999px;
+  background: rgba(61, 255, 168, 0.1);
+  color: #3dffa8;
+  font: 700 9px/1.2 var(--font);
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.tm-badge .tm-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.tm-badge.is-replay {
+  border-color: rgba(255, 176, 87, 0.55);
+  background: rgba(248, 128, 8, 0.18);
+  color: var(--accent-soft, #ffb057);
+}
+.tm-badge.is-replay .tm-dot {
+  animation: stl-blink 0.6s ease-in-out infinite alternate;
+}
+#scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 170px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.14), rgba(var(--accent-rgb, 248, 128, 8), 0.48));
+  outline: none;
+  cursor: ew-resize;
+}
+#scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid #fff0e0;
+  background: var(--accent, #f88008);
+  box-shadow: 0 0 8px rgba(var(--accent-rgb, 248, 128, 8), 0.85);
+  cursor: grab;
+  transition: transform 0.12s ease;
+}
+#scrubber:active::-webkit-slider-thumb {
+  cursor: grabbing;
+  transform: scale(1.22);
+}
+.tm-time {
+  min-width: 48px;
+  text-align: right;
+  color: var(--dim, rgba(245, 235, 224, 0.68));
+  font: 9px/1 var(--font);
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+#time-machine.is-replay .tm-time {
+  color: var(--hi, #fff0e0);
+}

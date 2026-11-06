@@ -196,6 +196,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             pushTerminals()
             radar.push("runaways", runaways.json)
             pushActiveSession(force: true)
+            engine.telemetry.readHistory { [weak self] json in
+                self?.radar.push("telemetryHistory", json)
+            }
+        case "loadTelemetryHistory", "loadHistory":
+            engine.telemetry.readHistory { [weak self] json in
+                self?.radar.push("telemetryHistory", json)
+            }
         case "open": if let sid = msg["sid"] as? String { openSession(sid) }
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()

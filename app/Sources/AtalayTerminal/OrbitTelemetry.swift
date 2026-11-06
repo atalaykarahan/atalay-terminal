@@ -164,6 +164,55 @@ final class OrbitTelemetry {
         queue.sync { (lastBySid.count, buffer.count) }
     }
 
+    /// Reads the last `maxAgeSeconds` (default 24h) of telemetry entries asynchronously on the background queue,
+    /// sorted ascending by timestamp `t`, and delivers the JSON array string on the main queue.
+    func readHistory(maxAgeSeconds: Int = 86_400, completion: @escaping @MainActor (String) -> Void) {
+        queue.async {
+            self.flushLocked()
+            let items = self.readHistoryLocked(maxAgeSeconds: maxAgeSeconds)
+            let data = (try? JSONSerialization.data(withJSONObject: items)) ?? Data("[]".utf8)
+            let json = String(decoding: data, as: UTF8.self)
+            DispatchQueue.main.async {
+                completion(json)
+            }
+        }
+    }
+
+    /// Synchronously reads and parses the last `maxAgeSeconds` of telemetry entries (for unit tests).
+    func readHistorySync(maxAgeSeconds: Int = 86_400) -> [[String: Any]] {
+        queue.sync {
+            self.flushLocked()
+            return self.readHistoryLocked(maxAgeSeconds: maxAgeSeconds)
+        }
+    }
+
+    private func readHistoryLocked(maxAgeSeconds: Int) -> [[String: Any]] {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: filePath),
+              let fh = FileHandle(forReadingAtPath: filePath) else { return [] }
+        defer { try? fh.close() }
+        let maxBytes: UInt64 = 4 * 1024 * 1024
+        let size = (try? fh.seekToEnd()) ?? 0
+        let offset = size > maxBytes ? size - maxBytes : 0
+        try? fh.seek(toOffset: offset)
+        guard let data = try? fh.readToEnd(), !data.isEmpty else { return [] }
+        var text = String(decoding: data, as: UTF8.self)
+        if offset > 0, let nl = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: nl)...])
+        }
+        let cutoff = Int(Date().timeIntervalSince1970) - maxAgeSeconds
+        var out: [[String: Any]] = []
+        for line in text.split(separator: "\n") {
+            guard let lineData = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  let t = obj["t"] as? Int,
+                  t >= cutoff else { continue }
+            out.append(obj)
+        }
+        out.sort { (($0["t"] as? Int) ?? 0) < (($1["t"] as? Int) ?? 0) }
+        return out
+    }
+
     private func appendLocked(sid: String, status: String, cpu: Int, files: [String], timestamp: Int) {
         let sig = SessionSignature(status: status, cpu: cpu, files: files)
         if lastBySid[sid] == sig { return }

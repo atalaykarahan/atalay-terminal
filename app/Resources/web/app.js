@@ -141,7 +141,7 @@ function setActiveSession(sid) {
   if (STATE) renderTop();
 }
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), activeSession: setActiveSession, telemetryHistory: (list) => map('telemetryHistory', list), cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
 }
 
@@ -1071,7 +1071,7 @@ $('log').addEventListener('click', (e) => {
 $('newchat').addEventListener('click', () => native({ type: 'newTerminal' }));
 
 // Shared with orbit.js.
-window.RADAR = { CAT, CATS, STATUS, FONT, MAPQ, sessColor, colorIndex, sessName, hexA, fmtTok, fmtUsd, fmtDur, clock, ago, clipT, esc, ctxColor, focusSession, sessionTip, agentTip, stationTip, terminalTip, openTerminal, showTip, hideTip };
+window.RADAR = { CAT, CATS, STATUS, FONT, MAPQ, native, sessColor, colorIndex, sessName, hexA, fmtTok, fmtUsd, fmtDur, clock, ago, clipT, esc, ctxColor, focusSession, sessionTip, agentTip, stationTip, terminalTip, openTerminal, showTip, hideTip };
 
 // ---------- start ----------
 setInterval(() => {

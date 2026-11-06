@@ -119,6 +119,46 @@ class OrbitTelemetry {
     };
   }
 
+  async readHistory(maxAgeSeconds = 86_400) {
+    await this.flush();
+    let st;
+    try {
+      st = await fsp.stat(this.filePath);
+    } catch {
+      return [];
+    }
+    if (!st || st.size <= 0) return [];
+    const maxBytes = 4 * 1024 * 1024;
+    const offset = st.size > maxBytes ? st.size - maxBytes : 0;
+    const len = st.size - offset;
+    const fh = await fsp.open(this.filePath, 'r');
+    let text = '';
+    try {
+      const buf = Buffer.allocUnsafe(len);
+      const { bytesRead } = await fh.read(buf, 0, len, offset);
+      text = buf.subarray(0, bytesRead).toString('utf8');
+    } finally {
+      await fh.close();
+    }
+    if (offset > 0) {
+      const nl = text.indexOf('\n');
+      if (nl >= 0) text = text.slice(nl + 1);
+    }
+    const cutoff = Math.floor(Date.now() / 1000) - maxAgeSeconds;
+    const out = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        if (obj && typeof obj.t === 'number' && obj.t >= cutoff) {
+          out.push(obj);
+        }
+      } catch {}
+    }
+    out.sort((a, b) => a.t - b.t);
+    return out;
+  }
+
   flush() {
     if (!this.buffer.length) return this.flushing;
     const batch = this.buffer;

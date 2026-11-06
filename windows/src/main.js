@@ -654,7 +654,14 @@ function handleRadar(msg) {
       pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
       pushActiveSession(true);
+      engine.telemetryHistory().then((items) => toDash(`telemetryHistory(${JSON.stringify(items)})`)).catch(() => {});
       return true;
+    case 'loadTelemetryHistory':
+    case 'loadHistory':
+      return engine.telemetryHistory().then((items) => {
+        toDash(`telemetryHistory(${JSON.stringify(items)})`);
+        return items;
+      });
     case 'open':
       return openSession(msg.sid, false);
     case 'fork':

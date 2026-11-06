@@ -447,7 +447,13 @@ class Session {
     this.kick = Math.max(0, this.kick - dt * 1.6);
     const ended = this.status === 'ended';
     const omega = 0.42 * Math.sqrt(K.ATOM_R / this.r) * (ended ? 0.3 : 1) * (1 + this.kick * 1.2);
-    this.theta = (this.theta + omega * dt) % TAU;
+    if (isReplayMode && this.replayTheta !== undefined) {
+      let dTheta = ((this.replayTheta - this.theta) % TAU + TAU) % TAU;
+      if (dTheta > Math.PI) dTheta -= TAU;
+      this.theta = (this.theta + dTheta * damp(10, dt) + TAU) % TAU;
+    } else {
+      this.theta = (this.theta + omega * dt) % TAU;
+    }
     const H = this.home(this.homePos, now);
     this.prev.copy(this.pos);
 
@@ -472,6 +478,10 @@ class Session {
         this.mode = 'locked';
         this.warp = false;
       }
+    } else if (isReplayMode) {
+      const a = damp(10, dt);
+      this.pos.lerp(H, a);
+      this.scale = lerp(this.scale, this.homeScale, a);
     } else {
       this.pos.copy(H);
       this.scale = this.homeScale;
@@ -781,7 +791,16 @@ let shipSeq = 0;
 // Cars blown up by End Session, until when they stay gone: their terminal is still on the list for a few seconds while it
 // ends (its processes hung up, then ended), and the car came back.
 const GONE = new Map();
-function syncShips(list) {
+let isReplayMode = false;
+let liveShipsList = [];
+let liveBoxesList = [];
+let liveState = null;
+
+function syncShips(list, fromReplay = false) {
+  if (!fromReplay) {
+    liveShipsList = list || [];
+    if (isReplayMode) return;
+  }
   const seen = new Set(), now = performance.now();
   const listed = new Set((list || []).map((t) => t.id));
   for (const [id, until] of GONE) if (until < now || !listed.has(id)) GONE.delete(id);
@@ -795,12 +814,13 @@ function syncShips(list) {
       SHIPS.set(t.id, s);
     }
     s.t = t;
+    if (typeof t.replayTheta === 'number') s.replayTheta = t.replayTheta;
     const kind = t.running ? 'lane' : 'park';
     if (kind !== s.homeKind) {
       // A car that was already somewhere flies over; a new one appears in place.
-      if (s.homeKind) s.fly = { t0: now, from: s.pos.clone(), fromQ: s.m.group.quaternion.clone(), fromScale: s.base };
+      if (s.homeKind && !isReplayMode) s.fly = { t0: now, from: s.pos.clone(), fromQ: s.m.group.quaternion.clone(), fromScale: s.base };
       if (kind === 'lane') {
-        s.theta = freeAngle();
+        s.theta = typeof t.replayTheta === 'number' ? t.replayTheta : freeAngle();
         s.speed = s.lift = 0;
       } else s.parkedAt = now;
       s.homeKind = kind;
@@ -901,7 +921,13 @@ function shipHome(s, dt, now) {
   const run = s.t.running;
   const cruise = run ? 0.09 + Math.min(1, (s.t.cpu || 0) / 60) * 0.16 : 0;
   s.speed += (cruise - s.speed) * damp(1.2, dt);
-  s.theta += s.speed * dt;
+  if (isReplayMode && typeof s.replayTheta === 'number') {
+    let dTheta = ((s.replayTheta - s.theta) % TAU + TAU) % TAU;
+    if (dTheta > Math.PI) dTheta -= TAU;
+    s.theta = (s.theta + dTheta * damp(10, dt) + TAU) % TAU;
+  } else {
+    s.theta += s.speed * dt;
+  }
   s.lift += ((run ? LANE.LIFT : 0) - s.lift) * damp(1.5, dt);
   const bob = Math.sin(now / 900 + s.i * 1.7) * 1.4;
   _home.set(Math.cos(s.theta) * LANE.R, LANE.Y + s.lift + bob, Math.sin(s.theta) * LANE.R);
@@ -917,12 +943,17 @@ function updateShips(dt, now) {
     // A going car shrinks where it is.
     if (!s.dying) {
       const size = shipHome(s, dt, now);
-      if (s.fly) {
+      if (s.fly && !isReplayMode) {
         const u = clamp((now - s.fly.t0) / SHIP_FLY_MS, 0, 1), e = easeInOut(u);
         s.pos.lerpVectors(s.fly.from, _home, e);
         s.m.group.quaternion.slerpQuaternions(s.fly.fromQ, _homeQ, e);
         s.base = lerp(s.fly.fromScale, size, e);
         if (u >= 1) s.fly = null;
+      } else if (isReplayMode) {
+        const a = damp(10, dt);
+        s.pos.lerp(_home, a);
+        s.m.group.quaternion.slerp(_homeQ, a);
+        s.base = lerp(s.base, size, a);
       } else {
         s.pos.copy(_home);
         s.m.group.quaternion.copy(_homeQ);
@@ -975,7 +1006,11 @@ const BOX_ENTER_MS = 2600, BOX_FOLLOW_MS = 8000;
 const _flame = new THREE.Vector3();
 // Boxes blown up from the Details card: the list may name their process a moment longer (it ends after it).
 const killed = new Map(); // 'pid:start' -> until when
-function syncBoxes(list) {
+function syncBoxes(list, fromReplay = false) {
+  if (!fromReplay) {
+    liveBoxesList = list || [];
+    if (isReplayMode) return;
+  }
   const seen = new Set(), now = performance.now();
   for (const [k, until] of killed) if (now > until) killed.delete(k);
   for (const r of list || []) {
@@ -1753,7 +1788,11 @@ for (const b of document.querySelectorAll('#viewctl button')) {
 
 // ---------- state from app.js ----------
 let STATE = null, lastText = 0;
-function onState(st) {
+function onState(st, fromReplay = false) {
+  if (!fromReplay) {
+    liveState = st;
+    if (isReplayMode) return;
+  }
   STATE = st;
   syncSessions(st, performance.now());
   refreshStations(st);
@@ -1897,6 +1936,249 @@ function focusRunaway(pid) {
   const b = [...BOXES.values()].find((x) => !x.dying && x.r.pid === pid);
   if (b) followBox(b);
 }
+
+// ---------- Time-Machine Replay ----------
+const tmWrap = document.getElementById('time-machine');
+const tmBadge = document.getElementById('tm-badge');
+const tmModeEl = document.getElementById('tm-mode');
+const tmScrubber = document.getElementById('scrubber');
+const tmTimeEl = document.getElementById('tm-time');
+
+let telemetryEntries = [];
+let telemetrySlices = [];
+let tmMinT = Math.floor(Date.now() / 1000) - 3600;
+let tmMaxT = Math.floor(Date.now() / 1000);
+let tmLoadedOnce = false;
+
+function hashSid(sid) {
+  let h = 2166136261;
+  const s = String(sid || '');
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return Math.abs(h | 0) || 1;
+}
+
+function fmtReplayClock(sec) {
+  const d = new Date(sec * 1000);
+  return d.toTimeString().slice(0, 8);
+}
+
+function setTelemetryHistory(list) {
+  if (!Array.isArray(list)) return;
+  telemetryEntries = list
+    .filter((e) => e && typeof e.t === 'number' && typeof e.sid === 'string' && e.sid)
+    .sort((a, b) => a.t - b.t);
+  telemetrySlices = [];
+  const active = new Map();
+  for (const e of telemetryEntries) {
+    if (e.status === 'ended') active.delete(e.sid);
+    else active.set(e.sid, e);
+    const snapshot = new Map(active);
+    if (telemetrySlices.length && telemetrySlices[telemetrySlices.length - 1].t === e.t) {
+      telemetrySlices[telemetrySlices.length - 1].sessions = snapshot;
+    } else {
+      telemetrySlices.push({ t: e.t, sessions: snapshot });
+    }
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (telemetrySlices.length) {
+    tmMinT = telemetrySlices[0].t;
+    tmMaxT = Math.max(telemetrySlices[telemetrySlices.length - 1].t, nowSec);
+  } else {
+    tmMinT = nowSec - 3600;
+    tmMaxT = nowSec;
+  }
+  if (tmScrubber && !isReplayMode) {
+    tmScrubber.min = String(tmMinT);
+    tmScrubber.max = String(tmMaxT);
+    tmScrubber.value = String(tmMaxT);
+  }
+  tmLoadedOnce = true;
+}
+
+function findClosestSlice(timestamp) {
+  if (!telemetrySlices.length) return null;
+  let lo = 0, hi = telemetrySlices.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (telemetrySlices[mid].t < timestamp) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(telemetrySlices[lo - 1].t - timestamp) <= Math.abs(telemetrySlices[lo].t - timestamp)) {
+    return telemetrySlices[lo - 1];
+  }
+  return telemetrySlices[lo];
+}
+
+function setReplayHud(on, ts) {
+  if (tmWrap) tmWrap.classList.toggle('is-replay', on);
+  if (tmBadge) {
+    tmBadge.classList.toggle('is-replay', on);
+    tmBadge.classList.toggle('is-live', !on);
+  }
+  if (tmModeEl) setText(tmModeEl, on ? 'REPLAY' : 'LIVE');
+  if (tmTimeEl) setText(tmTimeEl, on && ts ? fmtReplayClock(ts) : 'NOW');
+}
+
+function applyTimeSlice(timestamp) {
+  const ts = Number(timestamp) || Math.floor(Date.now() / 1000);
+  isReplayMode = true;
+  setReplayHud(true, ts);
+
+  const slice = findClosestSlice(ts);
+  const now = performance.now();
+  const replayShips = [];
+  const replayBoxes = [];
+  const sliceMap = slice ? slice.sessions : new Map();
+
+  // Apply historical session statuses & deterministic replay angles for smooth LERP
+  for (const [sid, n] of NODES) {
+    const rec = sliceMap.get(sid);
+    const st = rec ? (rec.status === 'frozen' ? 'busy' : rec.status) : n.s.status;
+    if (st !== n.status && STATUS[st]) {
+      n.status = st;
+      n.color.copy(statusColor(st));
+    }
+    const kind = homeKindOf(n.status);
+    if (kind !== n.homeKind) n.homeKind = kind;
+    n.replayTheta = ((n.ci * 2.39996 + 0.6 + (ts - tmMinT) * 0.18) % TAU + TAU) % TAU;
+  }
+  assignOrbits();
+
+  // Reconstruct Car / TARDIS models at this timestamp and glide ships via .lerp() / .slerp()
+  const handledShipIds = new Set();
+  for (const [sid, rec] of sliceMap) {
+    const isFrozenOrRunaway = rec.status === 'frozen' || rec.status === 'runaway' || Number(rec.cpu) >= 85;
+    const pid = (hashSid(sid) % 80000) + 10000;
+    const label = (Array.isArray(rec.files) && rec.files[0]) || sid.slice(0, 12);
+    if (isFrozenOrRunaway) {
+      replayBoxes.push({
+        pid,
+        started: tmMinT * 1000,
+        name: label,
+        cmd: `${sid} (${rec.files?.join(', ') || 'frozen'})`,
+        cpu: Math.max(85, Number(rec.cpu) || 95),
+      });
+    } else if (!NODES.has(sid)) {
+      const shipId = `tm:${sid}`;
+      handledShipIds.add(shipId);
+      const running = rec.status === 'busy';
+      const theta = ((hashSid(sid) * 0.71 + (ts - tmMinT) * (running ? 0.14 : 0.02)) % TAU + TAU) % TAU;
+      replayShips.push({
+        id: shipId,
+        cwd: label,
+        dir: label,
+        cmd: running ? (rec.files?.[0] || sid) : '',
+        running,
+        cpu: Number(rec.cpu) || 0,
+        left: false,
+        replayTheta: theta,
+      });
+    }
+  }
+
+  // Also interpolate existing live ships along their historical trajectory unless frozen into TARDIS
+  for (const t of liveShipsList) {
+    if (handledShipIds.has(t.id)) continue;
+    const rec = sliceMap.get(t.id);
+    const frozen = rec && (rec.status === 'frozen' || rec.status === 'runaway' || Number(rec.cpu) >= 85);
+    if (frozen) {
+      replayBoxes.push({
+        pid: t.pid || (hashSid(t.id) % 80000) + 10000,
+        started: t.started || tmMinT * 1000,
+        name: t.cmd || t.dir || t.id,
+        cmd: t.cmd || t.dir || t.id,
+        cpu: Number(rec.cpu) || 95,
+      });
+      continue;
+    }
+    const running = rec ? rec.status === 'busy' : !!t.running;
+    const cpu = rec ? Number(rec.cpu) || 0 : Number(t.cpu) || 0;
+    const theta = ((hashSid(t.id) * 1.13 + (ts - tmMinT) * (running ? 0.14 : 0.02)) % TAU + TAU) % TAU;
+    replayShips.push({
+      ...t,
+      running,
+      cpu,
+      replayTheta: theta,
+    });
+  }
+
+  syncShips(replayShips, true);
+  syncBoxes(replayBoxes, true);
+  poke(1800);
+}
+
+function exitReplayMode() {
+  if (!isReplayMode) return;
+  isReplayMode = false;
+  const now = performance.now();
+  for (const n of NODES.values()) {
+    delete n.replayTheta;
+    n.startFly(now);
+  }
+  for (const s of SHIPS.values()) {
+    delete s.replayTheta;
+    s.fly = { t0: now, from: s.pos.clone(), fromQ: s.m.group.quaternion.clone(), fromScale: s.base };
+  }
+  if (tmScrubber) {
+    tmMaxT = Math.max(tmMaxT, Math.floor(Date.now() / 1000));
+    tmScrubber.max = String(tmMaxT);
+    tmScrubber.value = String(tmMaxT);
+  }
+  setReplayHud(false, 0);
+  if (liveState) onState(liveState, true);
+  syncShips(liveShipsList, true);
+  syncBoxes(liveBoxesList, true);
+  poke(1800);
+}
+
+if (tmScrubber) {
+  const beginScrub = () => {
+    if (!tmLoadedOnce) R.native?.({ type: 'loadTelemetryHistory' });
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (Number(tmScrubber.max) <= 100) {
+      tmMinT = nowSec - 3600;
+      tmMaxT = nowSec;
+      tmScrubber.min = String(tmMinT);
+      tmScrubber.max = String(tmMaxT);
+      tmScrubber.value = String(tmMaxT);
+    }
+    isReplayMode = true;
+    applyTimeSlice(Number(tmScrubber.value));
+  };
+  tmScrubber.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    beginScrub();
+  });
+  tmScrubber.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    beginScrub();
+  });
+  tmScrubber.addEventListener('input', (e) => {
+    e.stopPropagation();
+    isReplayMode = true;
+    applyTimeSlice(Number(tmScrubber.value));
+  });
+  tmScrubber.addEventListener('change', () => {
+    exitReplayMode();
+  });
+  tmScrubber.addEventListener('pointerup', () => {
+    exitReplayMode();
+  });
+  tmScrubber.addEventListener('mouseup', () => {
+    exitReplayMode();
+  });
+}
+if (tmBadge) {
+  tmBadge.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isReplayMode) {
+      exitReplayMode();
+    } else {
+      R.native?.({ type: 'loadTelemetryHistory' });
+    }
+  });
+}
+
 setCinematic(cineOn);
-window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
+window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp, telemetryHistory: setTelemetryHistory, applyTimeSlice, exitReplayMode };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);

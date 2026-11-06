@@ -3267,6 +3267,7 @@ function createEngine(opts = {}) {
     sessionCwd: (sessionId) => e.sessionCwd(sessionId),
     dismiss: (sessionId, pid) => e.dismiss(sessionId, pid),
     transcriptItems: (sessionId, limit) => e.transcriptItems(sessionId, limit),
+    telemetryHistory: (maxAgeSeconds) => e.telemetry.readHistory(maxAgeSeconds),
   };
 }
 
