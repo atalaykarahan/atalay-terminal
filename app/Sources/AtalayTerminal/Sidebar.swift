@@ -152,28 +152,7 @@ final class SidebarModel: ObservableObject {
         return order.map { ($0, map[$0]!) }
     }
 
-    /// Shortest path suffix that tells projects apart: "05_AI" twice becomes "0019_F1Reels/…/05_AI" and "0020_SecondReels/…/05_AI".
-    func labels(for cwds: [String]) -> [String: String] {
-        let parts = Dictionary(cwds.map { ($0, tildify($0).split(separator: "/").map(String.init)) }, uniquingKeysWith: { a, _ in a })
-        var out: [String: String] = [:]
-        var pending = Set(cwds)
-        var k = 2
-        while !pending.isEmpty {
-            var seen: [String: [String]] = [:]
-            for cwd in pending {
-                let p = parts[cwd] ?? []
-                let tail = Array(p.suffix(k))
-                let label = tail.count <= 2 ? tail.joined(separator: "/") : "\(tail[0])/…/\(tail[tail.count - 1])"
-                seen[label, default: []].append(cwd)
-            }
-            for (label, owners) in seen where owners.count == 1 || owners.allSatisfy({ (parts[$0]?.count ?? 0) <= k }) {
-                for cwd in owners { out[cwd] = owners.count == 1 ? label : tildify(cwd) }
-                pending.subtract(owners)
-            }
-            k += 1
-        }
-        return out
-    }
+    func labels(for cwds: [String]) -> [String: String] { distinctLabels(for: cwds) }
 }
 
 struct SidebarActions {
