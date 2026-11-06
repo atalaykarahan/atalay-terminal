@@ -332,7 +332,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func pushActiveSession(force: Bool = false) {
-        let shell = activeTerminalWindow.flatMap { chats[$0]?.focusedShellPid } ?? 0
+        let chat = activeChat ?? activeTerminalWindow.flatMap { chats[$0] }
+        let shell = chat?.focusedShellPid ?? 0
         var best: (brief: SessionBrief, distance: Int)?
         if shell > 0 {
             for b in briefs.values where b.live {
@@ -347,7 +348,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         }
-        let sid = best?.brief.id ?? ""
+        let sid = best?.brief.id ?? chat?.sessionId ?? ""
+        let chatSid = (best?.brief.id).flatMap({ $0.hasPrefix("ai:") ? nil : $0 }) ?? chat?.sessionId ?? (sid.isEmpty ? nil : sid)
+        if sidebar.activeSessionId != chatSid { sidebar.activeSessionId = chatSid }
         guard force || sid != lastActiveSession else { return }
         lastActiveSession = sid
         let json = sid.isEmpty ? "null" : "\"\(sid)\""
@@ -880,16 +883,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         c.endPanes()
         c.window?.parent?.removeChildWindow(c.window!)
         c.window?.orderOut(nil)
+        if activeTerminalWindow == id { activeTerminalWindow = activeChat?.id }
         syncShells()
         pushWinOpen()
+        pushActiveSession()
     }
 
     func chatProcessEnded(_ id: String) {
         syncShells()
         pushWinOpen()
+        pushActiveSession()
     }
 
-    func chatVisibilityChanged() { pushWinOpen() }
+    func chatVisibilityChanged() {
+        if let id = activeTerminalWindow, chats[id]?.isShown != true { activeTerminalWindow = activeChat?.id }
+        pushWinOpen()
+        pushActiveSession()
+    }
 
     private func syncShells() {
         var map: [Int32: String] = [:]

@@ -1843,6 +1843,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     // parent's child windows on a click.
     func windowDidBecomeKey(_ notification: Notification) {
         focusChanged()
+        manager?.terminalFocused(window: id)
         guard let w = window, let parent = w.parent, parent.childWindows?.last != w else { return }
         parent.removeChildWindow(w)
         parent.addChildWindow(w, ordered: .above)
