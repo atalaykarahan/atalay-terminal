@@ -62,6 +62,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         runaways.onChange = { [weak self] json in
             self?.radar.push("runaways", json)
             MessagePanel.notices.runaways(json)
+            self?.pushTerminals()
         }
         runaways.start()
         observeVisibility()
@@ -291,6 +292,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             c.apply(b)
         }
         let live = list.filter(\.live)
+        runaways.liveSessions = live.compactMap { b in
+            guard !b.cwd.isEmpty else { return nil }
+            let started = b.pid.flatMap { Proc.info($0).map { Double($0.started / 1000) } } ?? 0
+            return Runaways.LiveSession(cwd: b.cwd, started: started, busy: b.status == "busy")
+        }
         let needYou = live.filter { $0.status == "waiting" }.count
         NSApp.dockTile.badgeLabel = needYou > 0 ? "\(needYou)" : nil
         for b in live {
