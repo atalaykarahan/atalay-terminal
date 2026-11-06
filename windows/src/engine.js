@@ -1188,6 +1188,8 @@ class FileHeat {
     this.p = p;
     this.r = 0; this.w = 0; this.last = 0;
     this.editors = new Map(); // session id, or `${session}:${agent}` -> { t, s, a }
+    this.activeSessions = new Set(); // root SessionIDs currently touching this file
+    this.sessionWrites = new Map(); // root SessionID -> last write timestamp
   }
 }
 
@@ -1223,7 +1225,9 @@ class RadarEngine {
     this.userSettings = path.join(this.claudeDir, 'settings.json');
     this.limitsFile = opts.limitsFile || null;
     this.isAppPid = typeof opts.isAppPid === 'function' ? opts.isAppPid : null;
-    this.handlers = { onInit: opts.onInit, onState: opts.onState, onEvents: opts.onEvents, onHistory: opts.onHistory };
+    this.handlers = { onInit: opts.onInit, onState: opts.onState, onEvents: opts.onEvents, onHistory: opts.onHistory, onCollision: opts.onCollision };
+    this.fileActiveSessions = new Map(); // FilePath -> Set<SessionID>
+    this.activeCollisions = new Map(); // FilePath -> sorted SessionIDs array
 
     this.started = false;
     this.stopped = false;
@@ -1319,8 +1323,27 @@ class RadarEngine {
   dismiss(sessionId, pid) {
     if (typeof sessionId !== 'string' || !sessionId) return;
     this.dismissed.set(sessionId, pid > 0 ? pid : 0);
+    this.releaseFile(null, sessionId);
     this.stateDirty = true;
     this.publishState();
+  }
+
+  releaseFile(filePath, sid) {
+    if (typeof sid !== 'string' || !sid) return;
+    const now = Date.now();
+    const targets = filePath ? [filePath] : [...this.fileActiveSessions.keys()];
+    for (const fp of targets) {
+      const set = this.fileActiveSessions.get(fp);
+      if (!set || !set.has(sid)) continue;
+      set.delete(sid);
+      if (set.size === 0) this.fileActiveSessions.delete(fp);
+      const F = this.G.files.get(fp);
+      if (F) {
+        F.activeSessions.delete(sid);
+        F.sessionWrites.delete(sid);
+        this.checkCollision(F, now);
+      }
+    }
   }
 
   // For Source Control: the folders today's sessions work in, then the folders of the files they wrote today (Claude
@@ -1951,16 +1974,97 @@ class RadarEngine {
     this.emit(this.ev('tool', ts, S, A, { id, n: name, c, l: sm.label }), today);
   }
 
-  touchFile(fp, name, S, A, ts) {
+  touchFile(fp, name, S, A, ts = Date.now()) {
+    const sid = typeof S === 'string' ? S : S && S.id;
+    const aid = typeof A === 'string' ? A : A && A.id;
+    if (!sid) return;
     let F = this.G.files.get(fp);
     if (!F) this.G.files.set(fp, (F = new FileHeat(fp)));
-    if (name === 'Read' || name === 'NotebookRead') {
+    const isRead = name === false || name === 'Read' || name === 'NotebookRead';
+    if (isRead) {
       F.r += 1;
     } else {
       F.w += 1;
-      F.editors.set(A ? `${S.id}:${A.id}` : S.id, { t: ts, s: S.id, a: A ? A.id : null });
+      F.editors.set(aid ? `${sid}:${aid}` : sid, { t: ts, s: sid, a: aid || null });
+      F.sessionWrites.set(sid, ts);
+      // Root SessionID (`sid`) only: subagents share their parent SessionID, preventing false positives.
+      if (this.booted || ts >= Date.now() - 20 * MIN) {
+        F.activeSessions.add(sid);
+        let set = this.fileActiveSessions.get(fp);
+        if (!set) this.fileActiveSessions.set(fp, (set = new Set()));
+        set.add(sid);
+        this.checkCollision(F, Math.max(ts, Date.now()));
+      }
     }
     F.last = ts;
+  }
+
+  isSessionActiveForCollision(sid, writeTs, now) {
+    if (this.dismissed.has(sid)) return false;
+    if (now - writeTs >= 20 * MIN) return false;
+    const S = this.sessions.get(sid);
+    if (S) {
+      const st = this.statusOf(S, now);
+      if (st === 'ended') return false;
+      if (st === 'idle' && S.endTurn && now - Math.max(writeTs, S.lastTs) > 15_000) return false;
+      return true;
+    }
+    const O = this.others.get(sid);
+    if (O) {
+      if (O.endedAt > 0) return false;
+      const st = this.otherStatus(O, now).status;
+      if (st === 'ended') return false;
+      if (st === 'idle' && O.turnOpen === false && now - Math.max(writeTs, O.lastTs) > 15_000) return false;
+      return true;
+    }
+    return true;
+  }
+
+  checkCollision(F, now) {
+    const raw = this.fileActiveSessions.get(F.p) || F.activeSessions;
+    const current = new Set();
+    for (const sid of raw) {
+      const wTs = F.sessionWrites.get(sid) ?? F.last;
+      if (this.isSessionActiveForCollision(sid, wTs, now)) current.add(sid);
+    }
+    F.activeSessions = current;
+    if (current.size === 0) this.fileActiveSessions.delete(F.p);
+    else this.fileActiveSessions.set(F.p, current);
+
+    const sorted = [...current].sort();
+    const base = baseName(F.p) || F.p;
+    if (sorted.length >= 2) {
+      const prev = this.activeCollisions.get(F.p);
+      if (!prev || prev.length !== sorted.length || prev.some((v, i) => v !== sorted[i])) {
+        this.activeCollisions.set(F.p, sorted);
+        this.call('onCollision', {
+          type: 'collision',
+          event: 'COLLISION_DETECTED',
+          active: true,
+          file: base,
+          path: tildify(F.p),
+          sessions: sorted,
+        });
+      }
+    } else if (this.activeCollisions.has(F.p)) {
+      this.activeCollisions.delete(F.p);
+      this.call('onCollision', {
+        type: 'collision',
+        event: 'COLLISION_RESOLVED',
+        active: false,
+        file: base,
+        path: tildify(F.p),
+        sessions: sorted,
+      });
+    }
+  }
+
+  evaluateCollisions(now) {
+    for (const F of this.G.files.values()) {
+      if (F.activeSessions.size > 0 || this.activeCollisions.has(F.p)) {
+        this.checkCollision(F, now);
+      }
+    }
   }
 
   onUser(rec, S, A, ts, today) {
@@ -3142,8 +3246,12 @@ class RadarEngine {
     const last5 = (a) => a.slice(-5).reduce((x, y) => x + y, 0) / 5;
     const cost15 = costSpark.slice(-15).reduce((x, y) => x + y, 0);
 
+    this.evaluateCollisions(now);
     const files = [...G.files.values()]
-      .map((F) => ({ F, collision: [...F.editors.values()].filter((e) => now - e.t < 20 * MIN).length > 1 }))
+      .map((F) => {
+        const recentSids = new Set([...F.editors.values()].filter((e) => now - e.t < 20 * MIN).map((e) => e.s));
+        return { F, collision: recentSids.size >= 2 || F.activeSessions.size >= 2 };
+      })
       .sort((a, b) => {
         if (a.collision !== b.collision) return a.collision ? -1 : 1;
         const wa = a.F.w * 3 + a.F.r, wb = b.F.w * 3 + b.F.r;
@@ -3258,6 +3366,8 @@ function createEngine(opts = {}) {
     setOthers: (list) => e.setOthers(list),
     sessionCwd: (sessionId) => e.sessionCwd(sessionId),
     dismiss: (sessionId, pid) => e.dismiss(sessionId, pid),
+    releaseFile: (filePath, sid) => e.releaseFile(filePath, sid),
+    touchFile: (fp, name, S, A, ts) => e.touchFile(fp, name, S, A, ts),
     transcriptItems: (sessionId, limit) => e.transcriptItems(sessionId, limit),
   };
 }

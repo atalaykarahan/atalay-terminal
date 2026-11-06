@@ -82,6 +82,20 @@
     document.getElementById('where').textContent = i.cwd || '';
     document.body.style.setProperty('--st', `var(${color})`);
   });
+  const collisionBanner = document.getElementById('collision-banner');
+  atl.on('term:collision', (c) => {
+    if (!collisionBanner) return;
+    if (c && c.active && c.event !== 'COLLISION_RESOLVED') {
+      const other = c.otherSession || (Array.isArray(c.sessions) && c.sessions[1]) || (Array.isArray(c.sessions) && c.sessions[0]) || 'unknown';
+      const file = c.file || 'file';
+      collisionBanner.textContent = `⚠ COLLISION RISK: Session ${other} is also editing "${file}"`;
+      collisionBanner.classList.add('active');
+    } else {
+      collisionBanner.classList.remove('active');
+      collisionBanner.textContent = '';
+    }
+    refit();
+  });
   document.getElementById('hud').addEventListener('mousedown', (e) => e.preventDefault());
   document.getElementById('dash').onclick = () => {
     term.focus();

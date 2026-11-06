@@ -10,5 +10,7 @@ body { display: flex; flex-direction: column; overflow: hidden; background: var(
 #hud button { height: 22px; padding: 0 10px; border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.45); border-radius: 4px; background: transparent; color: var(--accent-soft, #ffb057); font: inherit; cursor: pointer; }
 #hud button:hover { border-color: var(--accent, #f88008); color: var(--hi, #fff8f0); }
 #hud #end:hover { border-color: var(--red, #ff4d4d); color: var(--red, #ff4d4d); }
+#collision-banner { display: flex; align-items: center; max-height: 0; overflow: hidden; opacity: 0; transform: translateY(-100%); padding: 0 12px; background: linear-gradient(90deg, rgba(168, 28, 18, 0.94), rgba(214, 72, 12, 0.92)); border-bottom: 1px solid transparent; color: #fff8f0; font-weight: 700; font-size: 11px; letter-spacing: 0.04em; white-space: nowrap; text-overflow: ellipsis; transition: max-height 0.22s ease, opacity 0.22s ease, transform 0.22s ease, padding 0.22s ease, border-color 0.22s ease; }
+#collision-banner.active { max-height: 28px; height: 26px; opacity: 1; transform: translateY(0); border-bottom-color: rgba(255, 120, 64, 0.85); box-shadow: 0 4px 14px rgba(255, 68, 34, 0.32); }
 #term { flex: 1; min-height: 0; padding: 6px 4px 4px 8px; }
 .xterm .xterm-viewport { scrollbar-color: rgba(var(--accent-rgb, 248, 128, 8), 0.35) transparent; }

@@ -675,6 +675,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private var draggedTab: Int?
     private let dropZone = NSView()
     private var focusWatch: NSKeyValueObservation?
+    private let collisionBanner = NSView()
+    private let collisionLabel = NSTextField(labelWithString: "")
+    private var collisionTop: NSLayoutConstraint!
 
     /// `claudeArgs` nil opens a plain terminal in `cwd`.
     init(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, fontSize: CGFloat, frame: NSRect,
@@ -833,6 +836,23 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         dropZone.layer?.cornerRadius = 6
         dropZone.isHidden = true
         container.addSubview(dropZone)
+
+        collisionBanner.wantsLayer = true
+        collisionBanner.layer?.backgroundColor = NSColor(calibratedRed: 0.92, green: 0.22, blue: 0.08, alpha: 0.94).cgColor
+        collisionBanner.layer?.borderColor = NSColor(calibratedRed: 1.0, green: 0.55, blue: 0.2, alpha: 0.95).cgColor
+        collisionBanner.layer?.borderWidth = 1
+        collisionBanner.layer?.cornerRadius = 4
+        collisionBanner.isHidden = true
+        collisionBanner.translatesAutoresizingMaskIntoConstraints = false
+        collisionLabel.font = Theme.mono(11, .bold)
+        collisionLabel.textColor = .white
+        collisionLabel.alignment = .center
+        collisionLabel.lineBreakMode = .byTruncatingTail
+        collisionLabel.translatesAutoresizingMaskIntoConstraints = false
+        collisionBanner.addSubview(collisionLabel)
+        container.addSubview(collisionBanner)
+        collisionTop = collisionBanner.topAnchor.constraint(equalTo: container.topAnchor, constant: 34)
+
         tabs = [terminal]
         mount(terminal)
         paneTop = paneArea.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6)
@@ -843,6 +863,13 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: 62),
+            collisionTop,
+            collisionBanner.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            collisionBanner.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            collisionBanner.heightAnchor.constraint(equalToConstant: 26),
+            collisionLabel.centerYAnchor.constraint(equalTo: collisionBanner.centerYAnchor),
+            collisionLabel.leadingAnchor.constraint(equalTo: collisionBanner.leadingAnchor, constant: 10),
+            collisionLabel.trailingAnchor.constraint(equalTo: collisionBanner.trailingAnchor, constant: -10),
             ticker.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             ticker.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             ticker.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -891,6 +918,31 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             guard let self else { return }
             self.showSelection(self.terminal.getSelection())
         }
+    }
+
+    func showCollisionBanner(otherSession: String, file: String) {
+        collisionLabel.stringValue = "⚠ COLLISION RISK: Session \(otherSession) is also editing \"\(file)\""
+        collisionBanner.alphaValue = 1
+        collisionBanner.isHidden = false
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            self.collisionTop.animator().constant = 64
+        }
+    }
+
+    func hideCollisionBanner() {
+        guard !collisionBanner.isHidden else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.18
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            self.collisionTop.animator().constant = 34
+            self.collisionBanner.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                self?.collisionBanner.isHidden = true
+            }
+        })
     }
 
     private func pin(_ v: NSView, to p: NSView) {

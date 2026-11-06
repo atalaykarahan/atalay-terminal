@@ -177,8 +177,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.apply(list)
         }
         engine.onEvents = { [weak self] js in self?.radar.push("events", js) }
+        engine.onCollision = { [weak self] js, ev in
+            guard let self else { return }
+            self.radar.push("collision", js)
+            self.applyCollision(ev)
+        }
         engine.onNativeEvents = { [weak self] events in self?.route(events) }
         engine.onHistory = { [weak self] items in self?.sidebar.items = items }
+    }
+
+    private func applyCollision(_ ev: CollisionEvent) {
+        if ev.active {
+            var matched = false
+            for sid in ev.sessions {
+                let others = ev.sessions.filter { $0 != sid }
+                let otherId = others.first ?? sid
+                let otherName = briefs[otherId]?.name ?? String(otherId.prefix(8))
+                if let b = briefs[sid], let c = chat(for: b) {
+                    c.hud.showCollisionBanner(otherSession: otherName, file: ev.file)
+                    matched = true
+                } else if let c = chats.values.first(where: { $0.sessionId == sid }) {
+                    c.hud.showCollisionBanner(otherSession: otherName, file: ev.file)
+                    matched = true
+                }
+            }
+            if !matched, let activeId = activeTerminalWindow, let c = chats[activeId] {
+                let otherId = ev.sessions.last ?? "unknown"
+                let otherName = briefs[otherId]?.name ?? String(otherId.prefix(8))
+                c.hud.showCollisionBanner(otherSession: otherName, file: ev.file)
+            }
+        } else {
+            for c in chats.values {
+                c.hud.hideCollisionBanner()
+            }
+        }
     }
 
     private func handleRadar(_ msg: [String: Any]) {

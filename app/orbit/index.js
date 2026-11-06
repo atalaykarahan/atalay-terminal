@@ -1395,6 +1395,185 @@ function drawBolts(now) {
     }
   }
 }
+
+// ---------- collision shield pulse ----------
+const SHIELDS = new Map();
+const SHIELD_RED = colorOf('#ff3b1f');
+const SHIELD_ORANGE = colorOf('#ff922b');
+const SHIELD_SEGS = 24;
+
+function makeShieldMesh() {
+  const verts = new Float32Array((SHIELD_SEGS + 1) * 2 * 3);
+  const uvs = new Float32Array((SHIELD_SEGS + 1) * 2 * 2);
+  const indices = [];
+  for (let i = 0; i <= SHIELD_SEGS; i++) {
+    const u = i / SHIELD_SEGS;
+    uvs[i * 4] = u;
+    uvs[i * 4 + 1] = 0;
+    uvs[i * 4 + 2] = u;
+    uvs[i * 4 + 3] = 1;
+    if (i < SHIELD_SEGS) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, b, c, b, d, c);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uColorA: { value: SHIELD_RED },
+      uColorB: { value: SHIELD_ORANGE },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uColorA;
+      uniform vec3 uColorB;
+      varying vec2 vUv;
+      void main() {
+        float edge = sin(vUv.y * 3.14159265);
+        float ends = sin(vUv.x * 3.14159265);
+        float pulse1 = 0.5 + 0.5 * sin(vUv.x * 18.0 - uTime * 7.0);
+        float pulse2 = 0.5 + 0.5 * sin(vUv.x * 18.0 + uTime * 7.0);
+        float energy = max(pulse1, pulse2);
+        vec3 col = mix(uColorA, uColorB, energy);
+        float alpha = edge * ends * (0.28 + 0.55 * energy);
+        gl_FragColor = vec4(col, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+  return mesh;
+}
+
+function disposeShield(key) {
+  const sh = SHIELDS.get(key);
+  if (!sh) return;
+  if (sh.mesh) {
+    scene.remove(sh.mesh);
+    sh.mesh.geometry.dispose();
+    sh.mesh.material.dispose();
+  }
+  SHIELDS.delete(key);
+}
+
+function resolveCollisionTarget(sid) {
+  const n = NODES.get(sid);
+  if (n && !n.dying && n.root.visible) return n;
+  const s = SHIPS.get(sid);
+  if (s && !s.dying) return s;
+  return null;
+}
+
+function onCollision(d) {
+  if (!d) return;
+  const key = d.file || (Array.isArray(d.sessions) ? [...d.sessions].sort().join('|') : 'default');
+  const active = d.active !== false && d.event !== 'COLLISION_RESOLVED' && Array.isArray(d.sessions) && d.sessions.length >= 2;
+  if (!active) {
+    disposeShield(key);
+    poke();
+    return;
+  }
+  let sh = SHIELDS.get(key);
+  if (!sh) {
+    sh = { key, file: d.file || '', sessions: d.sessions, t0: performance.now(), mesh: makeShieldMesh() };
+    SHIELDS.set(key, sh);
+    for (const sid of d.sessions) {
+      const n = NODES.get(sid);
+      if (n && !n.dying) {
+        sparks(n.pos, SHIELD_RED, 22, 95);
+        ripple(n, '#ff4d4d', 48, 900);
+      }
+    }
+  } else {
+    sh.sessions = d.sessions;
+  }
+  poke(2500);
+}
+
+const _shTan = new THREE.Vector3(), _shSide = new THREE.Vector3();
+function drawShieldPulse(sessionA, sessionB, now = performance.now(), shield = null) {
+  const aObj = typeof sessionA === 'string' ? resolveCollisionTarget(sessionA) : sessionA;
+  const bObj = typeof sessionB === 'string' ? resolveCollisionTarget(sessionB) : sessionB;
+  if (!aObj || !bObj) return false;
+  const A = aObj.pos, B = bObj.pos;
+  arcCtrl(A, B, _ctl);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 140);
+  const col = pulse > 0.5 ? SHIELD_ORANGE : SHIELD_RED;
+
+  // Update ShaderMaterial energy arc ribbon if mesh exists
+  if (shield && shield.mesh) {
+    shield.mesh.material.uniforms.uTime.value = now / 1000;
+    const posAttr = shield.mesh.geometry.getAttribute('position');
+    const arr = posAttr.array;
+    const halfW = 5.5 + 2.5 * pulse;
+    for (let i = 0; i <= SHIELD_SEGS; i++) {
+      const t = i / SHIELD_SEGS;
+      bezier(A, _ctl, B, t, _bz);
+      bezier(A, _ctl, B, Math.min(1, t + 0.02), _shTan);
+      _shTan.sub(_bz);
+      _shSide.crossVectors(_shTan, CAM.dir).normalize();
+      if (_shSide.lengthSq() < 0.001) _shSide.copy(CAM.right);
+      const w = halfW * Math.sin(t * Math.PI);
+      const idx = i * 6;
+      arr[idx] = _bz.x - _shSide.x * w;
+      arr[idx + 1] = _bz.y - _shSide.y * w;
+      arr[idx + 2] = _bz.z - _shSide.z * w;
+      arr[idx + 3] = _bz.x + _shSide.x * w;
+      arr[idx + 4] = _bz.y + _shSide.y * w;
+      arr[idx + 5] = _bz.z + _shSide.z * w;
+    }
+    posAttr.needsUpdate = true;
+  }
+
+  // Glowing arc lines & shield rings around both colliding planets/cars
+  for (let i = 0; i <= 16; i++) bezier(A, _ctl, B, i / 16, _pts[i]);
+  lines.path(_pts, SHIELD_RED, (t) => (0.55 + 0.35 * pulse) * Math.sin(t * Math.PI), true);
+  const radA = (aObj.scale ? K.HEX * 1.45 * aObj.scale : 24) * (0.95 + 0.1 * pulse);
+  const radB = (bObj.scale ? K.HEX * 1.45 * bObj.scale : 24) * (0.95 + 0.1 * pulse);
+  lines.circle(A, radA, CAM.right, CAM.up, col, 0.78, 48);
+  lines.circle(B, radB, CAM.right, CAM.up, col, 0.78, 48);
+
+  // Bidirectional travelling energy bolts along the shield arc
+  const u1 = (now % 900) / 900;
+  const u2 = 1 - u1;
+  for (let k = 6; k >= 0; k--) {
+    const t1 = Math.max(0, u1 - k * 0.022);
+    const t2 = Math.min(1, u2 + k * 0.022);
+    const fade = 1 - k / 7;
+    glow.add(bezier(A, _ctl, B, t1, _bz), SHIELD_ORANGE, fade * 1.6, 5.2 * fade);
+    glow.add(bezier(A, _ctl, B, t2, _bz), SHIELD_RED, fade * 1.6, 5.2 * fade);
+  }
+  bezier(A, _ctl, B, 0.5, _bz);
+  glow.add(_bz, WHITE, 1.4 + pulse, 6.5);
+  return true;
+}
+
+function drawShields(now) {
+  for (const [key, sh] of SHIELDS) {
+    const [sA, sB] = sh.sessions || [];
+    if (!sA || !sB || !drawShieldPulse(sA, sB, now, sh)) {
+      if (sh.mesh) sh.mesh.visible = false;
+    } else if (sh.mesh) {
+      sh.mesh.visible = true;
+    }
+  }
+}
 function arrive(b, now) {
   if (b.dir > 0) {
     b.b.hitAt = now;
@@ -1848,6 +2027,7 @@ function frame(now) {
   drawWires(now);
   drawTethers();
   drawBolts(now);
+  drawShields(now);
   drawRipples(now);
   drawStatusFx(now);
   drawSparks(dt, now);
@@ -1898,5 +2078,5 @@ function focusRunaway(pid) {
   if (b) followBox(b);
 }
 setCinematic(cineOn);
-window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
+window.Orbit = { state: onState, event: onEvent, status: onStatus, collision: onCollision, drawShieldPulse, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);

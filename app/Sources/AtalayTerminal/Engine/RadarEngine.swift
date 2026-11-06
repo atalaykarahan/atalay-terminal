@@ -16,6 +16,7 @@ final class RadarEngine {
     var onEvents: ((String) -> Void)?
     var onNativeEvents: (([NativeEvent]) -> Void)?
     var onHistory: (([ChatItem]) -> Void)?
+    var onCollision: ((String, CollisionEvent) -> Void)?
 
     private static let bigFile: UInt64 = 8 << 20
     private static let chunk = 4 << 20
@@ -61,6 +62,10 @@ final class RadarEngine {
     /// What of their records today's counts already have (otherOnce), and their calls by name, for their results.
     private var otherSeen = Set<String>()
     private var otherCalls: [String: (p: Pending, done: Bool)] = [:]
+    /// Active root SessionIDs touching each file path: `[FilePath: Set<SessionID>]`.
+    private var fileActiveSessions: [String: Set<String>] = [:]
+    /// Files currently in collision (`COLLISION_DETECTED`), mapped to sorted root SessionIDs.
+    private var activeCollisions: [String: [String]] = [:]
     /// Fresh account-wide Codex limits, read from Codex app-server rather than inferred from a rollout file.
     private var codexUsage: [String: Any]?
     private var codexUsagePending = false, codexWasRunning = false
@@ -107,8 +112,17 @@ final class RadarEngine {
     func dismiss(sessionId: String, pid: Int32?) {
         queue.async {
             self.dismissed[sessionId] = pid ?? 0
+            self.releaseSessionFilesLocked(sid: sessionId)
             self.stateDirty = true
             self.publishState()
+        }
+    }
+
+    /// Releases a session's active lock on a specific file (or all files when `filePath` is nil) and emits
+    /// `COLLISION_RESOLVED` if an active collision drops below 2 distinct sessions.
+    func releaseFile(_ filePath: String? = nil, sid: String) {
+        queue.async {
+            self.releaseSessionFilesLocked(sid: sid, filePath: filePath)
         }
     }
 
@@ -481,8 +495,87 @@ final class RadarEngine {
         } else {
             F.w += 1
             F.editors[aid.map { "\(sid):\($0)" } ?? sid] = (ts, sid, aid)
+            F.sessionWrites[sid] = ts
+            // Root SessionID only: subagents (`aid`) share their parent `sid`, preventing false positives.
+            if booted || ts >= nowMs() - 20 * Self.MIN {
+                F.activeSessions.insert(sid)
+                fileActiveSessions[fp, default: []].insert(sid)
+                checkCollisionLocked(for: F, now: max(ts, nowMs()))
+            }
         }
         F.last = ts
+    }
+
+    private func isSessionActiveForCollision(_ sid: String, writeTs: Double, now: Double) -> Bool {
+        if dismissed[sid] != nil { return false }
+        if now - writeTs >= 20 * Self.MIN { return false }
+        if let S = sessions[sid] {
+            let st = statusOf(S, now)
+            if st == "ended" { return false }
+            if st == "idle", S.endTurn, now - max(writeTs, S.lastTs) > 15_000 { return false }
+            return true
+        }
+        if let O = others[sid] {
+            if O.endedAt > 0 { return false }
+            let st = otherStatus(O, now).status
+            if st == "ended" { return false }
+            if st == "idle", O.turnOpen == false, now - max(writeTs, O.lastTs) > 15_000 { return false }
+            return true
+        }
+        return true
+    }
+
+    private func releaseSessionFilesLocked(sid: String, filePath: String? = nil) {
+        let now = nowMs()
+        let targets = filePath.map { [$0] } ?? Array(fileActiveSessions.keys)
+        for fp in targets {
+            guard var set = fileActiveSessions[fp], set.contains(sid) else { continue }
+            set.remove(sid)
+            if set.isEmpty { fileActiveSessions.removeValue(forKey: fp) }
+            else { fileActiveSessions[fp] = set }
+            if let F = G.files[fp] {
+                F.activeSessions.remove(sid)
+                F.sessionWrites.removeValue(forKey: sid)
+                checkCollisionLocked(for: F, now: now)
+            }
+        }
+    }
+
+    private func checkCollisionLocked(for F: FileHeat, now: Double) {
+        var current = fileActiveSessions[F.p] ?? F.activeSessions
+        current = current.filter { sid in
+            let wTs = F.sessionWrites[sid] ?? F.last
+            return isSessionActiveForCollision(sid, writeTs: wTs, now: now)
+        }
+        F.activeSessions = current
+        if current.isEmpty {
+            fileActiveSessions.removeValue(forKey: F.p)
+        } else {
+            fileActiveSessions[F.p] = current
+        }
+        let sorted = current.sorted()
+        let base = (F.p as NSString).lastPathComponent
+        let fileName = base.isEmpty ? F.p : base
+        if sorted.count >= 2 {
+            if activeCollisions[F.p] != sorted {
+                activeCollisions[F.p] = sorted
+                let ev = CollisionEvent(event: "COLLISION_DETECTED", file: fileName, path: tildify(F.p), sessions: sorted)
+                if let js = encode(ev.dict) {
+                    DispatchQueue.main.async { self.onCollision?(js, ev) }
+                }
+            }
+        } else if activeCollisions.removeValue(forKey: F.p) != nil {
+            let ev = CollisionEvent(event: "COLLISION_RESOLVED", file: fileName, path: tildify(F.p), sessions: sorted)
+            if let js = encode(ev.dict) {
+                DispatchQueue.main.async { self.onCollision?(js, ev) }
+            }
+        }
+    }
+
+    private func evaluateCollisionsLocked(_ now: Double) {
+        for F in G.files.values where !F.activeSessions.isEmpty || activeCollisions[F.p] != nil {
+            checkCollisionLocked(for: F, now: now)
+        }
     }
 
     private func onUser(_ rec: [String: Any], _ S: Session, _ A: SubAgent?, _ ts: Double, _ today: Bool) {
@@ -1930,8 +2023,12 @@ final class RadarEngine {
         let last5 = { (a: [Int]) -> Double in Double(a.suffix(5).reduce(0, +)) / 5 }
         let cost15 = costSpark.suffix(15).reduce(0, +)
 
+        evaluateCollisionsLocked(now)
         let files: [[String: Any]] = G.files.values
-            .map { F -> (FileHeat, Bool) in (F, F.editors.values.filter { now - $0.t < 20 * Self.MIN }.count > 1) }
+            .map { F -> (FileHeat, Bool) in
+                let recentSids = Set(F.editors.values.filter { now - $0.t < 20 * Self.MIN }.map(\.s))
+                return (F, recentSids.count >= 2 || F.activeSessions.count >= 2)
+            }
             .sorted { a, b in
                 if a.1 != b.1 { return a.1 }
                 let wa = a.0.w * 3 + a.0.r, wb = b.0.w * 3 + b.0.r

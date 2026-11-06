@@ -187,6 +187,34 @@ const engine = createEngine({
     pushChats();
   },
   onEvents: (json) => toDash(`events(${json})`),
+  onCollision(ev) {
+    toDash(`collision(${JSON.stringify(ev)})`);
+    const live = engine.live();
+    const nameOf = (sid) => {
+      const s = live.find((x) => x.sessionId === sid);
+      return (s && s.name) || String(sid || '').slice(0, 8);
+    };
+    if (ev && ev.active) {
+      let matched = false;
+      for (const sid of ev.sessions || []) {
+        const otherId = (ev.sessions || []).find((x) => x !== sid) || sid;
+        const otherSession = nameOf(otherId);
+        for (const [id, c] of chats) {
+          const s = live.find((x) => x.sessionId === sid);
+          if (c.sessionId === sid || (s && s.tab === id)) {
+            send(c.win, 'term:collision', { ...ev, otherSession });
+            matched = true;
+          }
+        }
+      }
+      if (!matched && activeTerminalId && chats.has(activeTerminalId)) {
+        const otherId = (ev.sessions && ev.sessions[ev.sessions.length - 1]) || 'unknown';
+        send(chats.get(activeTerminalId).win, 'term:collision', { ...ev, otherSession: nameOf(otherId) });
+      }
+    } else {
+      for (const c of chats.values()) send(c.win, 'term:collision', { ...(ev || {}), active: false, event: 'COLLISION_RESOLVED' });
+    }
+  },
   // The saved conversations, for the chats list.
   onHistory(items) {
     chatlist.setItems(items);
