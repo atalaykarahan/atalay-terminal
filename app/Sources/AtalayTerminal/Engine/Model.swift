@@ -194,6 +194,8 @@ final class Globals {
     var files: [String: FileHeat] = [:]
     var minutes: [Int: Minute] = [:]
     var byModel: [String: ModelAgg] = [:]
+    /// Today's spend by project folder and model, for the spend ledger (Ledger.swift).
+    var byProject: Ledger.Day = [:]
 }
 
 /// What the native UI (chat windows, dock badge, sidebar) needs about a session.
