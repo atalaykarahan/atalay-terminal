@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const { fileURLToPath } = require('url');
 
 const { createEngine } = require('./engine');
@@ -202,14 +202,15 @@ const engine = createEngine({
         for (const [id, c] of chats) {
           const s = live.find((x) => x.sessionId === sid);
           if (c.sessionId === sid || (s && s.tab === id)) {
-            send(c.win, 'term:collision', { ...ev, otherSession });
+            send(c.win, 'term:collision', { ...ev, sid, otherSession });
             matched = true;
           }
         }
       }
       if (!matched && activeTerminalId && chats.has(activeTerminalId)) {
+        const firstSid = (ev.sessions && ev.sessions[0]) || '';
         const otherId = (ev.sessions && ev.sessions[ev.sessions.length - 1]) || 'unknown';
-        send(chats.get(activeTerminalId).win, 'term:collision', { ...ev, otherSession: nameOf(otherId) });
+        send(chats.get(activeTerminalId).win, 'term:collision', { ...ev, sid: firstSid, otherSession: nameOf(otherId) });
       }
     } else {
       for (const c of chats.values()) send(c.win, 'term:collision', { ...(ev || {}), active: false, event: 'COLLISION_RESOLVED' });
@@ -696,6 +697,8 @@ function handleRadar(msg) {
       return runaways.endLeft(msg.pid, msg.started);
     case 'endSession':
       return endSession(msg.sid);
+    case 'isolate_session':
+      return isolateSession(msg.sid);
     case 'endRunaway':
       return runaways.end(msg.pid, msg.started);
     // A menu (friends, settings, an update) opened or closed on the dashboard: the windows pinned above it step out of
@@ -983,6 +986,64 @@ function endSession(sid) {
   return true;
 }
 
+/**
+ * Isolates a colliding session into a dedicated Git Worktree (`../<repo-name>-<sid>` on branch `auto-isolate-<sid>`),
+ * injects `cd <newPath> && echo "Moved to isolated worktree: <newBranch>"` into its PTY, hides the collision banner,
+ * and resolves the collision.
+ */
+function isolateSession(sid, explicitChatId = null) {
+  const live = engine.live();
+  const s = sid ? live.find((x) => x.sessionId === sid) : null;
+  let chatId = explicitChatId || (s && s.tab && chats.has(s.tab) ? s.tab : null);
+  if (!chatId && sid) {
+    for (const [id, c] of chats) {
+      if (c.sessionId === sid) {
+        chatId = id;
+        break;
+      }
+    }
+  }
+  if (!chatId && activeTerminalId && chats.has(activeTerminalId)) chatId = activeTerminalId;
+  const chat = chatId ? chats.get(chatId) : null;
+  const targetSid = sid || (chat && chat.sessionId) || chatId || 'session';
+  const repoDir = (chat && chat.cwd) || (s && s.cwd) || engine.sessionCwd(targetSid) || '';
+
+  const notifyToast = (msg) => {
+    if (chat && chat.win) send(chat.win, 'term:toast', msg);
+    toDash(`toast(${JSON.stringify(msg)})`);
+  };
+
+  if (!repoDir || !fs.existsSync(path.join(repoDir, '.git'))) {
+    notifyToast('Not a git repository');
+    return false;
+  }
+
+  const repoName = path.basename(path.resolve(repoDir));
+  const newBranch = `auto-isolate-${targetSid}`;
+  const newPath = `../${repoName}-${targetSid}`;
+
+  try {
+    fs.accessSync(path.dirname(path.resolve(repoDir)), fs.constants.W_OK);
+    execFileSync('git', ['worktree', 'add', newPath, '-b', newBranch], {
+      cwd: repoDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const cmd = `cd ${newPath} && echo "Moved to isolated worktree: ${newBranch}"\r`;
+    if (chatId && terminals.has(chatId)) terminals.write(chatId, cmd);
+    for (const c of chats.values()) {
+      send(c.win, 'term:collision', { type: 'collision', event: 'COLLISION_RESOLVED', active: false, file: '', sessions: [] });
+    }
+    engine.releaseFile(null, targetSid);
+    toDash(`collision(${JSON.stringify({ type: 'collision', event: 'COLLISION_RESOLVED', active: false, file: '', sessions: [] })})`);
+    return true;
+  } catch (err) {
+    const detail = (err && err.stderr && String(err.stderr).trim()) || (err && err.message) || 'Failed to isolate worktree';
+    notifyToast(detail);
+    return false;
+  }
+}
+
 // ---------- the orbit's cars ----------
 // Every terminal of the app with no Claude in it is a car of its own (a chat whose Claude exited too), a closed one
 // included, until End Session: what runs in it (its first job and the CPU that job's processes use) decides how it
@@ -1065,6 +1126,11 @@ ipcMain.on('term:resize', (e, { cols, rows }) => {
 ipcMain.on('term:end', (e) => {
   const found = chatOf(e);
   if (found) endTerminal(found[0]);
+});
+ipcMain.on('term:isolate', (e, body) => {
+  const found = chatOf(e);
+  const sid = (body && body.sid) || (found && found[1] && found[1].sessionId) || '';
+  isolateSession(sid, found ? found[0] : null);
 });
 ipcMain.on('term:copy', (e, text) => {
   if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);

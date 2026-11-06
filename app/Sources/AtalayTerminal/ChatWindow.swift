@@ -27,9 +27,22 @@ final class ChatHUD: ObservableObject {
     @Published var chips: [TickerChip] = []
     /// False while the window is hidden, so its clocks stop ticking.
     @Published var visible = false
+    weak var owner: ChatWindowController?
     private var seq = 0
 
     init(terminalDir: String?) { self.terminalDir = terminalDir }
+
+    func showCollisionBanner(otherSession: String, file: String, sid: String? = nil) {
+        owner?.showCollisionBanner(otherSession: otherSession, file: file, sid: sid)
+    }
+
+    func hideCollisionBanner() {
+        owner?.hideCollisionBanner()
+    }
+
+    func showToast(_ message: String) {
+        owner?.showToast(message)
+    }
 
     /// A terminal window is a chat while Claude runs in it, and a terminal again once Claude exits.
     var status: String {
@@ -677,7 +690,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private var focusWatch: NSKeyValueObservation?
     private let collisionBanner = NSView()
     private let collisionLabel = NSTextField(labelWithString: "")
+    private let collisionIsolateButton = NSButton(title: "Isolate Session", target: nil, action: nil)
     private var collisionTop: NSLayoutConstraint!
+    private var collisionSessionId: String?
 
     /// `claudeArgs` nil opens a plain terminal in `cwd`.
     init(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, fontSize: CGFloat, frame: NSRect,
@@ -703,6 +718,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         w.minSize = NSSize(width: 640, height: 420)
         w.isReleasedWhenClosed = false
         super.init(window: w)
+        hud.owner = self
         w.delegate = self
         if detached != nil {
             terminal = TerminalFactory.makeIdle(chatId: id, fontSize: fontSize, delegate: self)
@@ -846,10 +862,23 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         collisionBanner.translatesAutoresizingMaskIntoConstraints = false
         collisionLabel.font = Theme.mono(11, .bold)
         collisionLabel.textColor = .white
-        collisionLabel.alignment = .center
+        collisionLabel.alignment = .left
         collisionLabel.lineBreakMode = .byTruncatingTail
         collisionLabel.translatesAutoresizingMaskIntoConstraints = false
         collisionBanner.addSubview(collisionLabel)
+        collisionIsolateButton.bezelStyle = .inline
+        collisionIsolateButton.isBordered = false
+        collisionIsolateButton.wantsLayer = true
+        collisionIsolateButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        collisionIsolateButton.layer?.borderColor = NSColor.white.withAlphaComponent(0.85).cgColor
+        collisionIsolateButton.layer?.borderWidth = 1
+        collisionIsolateButton.layer?.cornerRadius = 3
+        collisionIsolateButton.font = Theme.mono(10, .bold)
+        collisionIsolateButton.contentTintColor = .white
+        collisionIsolateButton.target = self
+        collisionIsolateButton.action = #selector(isolateCollisionSession)
+        collisionIsolateButton.translatesAutoresizingMaskIntoConstraints = false
+        collisionBanner.addSubview(collisionIsolateButton)
         container.addSubview(collisionBanner)
         collisionTop = collisionBanner.topAnchor.constraint(equalTo: container.topAnchor, constant: 34)
 
@@ -869,7 +898,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             collisionBanner.heightAnchor.constraint(equalToConstant: 26),
             collisionLabel.centerYAnchor.constraint(equalTo: collisionBanner.centerYAnchor),
             collisionLabel.leadingAnchor.constraint(equalTo: collisionBanner.leadingAnchor, constant: 10),
-            collisionLabel.trailingAnchor.constraint(equalTo: collisionBanner.trailingAnchor, constant: -10),
+            collisionLabel.trailingAnchor.constraint(lessThanOrEqualTo: collisionIsolateButton.leadingAnchor, constant: -8),
+            collisionIsolateButton.centerYAnchor.constraint(equalTo: collisionBanner.centerYAnchor),
+            collisionIsolateButton.trailingAnchor.constraint(equalTo: collisionBanner.trailingAnchor, constant: -8),
+            collisionIsolateButton.widthAnchor.constraint(equalToConstant: 108),
+            collisionIsolateButton.heightAnchor.constraint(equalToConstant: 18),
             ticker.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             ticker.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             ticker.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -920,7 +953,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         }
     }
 
-    func showCollisionBanner(otherSession: String, file: String) {
+    func showCollisionBanner(otherSession: String, file: String, sid: String? = nil) {
+        if let sid, !sid.isEmpty { collisionSessionId = sid }
         collisionLabel.stringValue = "⚠ COLLISION RISK: Session \(otherSession) is also editing \"\(file)\""
         collisionBanner.alphaValue = 1
         collisionBanner.isHidden = false
@@ -943,6 +977,34 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
                 self?.collisionBanner.isHidden = true
             }
         })
+    }
+
+    @objc private func isolateCollisionSession() {
+        let targetSid = collisionSessionId ?? sessionId ?? hud.brief?.id ?? id
+        manager?.isolateSession(targetSid, chat: self)
+    }
+
+    func showToast(_ message: String) {
+        selectionBadge.stringValue = " \(message) "
+        selectionBadge.isHidden = false
+        copiedUntil = Date().addingTimeInterval(3.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.1) { [weak self] in
+            guard let self else { return }
+            self.showSelection(self.terminal.getSelection())
+        }
+    }
+
+    /// Injects a shell command into the active PTY or detached screen session.
+    func injectCommand(_ command: String) {
+        let payload = command.hasSuffix("\n") ? command : command + "\n"
+        if attached || detached == nil {
+            focusedTerminal.send(txt: payload)
+        } else if let name = detached?.name {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: Detached.screen)
+            p.arguments = ["-S", name, "-X", "stuff", payload]
+            try? p.run()
+        }
     }
 
     private func pin(_ v: NSView, to p: NSView) {

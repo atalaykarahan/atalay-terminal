@@ -16,7 +16,11 @@
   <button id="dash" type="button" title="Back to the dashboard (this keeps running)">dashboard</button>
   <button id="end" type="button" title="End this terminal">end</button>
 </header>
-<div id="collision-banner" aria-live="assertive"></div>
+<div id="collision-banner" aria-live="assertive">
+  <span id="collision-text"></span>
+  <button id="isolate-btn" type="button">Isolate Session</button>
+</div>
+<div id="hud-toast" aria-live="polite"></div>
 <main id="term"></main>
 <!-- A neon theme's glow on the terminal's canvas (themes.js turns it on): the text's own colours, blurred and screened
      over it, the dark background left as it is. -->
