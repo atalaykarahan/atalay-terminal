@@ -12,8 +12,29 @@
 // input, so it never outlives the app; the folder a process runs in comes from the process itself, for the few that need
 // it. Run from the sources elsewhere (a Mac), `ps` finds the runaways, as on the Mac, and the rest stays empty.
 const { spawn, execFile } = require('child_process');
+const os = require('os');
 
 const WIN = process.platform === 'win32';
+const HOME_NORM = (os.homedir() || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const POSIX_EXCLUDED = /(\.xpc\/|\.appex\/|^\/System\/|^\/usr\/libexec\/|^\/usr\/sbin\/|^\/Library\/Apple\/|(?:^|\/)com\.apple\.)/;
+
+function isExcludedPosix(cmd, name) {
+  const c = String(cmd || ''), n = String(name || '');
+  if (POSIX_EXCLUDED.test(c) || n.startsWith('com.apple.')) return true;
+  if (c.includes('/Python.app/Contents/MacOS/Python')) return false;
+  return c.includes('.app/');
+}
+
+function normDir(d) {
+  return String(d || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function inFolder(dir, root) {
+  const d = normDir(dir), r = normDir(root);
+  if (!d || !r || r === '/' || /^[a-z]:$/.test(r)) return false;
+  if (d === r) return true;
+  return r !== HOME_NORM && d.startsWith(`${r}/`);
+}
 
 // AI coding tools besides Claude Code, as the Mac's Proc.otherAIs: by the program's name, or for one Node, Bun or Python
 // runs, by its script or its npm package in the command line (npm's .cmd shims run node with the package's own path).
@@ -84,35 +105,60 @@ function createRunaways({ onChange, onRead }) {
   const LINE = 50, SUSTAIN = 120_000, EVERY = 5000;
   const last = new Map(); // pid -> { started, cpu (ms of CPU in all), at }
   const over = new Map(); // pid -> since when it has been over the line
+  const busyUntil = new Map(); // pid -> until when an orphan tree was actively working
   let json = '[]', timer = null, sampler = null, stopped = false;
   // The latest reading of every process (Windows): pid -> { pid, ppid, orphan, started, cpu, name, cwd, cmd, pct }.
   let table = new Map();
   let kids = new Map(); // pid -> its children's pids
   let wanted = [];
+  let liveSessions = []; // [{ cwd, started }] from the engine
   let ask = () => {};
   const waiting = []; // what waits for the next reading
 
+  function allLiveSessions() {
+    const out = [...liveSessions];
+    for (const p of table.values()) {
+      if ((/^claude$/i.test(p.name) || aiTool(p)) && p.cwd) out.push({ cwd: p.cwd, started: p.started, busy: true });
+    }
+    return out;
+  }
+
+  function ownerSession(p) {
+    if (!p.cwd) return null;
+    return allLiveSessions().find((s) => s.cwd && p.started >= (s.started || 0) - 5000 && inFolder(p.cwd, s.cwd)) || null;
+  }
+
+  function isLiveWork(p, now) {
+    const owner = ownerSession(p);
+    if (!owner) return false;
+    return owner.busy !== false || (busyUntil.get(p.pid) || 0) > now || now - p.started < 15_000;
+  }
+
   // Runaways among one reading's candidates: [{ pid, name, cmd, started (ms since 1970), cpu (ms of CPU in all) }].
   function consider(list, at) {
-    const items = [], seen = new Set();
+    const items = [], seen = new Set(), now = Date.now();
     for (const p of list) {
       seen.add(p.pid);
       const prev = last.get(p.pid);
       last.set(p.pid, { started: p.started, cpu: p.cpu, at });
       if (!prev || prev.started !== p.started || at <= prev.at || p.cpu < prev.cpu) continue;
-      const pct = ((p.cpu - prev.cpu) / (at - prev.at)) * 100;
-      if (pct < LINE) {
+      // Measure the whole process tree when available (e.g. `npm run dev` waiting on a frozen `node` child).
+      const pct = typeof p.treePct === 'number' ? p.treePct : ((p.cpu - prev.cpu) / (at - prev.at)) * 100;
+      if (pct >= 1) busyUntil.set(p.pid, now + 15_000);
+      if (isLiveWork(p, now) || pct < LINE) {
         over.delete(p.pid);
         continue;
       }
-      const since = over.get(p.pid) ?? Date.now();
+      const since = over.get(p.pid) ?? now;
       over.set(p.pid, since);
-      if (Date.now() - since < SUSTAIN) continue;
+      if (now - since < SUSTAIN) continue;
       const cmd = String(p.cmd || p.name).slice(0, 300);
-      items.push({ pid: p.pid, name: p.name, cmd, cpu: Math.round(pct * 10) / 10, since, started: p.started, cpuTime: p.cpu / 1000 });
+      const totalCpu = typeof p.treeCpu === 'number' ? p.treeCpu : p.cpu;
+      items.push({ pid: p.pid, name: p.name, cmd, cpu: Math.round(pct * 10) / 10, since, started: p.started, cpuTime: totalCpu / 1000 });
     }
     for (const k of [...last.keys()]) if (!seen.has(k)) last.delete(k);
     for (const k of [...over.keys()]) if (!seen.has(k)) over.delete(k);
+    for (const k of [...busyUntil.keys()]) if (!seen.has(k)) busyUntil.delete(k);
     items.sort((a, b) => b.cpu - a.cpu);
     const next = JSON.stringify(items);
     if (next !== json) {
@@ -140,7 +186,7 @@ function createRunaways({ onChange, onRead }) {
       // A parent gone, or a later process that took its number: an orphan.
       '    $orphan = (-not $born.ContainsKey($pp)) -or ($born[$pp] -gt $p.CreationDate)',
       '    $cwd = ""',
-      `    if ($want.ContainsKey($id) -or ($orphan -and $p.Name -match '${SHELLS}')) { try { $cwd = [AtlCwd]::Of($id) } catch {} }`,
+      `    if ($want.ContainsKey($id) -or $p.Name -match '^claude(\\.exe)?$' -or ($orphan -and $p.Name -match '${SHELLS}')) { try { $cwd = [AtlCwd]::Of($id) } catch {} }`,
       '    $c = [string]$p.CommandLine; if ($c.Length -gt 400) { $c = $c.Substring(0, 400) }',
       '    $t = [DateTimeOffset]::new($p.CreationDate).ToUnixTimeMilliseconds()',
       // Whole milliseconds: a fraction would be written with the PC's own decimal sign.
@@ -208,7 +254,12 @@ function createRunaways({ onChange, onRead }) {
     table = next;
     kids = children;
     if (onRead) onRead();
-    consider([...next.values()].filter((p) => p.orphan && SHELL_RE.test(p.name)), at);
+    const candidates = [...next.values()].filter((p) => p.orphan && SHELL_RE.test(p.name) && !/^claude$/i.test(p.name) && !aiTool(p));
+    for (const p of candidates) {
+      p.treePct = busy([p.pid]);
+      p.treeCpu = tree(p.pid).reduce((s, t) => s + ((next.get(t.pid) || {}).cpu || 0), 0);
+    }
+    consider(candidates, at);
     for (const done of waiting.splice(0)) done();
   }
 
@@ -255,13 +306,31 @@ function createRunaways({ onChange, onRead }) {
   function readPs() {
     execFile('ps', ['-axo', 'pid=,ppid=,uid=,tty=,time=,lstart=,command='], { maxBuffer: 8 << 20 }, (err, out) => {
       if (err || stopped) return;
-      const me = process.getuid(), list = [];
+      const me = process.getuid(), all = new Map(), byParent = new Map();
       for (const line of out.split('\n')) {
         const f = line.trim().split(/\s+/);
-        if (f.length < 11 || Number(f[1]) !== 1 || Number(f[2]) !== me || f[3] !== '??') continue;
+        if (f.length < 11 || Number(f[2]) !== me) continue;
+        const pid = Number(f[0]), ppid = Number(f[1]), tty = f[3];
+        if (!(pid > 1)) continue;
         const command = f.slice(10).join(' ');
-        if (command.includes('.app/')) continue;
-        list.push({ pid: Number(f[0]), name: f[10].split('/').pop(), cmd: command, started: Date.parse(f.slice(5, 10).join(' ')), cpu: seconds(f[4]) * 1000 });
+        const name = f[10].split('/').pop();
+        if (isExcludedPosix(command, name)) continue;
+        const entry = { pid, ppid, tty, name, cmd: command, started: Date.parse(f.slice(5, 10).join(' ')), cpu: seconds(f[4]) * 1000 };
+        all.set(pid, entry);
+        if (ppid > 1) {
+          if (!byParent.has(ppid)) byParent.set(ppid, []);
+          byParent.get(ppid).push(pid);
+        }
+      }
+      const list = [];
+      for (const p of all.values()) {
+        if (p.ppid !== 1 || p.tty !== '??' || /^claude$/i.test(p.name) || aiTool(p)) continue;
+        let totalCpu = p.cpu, level = byParent.get(p.pid) || [];
+        for (let d = 0; d < 6 && level.length; d++) {
+          for (const c of level) totalCpu += (all.get(c) || {}).cpu || 0;
+          level = level.flatMap((c) => byParent.get(c) || []);
+        }
+        list.push({ ...p, cpu: totalCpu });
       }
       consider(list, Date.now());
     });
@@ -278,17 +347,26 @@ function createRunaways({ onChange, onRead }) {
       if (sampler) sampler.kill();
     },
     json: () => json,
-    // The dashboard's End button: only the process it showed (same pid, same start). Windows ends it at once; elsewhere
-    // TERM, then KILL two seconds later if it's still there (a shell ignores TERM).
+    // The dashboard's End button: only the process it showed (same pid, same start). Windows ends it and its tree;
+    // elsewhere TERM, then KILL two seconds later if it's still there (a shell ignores TERM).
     end(pid, started) {
       const p = last.get(Number(pid));
       if (!p || Math.abs(p.started - Number(started)) > 1000) return false;
+      if (WIN) {
+        const all = tree(Number(pid));
+        execFile('taskkill.exe', ['/PID', String(pid), '/T'], { windowsHide: true }, () => {});
+        try {
+          process.kill(pid);
+        } catch {}
+        setTimeout(() => fresh().then(() => kill(all)), 2000);
+        return true;
+      }
       try {
-        process.kill(pid, WIN ? undefined : 'SIGTERM');
+        process.kill(pid, 'SIGTERM');
       } catch {
         return false;
       }
-      if (!WIN) setTimeout(() => {
+      setTimeout(() => {
         const q = last.get(Number(pid));
         if (q && q.started === p.started) {
           try {
@@ -300,15 +378,24 @@ function createRunaways({ onChange, onRead }) {
     },
     /**
      * What closed terminals left running, for the orbit's amber cars: a shell or runtime whose parent is gone, that has
-     * run for a few seconds (not a launcher's step on its way) and isn't burning a core (that's a runaway's alarm) nor a
-     * Claude (that's a session on the orbit).
+     * run for a few seconds (not a launcher's step on its way) and isn't burning a core (that's a runaway's alarm), a
+     * busy job started by a live AI session, nor an AI session itself (that's a planet on the orbit).
      */
-    left() {
+    left(live) {
+      if (Array.isArray(live)) {
+        liveSessions = live.filter((s) => s && s.cwd).map((s) => {
+          const proc = s.pid ? table.get(s.pid) : null;
+          return { cwd: s.cwd, started: (proc && proc.started) || s.started || 0, busy: s.status === 'busy' };
+        });
+      }
       const burning = new Set(JSON.parse(json).map((r) => r.pid));
-      const out = [];
+      const now = Date.now(), out = [];
       for (const p of table.values()) {
-        if (!p.orphan || !SHELL_RE.test(p.name) || /^claude$/i.test(p.name) || burning.has(p.pid) || Date.now() - p.started < 10_000) continue;
-        out.push({ pid: p.pid, started: p.started, name: p.name, cmd: p.cmd || p.name, cwd: p.cwd, cpu: busy([p.pid]) });
+        if (!p.orphan || !SHELL_RE.test(p.name) || /^claude$/i.test(p.name) || aiTool(p) || burning.has(p.pid) || now - p.started < 10_000) continue;
+        const cpu = busy([p.pid]);
+        if (cpu >= 1) busyUntil.set(p.pid, now + 15_000);
+        if (ownerSession(p)) continue;
+        out.push({ pid: p.pid, started: p.started, name: p.name, cmd: p.cmd || p.name, cwd: p.cwd, cpu });
       }
       return out.sort((a, b) => a.started - b.started);
     },
