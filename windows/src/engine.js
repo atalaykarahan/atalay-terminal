@@ -16,6 +16,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const { createTelemetry } = require('./telemetry');
 
 const HOME = os.homedir();
 const WIN = process.platform === 'win32';
@@ -1224,6 +1225,7 @@ class RadarEngine {
     this.limitsFile = opts.limitsFile || null;
     this.isAppPid = typeof opts.isAppPid === 'function' ? opts.isAppPid : null;
     this.handlers = { onInit: opts.onInit, onState: opts.onState, onEvents: opts.onEvents, onHistory: opts.onHistory };
+    this.telemetry = createTelemetry({ claudeDir: this.claudeDir });
 
     this.started = false;
     this.stopped = false;
@@ -1306,6 +1308,7 @@ class RadarEngine {
       } catch {}
       this.watchers[k] = null;
     }
+    this.telemetry.stop().catch(() => {});
   }
 
   requestInit() {
@@ -1319,6 +1322,7 @@ class RadarEngine {
   dismiss(sessionId, pid) {
     if (typeof sessionId !== 'string' || !sessionId) return;
     this.dismissed.set(sessionId, pid > 0 ? pid : 0);
+    this.telemetry.evict(sessionId);
     this.stateDirty = true;
     this.publishState();
   }
@@ -3220,7 +3224,9 @@ class RadarEngine {
 
   sendInit() {
     this.initWanted = false;
-    this.call('onInit', JSON.stringify({ state: this.snapshot(), log: this.log.slice(-160) }));
+    const snap = this.snapshot();
+    this.telemetry.recordSnapshot(snap);
+    this.call('onInit', JSON.stringify({ state: snap, log: this.log.slice(-160) }));
   }
 
   // Builds and sends the state when something changed (and every few seconds for the time-based figures), and skips
@@ -3231,9 +3237,11 @@ class RadarEngine {
     if (!this.stateDirty && now - this.lastStateAt <= 5000) return;
     this.stateDirty = false;
     this.lastStateAt = now;
-    const js = JSON.stringify(this.snapshot());
+    const snap = this.snapshot();
+    const js = JSON.stringify(snap);
     if (js === this.lastStateJSON) return;
     this.lastStateJSON = js;
+    this.telemetry.recordSnapshot(snap);
     this.call('onState', js);
   }
 

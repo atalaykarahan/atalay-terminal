@@ -64,11 +64,13 @@ final class RadarEngine {
     /// Fresh account-wide Codex limits, read from Codex app-server rather than inferred from a rollout file.
     private var codexUsage: [String: Any]?
     private var codexUsagePending = false, codexWasRunning = false
+    let telemetry: OrbitTelemetry
 
     init() {
         claudeDir = CLAUDE_DIR
         projects = (claudeDir as NSString).appendingPathComponent("projects")
         registry = (claudeDir as NSString).appendingPathComponent("sessions")
+        telemetry = OrbitTelemetry(claudeDir: claudeDir)
     }
 
     // MARK: public API (any thread)
@@ -105,6 +107,7 @@ final class RadarEngine {
     /// exited and then another 30 minutes as "ended", where a click would resume it again. It comes back if
     /// the conversation is resumed later (another Claude process).
     func dismiss(sessionId: String, pid: Int32?) {
+        telemetry.evict(sessionId: sessionId)
         queue.async {
             self.dismissed[sessionId] = pid ?? 0
             self.stateDirty = true
@@ -1996,6 +1999,7 @@ final class RadarEngine {
     private func sendInit() {
         initWanted = false
         let snap = snapshot()
+        telemetry.record(snapshot: snap.json)
         guard let js = encode(["state": snap.json, "log": log.suffix(160).map(\.dict)]) else { return }
         DispatchQueue.main.async {
             self.onInit?(js)
@@ -2013,6 +2017,7 @@ final class RadarEngine {
         let snap = snapshot()
         guard let js = encode(snap.json), js != lastStateJSON else { return }
         lastStateJSON = js
+        telemetry.record(snapshot: snap.json)
         DispatchQueue.main.async { self.onState?(js, snap.briefs) }
     }
 
