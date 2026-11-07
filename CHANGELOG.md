@@ -3,6 +3,16 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.18.0
+
+- Same file: two chats writing one file in the last 20 minutes turn files.heat's strip red, put ⚠ same file on both chats' cards and pop up in the screen's corner until it's over; a chat's own subagents don't count as another chat. The idea is @EmirCobanOfficial's on GitHub
+- Spend: spend.ledger gets 7d, 30d, 12w and 12m tabs by project and model; the app keeps each day's spend itself, as Claude Code deletes transcripts after 30 days. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
+- Chats list: each folder is a card of its own, folded or opened with a click on its strip (⌘-click, Ctrl+click on Windows, selects it for archiving several at once); the app's terminals show in their folders with what runs in them, and open folder keeps a folder at the top with a terminal in it. After @OmerAktas1's design on GitHub
+- Chats list: the chat in front lights up as the active window, and Windows terminals copy a selection as the Mac's do. Thanks to @EmirCobanOfficial on GitHub
+- Runaways: macOS system and XPC services no longer raise the alarm, a process stuck under a closed terminal's leftover burns as its blue box instead of flying as a car, and work a live chat started in its folder is left alone. Thanks to @EmirCobanOfficial on GitHub
+- Mac terminals: Codex and Antigravity take a multi-line paste whole and the scroll wheel; the orbit's cars free all their graphics memory. Thanks to @EmirCobanOfficial on GitHub
+- Windows: links in a terminal window open in the browser. Thanks to @farukiskender on GitHub
+
 ## 0.17.0
 
 - Dashboard: move the small panels by their strip, hide them (the top bar's panels menu brings them back) and size them by the lines between them; the layout stays. Thanks to @OmerAktas1 on GitHub
@@ -123,13 +133,6 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
-- Same file (Mac and Windows): two chats writing one file in the last 20 minutes turn files.heat's strip red, put ⚠ same file on both chats' cards and pop up in the screen's corner as a chat that needs you does, until it's over; a chat's own subagents no longer count as another chat. After @EmirCobanOfficial's #18
-- Spend (Mac and Windows): 7d, 30d, 12w and 12m tabs by project and model; the app keeps each day's spend, as Claude Code deletes transcripts after 30 days. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
-- Chats list (Mac and Windows): each folder is a card of its own, folded shut or open with a click on its strip (⌘-click selects it for archiving several at once); the app's terminals show in their folders with what runs in them; open folder keeps a folder at the top of the list with a terminal in it. After @OmerAktas1's design (#10)
-- Runaways: macOS system and XPC services no longer raise the alarm, a process stuck under a closed terminal's leftover burns as its blue box instead of flying as a car, and work a live session started in its folder is left alone (Mac and Windows). Thanks to @EmirCobanOfficial on GitHub
-- Chats list: the chat in front lights up as the active window (Mac and Windows); Windows terminals copy a selection as the Mac's do. Thanks to @EmirCobanOfficial on GitHub
-- Codex and Antigravity in the app's terminals take a multi-line paste whole and the scroll wheel (Mac), and the orbit's cars free all their graphics memory. Thanks to @EmirCobanOfficial on GitHub
-- Windows: links in a terminal window open in the browser. Thanks to @farukiskender on GitHub
 - Terminal view (PR #10, Ömer; Mac version written 2026-11-07, set aside): the chats and terminals shown take the dashboard's middle side by side, up to six in a grid, and the activity bar's terminal button brings them back. Hard to use as it is: they cover the map, so another one opens only from the chats list. Idea: the button brings every open one at once. The Mac code is kept at `refs/postponed/terminal-view` (`git cherry-pick refs/postponed/terminal-view`)
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines. Cause (found 2026-11-04, reproduced headless with SwiftTerm + the relay + screen): screen 4.0 resizes a window bottom-anchored. Shrinking keeps the cursor's distance from the bottom, so with blank rows under the cursor (short output, after a clear) the output above it goes into screen's own history, which the view never shows, and only blank rows remain; growing pulls lines back in at the top. Fix to try: before a shrink, put the cursor on row max(0, old rows - new rows - blank rows under it) (screen then drops the blank bottom rows instead), apply the size, put the cursor back; the pty size has to wait for that (LocalProcessTerminalView.sizeChanged isn't open, so the relay holds it). Windows has no screen: check it there separately
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
