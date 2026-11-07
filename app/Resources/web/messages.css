@@ -71,6 +71,11 @@
 .mb.wait .mb-border { background: conic-gradient(from var(--ang), var(--warn), var(--amber), var(--accent), var(--warn)); animation-duration: 2.4s; }
 .mb.wait .mb-x { margin-left: auto; }
 .mb.wait .mb-text { padding-bottom: 11px; }
+/* two chats writing the same file: as a chat that needs you, in red */
+.mb.clash { --glow: var(--red-rgb); }
+.mb.clash .mb-tag { background: var(--red); }
+.mb.clash .mb-border { background: conic-gradient(from var(--ang), var(--red), var(--amber), var(--red)); }
+.mb.clash .mb-text { color: var(--dim); font-size: 0.9em; overflow-wrap: anywhere; }
 
 /* the input: a prompt line, as in the rest of the app */
 .mb-input { display: flex; align-items: flex-end; gap: 8px; margin: 6px 10px 10px; padding: 6px 8px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.42); transition: border-color 0.2s, box-shadow 0.2s; }

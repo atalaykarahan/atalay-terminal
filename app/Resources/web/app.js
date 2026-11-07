@@ -671,9 +671,50 @@ function updateCard(el, s) {
   setText(q('.cost'), fmtUsd(s.cost));
   setHTML(q('.spark'), sparkBars(s.spark, col));
   setText(q('.ag'), s.agents.length ? `⤷ ${s.agentsRunning} running · ${s.agents.length} subagents (15 min)` : '');
-  setHTML(q('.flags'), s.flags.map((f) => `<span class="flag">${esc(f)}</span>`).join(''));
+  const clash = CLASH.get(s.id);
+  setHTML(
+    q('.flags'),
+    s.flags.map((f) => `<span class="flag">${esc(f)}</span>`).join('') +
+      (clash ? `<span class="flag clash" title="${esc(`Another chat is writing the same file: ${clash.join(' · ')}`)}">⚠ same file</span>` : ''),
+  );
 }
+// Files two chats wrote in the last 20 minutes (the engine's `collision`; a chat and its own subagents are one chat), by
+// chat: each one's card says so (⚠ same file), with the file and the other chat. The Windows engine names no `clash` yet:
+// its file's editors then.
+let CLASH = new Map();
+function clashFiles() {
+  return (STATE.files || [])
+    .filter((f) => f.collision)
+    .map((f) => ({ f, sids: f.clash && f.clash.length ? f.clash : [...new Set((f.editors || []).map((e) => e.s))] }));
+}
+function clashes() {
+  const m = new Map();
+  for (const { f, sids } of clashFiles()) {
+    for (const s of sids) {
+      const others = sids.filter((x) => x !== s).map(sessName);
+      if (!m.has(s)) m.set(s, []);
+      m.get(s).push(`${f.short} (also ${others.join(', ')})`);
+    }
+  }
+  return m;
+}
+
+// A collision that begins pops up in the screen's corner as a chat that needs you does (messages.js), and its notice goes
+// when it's over. What collides when the page starts was there before: no notice for that.
+let clashSeen = null;
+function tellClashes() {
+  const now = new Map();
+  for (const { f, sids } of clashFiles()) now.set(f.p, { key: f.p, file: f.short, path: f.p, chats: sids.map(sessName) });
+  if (clashSeen) {
+    for (const [k, c] of now) if (!clashSeen.has(k)) native({ type: 'clash', ...c });
+    for (const k of clashSeen.keys()) if (!now.has(k)) native({ type: 'clashOver', key: k });
+  }
+  clashSeen = now;
+}
+
 function renderSessions() {
+  CLASH = clashes();
+  tellClashes();
   const box = $('sessions');
   if (!STATE.sessions.length) return placeholder(box, 'no Claude Code session in the last 30 min');
   keyed(box, STATE.sessions, (s) => s.id, createCard, updateCard);
@@ -812,6 +853,8 @@ function renderFiles() {
       .sort((a, b) => b.r + b.w - (a.r + a.w));
   }
   const collisions = items.filter((f) => f.collision).length;
+  // A collision stays marked on the panel's strip, not only in its line (a ⚠ blinked three times and was gone).
+  $('p-files').classList.toggle('clash', collisions > 0);
   setText($('m-files'), collisions ? `⚠ ${collisions} file edited by 2+ agents` : c ? `${items.length} touched ${since(c)}` : `${items.length} most-touched today`);
   if (!items.length) return placeholder(box, c ? `cleared · no file reads or edits ${since(c)}` : 'no file reads or edits yet today');
   const max = Math.max(1, ...items.map((f) => f.r + f.w));

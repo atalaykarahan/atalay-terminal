@@ -160,6 +160,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.showDashboard()
             self?.radar.push("openView", "\"notifications\"")
         }
+        // The "same file" notice: the dashboard in front, on its panels (files.heat names the file).
+        MessagePanel.onOpenClash = { [weak self] in
+            self?.showDashboard()
+            self?.radar.push("openView", "\"dash\"")
+        }
         // The danger alarm's Details: the dashboard in front, its engine-failure panel open.
         MessagePanel.onOpenDanger = { [weak self] in
             self?.showDashboard()
@@ -220,6 +225,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             for c in chats.values { open ? c.stepAside() : c.stepBack() }
             MessagePanel.stepAside(open)
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
+        // Two chats began (or stopped) writing the same file (files.heat): the corner's notice.
+        case "clash":
+            guard let key = msg["key"] as? String, !key.isEmpty else { return }
+            MessagePanel.notices.clash(["key": key, "file": msg["file"] as? String ?? "", "path": msg["path"] as? String ?? "",
+                                        "chats": msg["chats"] as? [String] ?? []])
+        case "clashOver": if let key = msg["key"] as? String { MessagePanel.notices.clashOver(key) }
         default: break
         }
     }

@@ -323,6 +323,11 @@ body::after {
 .fh .n i { display: inline-block; width: 5px; height: 5px; margin-left: 2px; }
 .fh.collide { padding: 2px 4px; background: rgba(var(--red-rgb), 0.14); animation: blink 1s steps(2) 3; }
 .fh.collide .nm::before { content: "⚠ "; color: var(--red); }
+/* Two chats writing the same file: files.heat's strip turns red while it lasts, and each chat's card says so. */
+#p-files.clash { border-color: rgba(var(--red-rgb), 0.7); }
+#p-files.clash > header .tag { background: var(--red); }
+#p-files.clash > header .meta { color: var(--red); font-weight: 700; }
+.flag.clash { color: #fff; background: var(--red); animation: none; }
 
 .mixbar { display: flex; height: 9px; overflow: hidden; background: rgba(255, 255, 255, 0.05); }
 .mixbar i { display: block; height: 100%; transition: width 0.8s ease; }

@@ -39,6 +39,8 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     static var onEndRunaway: ((Int32, Double) -> Void)?
     /// A chat's "needs you" notice was clicked: that chat, in front (its session id).
     static var onOpenWait: ((String) -> Void)?
+    /// The "same file" notice was clicked: the dashboard in front.
+    static var onOpenClash: (() -> Void)?
     /// Until when keys do nothing (the level-up takeover; AppDelegate drops them).
     private static var keysLockedUntil: TimeInterval = 0
     static var keysLocked: Bool { ProcessInfo.processInfo.systemUptime < keysLockedUntil }
@@ -196,6 +198,17 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     /// That chat moved on (answered, or the app came to the front): its notice goes.
     func waitOver(_ sid: String) {
         run("window.__messages && __messages.waitOver && __messages.waitOver(\(Self.literal(sid)))")
+    }
+
+    /// Two chats writing the same file (files.heat's collision, from the dashboard page): the file, its path and the
+    /// chats. It stays in the corner, as a chat that needs you, until `clashOver`.
+    func clash(_ notice: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: notice), let json = String(data: data, encoding: .utf8) else { return }
+        run("window.__messages && __messages.clash && __messages.clash(\(json))")
+    }
+
+    func clashOver(_ key: String) {
+        run("window.__messages && __messages.clashOver && __messages.clashOver(\(Self.literal(key)))")
     }
 
     /// Your XP as the last heartbeat or live event had it: a new level plays the fanfare (once, the page keeps count).
@@ -404,6 +417,8 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         case "openWait":
             guard let sid = body["sid"] as? String, !sid.isEmpty else { return }
             Self.onOpenWait?(sid)
+        case "openClash":
+            Self.onOpenClash?()
         case "lock":
             // Never longer than 4 s, whatever the page asks.
             Self.keysLockedUntil = ProcessInfo.processInfo.systemUptime + min(max(number("ms"), 0), 4000) / 1000

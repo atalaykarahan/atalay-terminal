@@ -123,6 +123,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Same file (Mac): two chats writing one file in the last 20 minutes turn files.heat's strip red, put ⚠ same file on both chats' cards and pop up in the screen's corner as a chat that needs you does, until it's over; a chat's own subagents no longer count as another chat. After @EmirCobanOfficial's #18
 - Spend (Mac): 7d, 30d, 12w and 12m tabs by project and model; the app keeps each day's spend, as Claude Code deletes transcripts after 30 days. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
 - Chats list (Mac): each folder is a card of its own, folded shut or open with a click on its strip (⌘-click selects it for archiving several at once); the app's terminals show in their folders with what runs in them; open folder keeps a folder at the top of the list with a terminal in it. After @OmerAktas1's design (#10)
 - Runaways: macOS system and XPC services no longer raise the alarm, a process stuck under a closed terminal's leftover burns as its blue box instead of flying as a car, and work a live session started in its folder is left alone (Mac and Windows). Thanks to @EmirCobanOfficial on GitHub

@@ -1971,18 +1971,22 @@ final class RadarEngine {
         let last5 = { (a: [Int]) -> Double in Double(a.suffix(5).reduce(0, +)) / 5 }
         let cost15 = costSpark.suffix(15).reduce(0, +)
 
+        // A collision: two chats wrote the file in the last 20 minutes. A chat and its own subagents are one chat (they
+        // were taken for two), and `clash` names the chats, for their cards' ⚠.
         let files: [[String: Any]] = G.files.values
-            .map { F -> (FileHeat, Bool) in (F, F.editors.values.filter { now - $0.t < 20 * Self.MIN }.count > 1) }
+            .map { F -> (FileHeat, [String]) in (F, Set(F.editors.values.filter { now - $0.t < 20 * Self.MIN }.map(\.s)).sorted()) }
             .sorted { a, b in
-                if a.1 != b.1 { return a.1 }
+                let ca = a.1.count > 1, cb = b.1.count > 1
+                if ca != cb { return ca }
                 let wa = a.0.w * 3 + a.0.r, wb = b.0.w * 3 + b.0.r
                 return wa != wb ? wa > wb : a.0.last > b.0.last
             }
             .prefix(14)
             .map { pair -> [String: Any] in
-                let F = pair.0
+                let F = pair.0, clash = pair.1.count > 1 ? pair.1 : []
                 let editors: [[String: Any]] = F.editors.values.map { ["s": $0.s, "a": orNull($0.a)] }
-                return ["p": tildify(F.p), "short": shortPath(F.p), "r": F.r, "w": F.w, "last": F.last, "collision": pair.1, "editors": editors]
+                return ["p": tildify(F.p), "short": shortPath(F.p), "r": F.r, "w": F.w, "last": F.last, "collision": !clash.isEmpty,
+                        "clash": clash, "editors": editors]
             }
 
         let promptTok = Double(G.tokIn + G.tokCr + G.tokCw)
