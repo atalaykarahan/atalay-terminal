@@ -282,13 +282,17 @@ final class ChatTerminalView: LocalProcessTerminalView {
         return Proc.foregroundGroup(shell)
     }
 
-    private var claudeInFront: Bool { foregroundGroup().map(Proc.isClaude) ?? false }
+    private static func isInteractiveAI(_ pid: Int32) -> Bool {
+        Proc.isClaude(pid) || Proc.otherAI(pid) != nil
+    }
+
+    private var claudeInFront: Bool { foregroundGroup().map(Self.isInteractiveAI) ?? false }
 
     /// Sets the emulator's bracketed-paste mode to what the program in front takes (only for detached sessions; a
     /// direct shell sends its own mode 2004).
     private func matchPasteMode() {
         guard let group = foregroundGroup(), let program = Proc.name(group) else { return }
-        feed(text: Self.bracketing.contains(program) || Proc.isClaude(group) ? "\u{1b}[?2004h" : "\u{1b}[?2004l")
+        feed(text: Self.bracketing.contains(program) || Self.isInteractiveAI(group) ? "\u{1b}[?2004h" : "\u{1b}[?2004l")
     }
 
     override func paste(_ sender: Any) {
