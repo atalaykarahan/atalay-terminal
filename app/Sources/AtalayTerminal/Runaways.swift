@@ -105,7 +105,8 @@ final class Runaways {
         // a live session started in its project folder isn't mistaken for a leftover from a closed terminal.
         var sessions = liveSessions
         for (pid, info) in infos where info.tty != nil {
-            if Proc.isClaude(pid) || Proc.otherAI(pid) != nil, let cwd = Proc.cwd(pid), !cwd.isEmpty {
+            if Proc.isClaude(pid) || Proc.otherAI(pid) != nil, let cwd = Proc.cwd(pid), !cwd.isEmpty,
+               !sessions.contains(where: { $0.cwd == cwd }) {
                 sessions.append(LiveSession(cwd: cwd, started: Double(info.started / 1000), busy: true))
             }
         }
@@ -146,17 +147,17 @@ final class Runaways {
             roots.insert(pid)
             let startedMs = Double(p.started / 1000)
             let procCwd = Proc.cwd(pid)
-            let ownerSession = procCwd.flatMap { cwd in
-                sessions.first(where: { startedMs >= $0.started - 5_000 && Self.inFolder(cwd, of: $0.cwd) })
-            }
+            let matchingSessions = procCwd.map { cwd in
+                sessions.filter { startedMs >= $0.started - 5_000 && Self.inFolder(cwd, of: $0.cwd) }
+            } ?? []
             // A job started by a live AI session that is currently working is doing the user's work, not a runaway.
-            if ownerSession?.busy == true {
+            if matchingSessions.contains(where: \.busy) {
                 over[pid] = nil
                 continue
             }
             if runaway(pid, p, path: path, cpu: treeCpu, cpuTime: treeCpuTime, valid: hadPrev, wall: wall, into: &items) { continue }
             // While the AI session that started this process in its folder is still open, it isn't a closed terminal's leftover.
-            guard ownerSession == nil, sid > 1, sid != pid, !alive.contains(sid) else { continue }
+            guard matchingSessions.isEmpty, sid > 1, sid != pid, !alive.contains(sid) else { continue }
             behind.append(Left(pid: pid, started: startedMs, args: Proc.arguments(pid) ?? [path], cwd: procCwd ?? HOME))
         }
         left = behind.sorted { $0.started < $1.started }
