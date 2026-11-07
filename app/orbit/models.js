@@ -256,11 +256,17 @@ export function buildRoadster(accent, envMap) {
   });
   const edge = new THREE.LineBasicMaterial({ color: accent.clone().multiplyScalar(1.2), transparent: true, opacity: 0.26 });
   const fanMat = new THREE.MeshBasicMaterial({ color: accent.clone().multiplyScalar(1.4), transparent: true, opacity: 0.85 });
+  const own = [metal, glassMat, edge, fanMat];
   const add = (geo, m, x, y, z) => {
     const o = new THREE.Mesh(geo, m);
     o.position.set(x, y, z);
     group.add(o);
     return o;
+  };
+  const addBar = (a, b, r, m) => {
+    const mesh = bar(a, b, r, m);
+    own.push(mesh.geometry);
+    group.add(mesh);
   };
   group.add(
     new THREE.Mesh(g.body, metal),
@@ -272,10 +278,11 @@ export function buildRoadster(accent, envMap) {
 
   for (const x of [-1, 1]) {
     // Pillars: A between the windshield and the side window, B behind the door.
-    group.add(bar(V(x * 4.1, 3.3, 5.8), V(x * 3.3, 5.5, 1.6), 0.17, mat.trim), bar(V(x * 4.4, 3.4, -0.6), V(x * 3.33, 5.55, -0.6), 0.15, mat.trim));
+    addBar(V(x * 4.1, 3.3, 5.8), V(x * 3.3, 5.5, 1.6), 0.17, mat.trim);
+    addBar(V(x * 4.4, 3.4, -0.6), V(x * 3.33, 5.55, -0.6), 0.15, mat.trim);
     add(g.mirror, metal, x * 4.85, 3.85, 4.3);
     // Light strips along the nose's upper edges.
-    group.add(bar(V(x * 2.6, 1.92, 13.95), V(x * 4.95, 2.56, 12.55), 0.13, mat.head));
+    addBar(V(x * 2.6, 1.92, 13.95), V(x * 4.95, 2.56, 12.55), 0.13, mat.head);
   }
   add(g.intake, mat.trim, 0, 1.35, 14.22);
   add(g.taillight, mat.tail, 0, 2.95, -14.25);
@@ -305,5 +312,5 @@ export function buildRoadster(accent, envMap) {
   }
   add(g.fan, fanMat, 0, 0.5, -1);
   jets.push({ at: V(0, -0.8, -1), main: false, fan: true });
-  return { group, metal, glassMat, own: [metal, glassMat, edge, fanMat], jets: jets.map((j) => j.at), jetKinds: jets };
+  return { group, metal, glassMat, own, jets: jets.map((j) => j.at), jetKinds: jets };
 }

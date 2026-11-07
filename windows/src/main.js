@@ -278,6 +278,7 @@ const runaways = createRunaways({
     toDash(`runaways(${json})`);
     // The alarm, in the middle of the screen (the notices panel can play its sound).
     toNotices(`runaways && __messages.runaways(${json})`);
+    pushTerminals();
   },
 });
 
@@ -533,6 +534,18 @@ function pushChats(force) {
   run(chatsView, `window.__chats && __chats.update(${json})`);
 }
 
+// The chats list's open folder button: a folder from the system's picker stays at the list's top, with a terminal opened
+// in it.
+async function openFolder() {
+  const r = await dialog.showOpenDialog(dash || undefined, { title: 'Open a folder in the chats list', properties: ['openDirectory'] });
+  const d = !r.canceled && r.filePaths && r.filePaths[0];
+  if (!d || !fs.existsSync(d)) return null;
+  chatlist.pin(d);
+  pushChats(true);
+  openChatWindow({ cwd: d, claudeArgs: null, title: path.basename(d) || d });
+  return d;
+}
+
 // The chats list's requests (pages/chats.js).
 function handleChats(msg) {
   const dir = () => {
@@ -560,6 +573,17 @@ function handleChats(msg) {
     }
     case 'copyId':
       if (typeof msg.id === 'string' && msg.id) clipboard.writeText(msg.id);
+      return true;
+    case 'openFolder':
+      return openFolder();
+    case 'unpin':
+      chatlist.unpin(String(msg.cwd || ''));
+      break;
+    // One of the app's terminals in a folder: its window comes to the front, or it ends (as its End button does).
+    case 'showTerminal':
+      return chats.has(msg.id) && terminals.has(msg.id) && showChat(msg.id);
+    case 'endTerminal':
+      if (chats.has(msg.id)) endTerminal(msg.id);
       return true;
     case 'favorite':
       chatlist.toggleFavorite(String(msg.id || ''));
@@ -660,6 +684,7 @@ function handleRadar(msg) {
       pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
       pushActiveSession(true);
+      toDash(`power(${powerMonitor.isOnBatteryPower()})`);
       return true;
     case 'open':
       return openSession(msg.sid, false);
@@ -680,6 +705,18 @@ function handleRadar(msg) {
     // the way meanwhile, as on the Mac.
     case 'modal':
       return stepAside(msg.open === true);
+    // Two chats began (or stopped) writing the same file (files.heat): the corner's notice, as a chat that needs you.
+    case 'clash': {
+      const key = typeof msg.key === 'string' ? msg.key : '';
+      if (!key) return true;
+      const str = (v) => (typeof v === 'string' ? v : '');
+      const notice = { key, file: str(msg.file), path: str(msg.path), chats: Array.isArray(msg.chats) ? msg.chats.map(String) : [] };
+      toNotices(`clash && __messages.clash(${JSON.stringify(notice)})`);
+      return true;
+    }
+    case 'clashOver':
+      if (typeof msg.key === 'string') toNotices(`clashOver && __messages.clashOver(${JSON.stringify(msg.key)})`);
+      return true;
     case 'log':
       console.log('dashboard page:', msg.msg);
       return true;
@@ -805,7 +842,10 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     touchTerminal(id);
     pushWinOpen();
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
+  });
   // A window pinned above the dashboard is its child, and Windows minimizes an owned window to a bar on the desktop
   // rather than the taskbar: it lets go of the dashboard on its way to the taskbar and pins again when it comes back,
   // as on the Mac.
@@ -832,6 +872,8 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
       pushActiveSession();
     }
     pushWinOpen();
+    pushTerminals();
+    pushChats();
   });
   win.on('closed', () => {
     if (chats.get(id)?.win === win) {
@@ -857,6 +899,9 @@ function showChat(id) {
   c.win.focus();
   touchTerminal(id);
   pushWinOpen();
+  // The chats list's terminal rows say which windows show.
+  pushTerminals();
+  pushChats();
   return true;
 }
 
@@ -978,6 +1023,8 @@ let terminalsJSON = '';
 const ending = new Map(); // pid -> until when it's an ended terminal's process, not a car left behind
 function pushTerminals(force) {
   const live = engine.live(), list = [], jobs = [];
+  // The chats list shows them too, each in the folder it was opened in, with what runs in it and whether its window shows.
+  const rows = [];
   for (const [pid, until] of ending) if (until < Date.now()) ending.delete(pid);
   for (const t of terminals.list()) {
     const c = chats.get(t.id);
@@ -989,12 +1036,18 @@ function pushTerminals(force) {
     if (job) jobs.push(job.pid);
     // The folder the job runs in (PowerShell's cd doesn't move the shell's own), else the one the terminal opened in.
     const cwd = (job && job.cwd) || c.cwd || os.homedir();
+    const cmd = job ? commandLabel(job.cmd || job.name) : '';
     list.push({
-      id: t.id, cwd: tildify(cwd), dir: path.basename(cwd) || cwd, cmd: job ? commandLabel(job.cmd || job.name) : '', running: !!job,
+      id: t.id, cwd: tildify(cwd), dir: path.basename(cwd) || cwd, cmd, running: !!job,
       cpu: Math.round(runaways.busy(kids.map((k) => k.pid))),
     });
+    const home = c.cwd || os.homedir();
+    const shown = !!c.win && !c.win.isDestroyed() && c.win.isVisible() && !c.win.isMinimized();
+    rows.push({ id: t.id, cwd: home, title: path.basename(home) || home, job: cmd, shown });
   }
-  for (const l of runaways.left()) {
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  chatlist.setTerms(rows);
+  for (const l of runaways.left(live)) {
     if (ending.has(l.pid)) continue;
     list.push({
       id: `left:${l.pid}:${l.started}`, cwd: tildify(l.cwd), dir: l.cwd ? path.basename(l.cwd) || l.cwd : l.name, cmd: commandLabel(l.cmd),
@@ -1041,7 +1094,9 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
 ipcMain.on('term:input', (e, data) => {
   const found = chatOf(e);
   if (found) {
-    touchTerminal(found[0]);
+    // The shell's focus reports (ESC[I, ESC[O, which xterm.js sends as the window gains or loses focus) aren't the user
+    // at it: a window losing focus, or closed, would take the chats list's "active window" back from the one in front.
+    if (data !== '\x1b[I' && data !== '\x1b[O') touchTerminal(found[0]);
     terminals.write(found[0], data);
   }
 });
@@ -1058,7 +1113,9 @@ ipcMain.on('term:copy', (e, text) => {
 });
 ipcMain.on('term:dashboard', () => showDashboard());
 ipcMain.on('term:open', (_e, uri) => {
-  if (/^https?:\/\//.test(uri)) shell.openExternal(uri);
+  if (typeof uri !== 'string') return;
+  const clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
+  if (/^https?:\/\//i.test(clean)) shell.openExternal(clean).catch(() => {});
 });
 
 // ---------- the overlay: the shortcut wheel and the new-terminal folder picker, over the whole screen ----------
@@ -1381,6 +1438,11 @@ function handleMessages(win, body) {
       return runaways.end(body.pid, body.started);
     case 'openWait':
       return openWait(body.sid);
+    // The "same file" notice: the dashboard in front, on its panels (files.heat names the file).
+    case 'openClash':
+      showDashboard();
+      toDash('openView("dash")');
+      return true;
     case 'openChat':
       return openFriendChat(body.id);
     case 'showing': {
@@ -1587,6 +1649,10 @@ ipcMain.handle('atl:post', async (e, name, body) => {
     switch (name) {
       case 'radar':
         return handleRadar(body);
+      // The spend panel's history tabs (web/app.js), from the engine's ledger (ledger.js).
+      case 'spend':
+        if (body.type !== 'history') throw new Error('unknown request');
+        return engine.spendHistory(body.range);
       case 'git':
         return await git.handle(body);
       case 'theme':
@@ -1727,6 +1793,9 @@ app.whenReady().then(() => {
   savers.autoStart();
   if (!PROBE) aiColors.autoStart();
   powerMonitor.on('resume', () => cloud.kick());
+  // On battery the dashboard's map draws fewer and smaller frames, as on the Mac (PowerSaver.swift).
+  powerMonitor.on('on-battery', () => toDash('power(true)'));
+  powerMonitor.on('on-ac', () => toDash('power(false)'));
   // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
   // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.
   terminals.restore().then((found) => {

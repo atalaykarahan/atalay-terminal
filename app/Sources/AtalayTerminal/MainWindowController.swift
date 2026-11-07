@@ -54,6 +54,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         MessagePanel.dashboard = window
         radar.handleGit(GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] }))
+        radar.handleSpend(SpendBridge(engine: engine))
         overlay.manager = self
         buildLayout()
         wireEngine()
@@ -62,6 +63,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         runaways.onChange = { [weak self] json in
             self?.radar.push("runaways", json)
             MessagePanel.notices.runaways(json)
+            self?.pushTerminals()
         }
         runaways.start()
         observeVisibility()
@@ -102,6 +104,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString($0, forType: .string)
             },
+            openTerminal: { [weak self] in self?.openTerminal($0) },
+            endTerminal: { [weak self] in self?.endTerminal($0) },
+            openFolder: { [weak self] in self?.openFolder() },
             close: { [weak self] in self?.toggleSidebar() })))
         sidebarHost = side
         ThemeStore.glow(side, on: ThemeStore.shared.glows, soft: true)
@@ -154,6 +159,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         MessagePanel.onOpenNotifications = { [weak self] in
             self?.showDashboard()
             self?.radar.push("openView", "\"notifications\"")
+        }
+        // The "same file" notice: the dashboard in front, on its panels (files.heat names the file).
+        MessagePanel.onOpenClash = { [weak self] in
+            self?.showDashboard()
+            self?.radar.push("openView", "\"dash\"")
         }
         // The danger alarm's Details: the dashboard in front, its engine-failure panel open.
         MessagePanel.onOpenDanger = { [weak self] in
@@ -215,6 +225,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             for c in chats.values { open ? c.stepAside() : c.stepBack() }
             MessagePanel.stepAside(open)
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
+        // Two chats began (or stopped) writing the same file (files.heat): the corner's notice.
+        case "clash":
+            guard let key = msg["key"] as? String, !key.isEmpty else { return }
+            MessagePanel.notices.clash(["key": key, "file": msg["file"] as? String ?? "", "path": msg["path"] as? String ?? "",
+                                        "chats": msg["chats"] as? [String] ?? []])
+        case "clashOver": if let key = msg["key"] as? String { MessagePanel.notices.clashOver(key) }
         default: break
         }
     }
@@ -291,6 +307,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             c.apply(b)
         }
         let live = list.filter(\.live)
+        runaways.liveSessions = live.compactMap { b in
+            guard !b.cwd.isEmpty else { return nil }
+            let started = b.pid.flatMap { Proc.info($0).map { Double($0.started / 1000) } } ?? 0
+            return Runaways.LiveSession(cwd: b.cwd, started: started, busy: b.status == "busy")
+        }
         let needYou = live.filter { $0.status == "waiting" }.count
         NSApp.dockTile.badgeLabel = needYou > 0 ? "\(needYou)" : nil
         for b in live {
@@ -384,17 +405,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             measured.insert(key)
             return cpu
         }
+        // The chats list shows them too, each in the folder it was opened in (with what runs in it).
+        var rows: [TermRow] = []
         // An ended window's other tabs are still running: their cars stay.
         for c in chats.values {
             for pane in c.plainShells() {
                 let jobs = Proc.children(of: pane.shell)
                 let cwd = Proc.cwd(pane.shell) ?? pane.cwd
                 let cpu = busy(pane.shell, jobs, work: true)
+                let cmd = jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? ""
                 list.append([
                     "id": pane.id, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
-                    "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
-                    "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                    "cmd": cmd, "running": !jobs.isEmpty, "cpu": cpu.rounded(),
                 ])
+                rows.append(TermRow(id: pane.id, cwd: pane.cwd, title: (pane.cwd as NSString).lastPathComponent, job: cmd,
+                                    shown: c.isShown && !c.hud.exited))
             }
         }
         // Closed tabs and panes, still running (an AI in one, Claude or Codex…, is a session on the orbit, not a car).
@@ -409,12 +434,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let jobs = Proc.children(of: shell)
             let cwd = Proc.cwd(shell) ?? HOME
             let cpu = busy(shell, jobs, work: true)
+            let cmd = jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? ""
             list.append([
                 "id": "s:" + name, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
-                "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
-                "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                "cmd": cmd, "running": !jobs.isEmpty, "cpu": cpu.rounded(),
             ])
+            rows.append(TermRow(id: "s:" + name, cwd: cwd, title: (cwd as NSString).lastPathComponent, job: cmd, shown: false))
         }
+        rows.sort { $0.id < $1.id }
+        if sidebar.terminals != rows { sidebar.terminals = rows }
         if gone { saveParked() }
         for l in runaways.left {
             let cpu = busy(l.pid, [l.pid], work: false)
@@ -871,6 +899,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return c.focusCar(id)
         }
         if id.hasPrefix("s:") { reopenParked(String(id.dropFirst(2)), own: true) }
+    }
+
+    /// The chats list's End Terminal: a window's own terminal ends as its End button does (it asks when something runs in
+    /// it); a tab's or split pane's, or a closed one still running, ends its session.
+    private func endTerminal(_ id: String) {
+        if let c = chats.values.first(where: { $0.carId == id && $0.hud.status == "terminal" && !$0.hud.exited }) {
+            return c.endChat()
+        }
+        guard id.hasPrefix("s:") else { return }
+        let name = String(id.dropFirst(2))
+        if parked.removeValue(forKey: name) != nil { saveParked() }
+        Detached.quit(name)
+        terminalEnding(id)
+        pushTerminals()
+    }
+
+    /// The chats list's open folder button: a folder from the system's picker stays at the list's top, with a terminal
+    /// opened in it.
+    private func openFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Open a folder in the chats list"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        let done = { [weak self] (r: NSApplication.ModalResponse) in
+            guard let self, r == .OK, let url = panel.url else { return }
+            self.sidebar.pin(url.path)
+            self.newTerminal(in: url.path)
+        }
+        if let w = window, w.isVisible { panel.beginSheetModal(for: w, completionHandler: done) } else { done(panel.runModal()) }
     }
 
     /// A terminal ended with its End button: its car explodes on the orbit now, not at the next terminals update.

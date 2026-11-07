@@ -59,6 +59,8 @@ window.Messages = (() => {
   let alertOn = null;
   const queue = []; // notices waiting for the one on screen (an update, the daily bonus)
   const waits = new Map(); // chats that need you (below), session id -> { sid, title, folder, what }, the newest last
+  const clashes = new Map(); // files two chats are writing (below), path -> { key, file, path, chats }, the newest last
+  const clashShut = new Set(); // collisions put away with ×: they don't pop up again until they're over
 
   function sizeNotes() {
     if (ROLE !== 'notices') return;
@@ -95,12 +97,12 @@ window.Messages = (() => {
       p.heard = true;
       Sfx.play('xp');
     }
-    // A chat that needs you has no time: it goes when the chat moves on (waitOver) or is put away.
-    if (p.kind !== 'wait') peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
+    // A chat that needs you, or two writing the same file, has no time: it goes when that's over or it's put away.
+    if (p.kind !== 'wait' && p.kind !== 'clash') peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
   }
 
-  // What comes after a notice: a chat that needs you first, then the queue.
-  const nextPeek = () => (waits.size ? showWait() : queue.length && showPeek(queue.shift()));
+  // What comes after a notice: a chat that needs you first, then two chats writing the same file, then the queue.
+  const nextPeek = () => (waits.size ? showWait() : clashes.size ? showClash() : queue.length && showPeek(queue.shift()));
 
   function hidePeek() {
     clearTimeout(peekTimer);
@@ -182,6 +184,17 @@ window.Messages = (() => {
         `<button class="mb-x" data-act="close" title="Close">×</button></div>` +
         `<div class="mb-text">${esc(w.what)}</div></div>`
       );
+    } else if (p.kind === 'clash') {
+      // Two chats writing the same file (files.heat's collision): which file, which chats, how many more. A click shows
+      // the dashboard.
+      const c = p.item;
+      return (
+        `<div class="mb peek wait clash in" data-act="clash" title="Show it on the dashboard"><div class="mb-border"></div>` +
+        `<div class="mb-head"><span class="mb-tag">⚠ SAME FILE</span><span class="mb-who"><span>${esc(c.file)}</span>` +
+        `<small>${esc((c.chats || []).join(' and '))} are both writing it${p.more ? ` · ${p.more} more` : ''}</small></span>` +
+        `<button class="mb-x" data-act="close" title="Close">×</button></div>` +
+        `<div class="mb-text">${esc(c.path)}</div></div>`
+      );
     } else {
       body =
         head('NEW FRIEND', p.friend, null) +
@@ -207,7 +220,15 @@ window.Messages = (() => {
       if (act === 'close') {
         // Put away: the chats waiting now don't pop up again (another question in one of them does).
         if (peek.kind === 'wait') waits.clear();
+        // The same for the collisions now: one pops up again only once it was over and began again.
+        if (peek.kind === 'clash') shutClashes();
         return hidePeek();
+      }
+      if (act === 'clash') {
+        shutClashes();
+        hidePeek();
+        // Swift brings the dashboard to the front, on its panels (files.heat names the file).
+        return post({ type: 'openClash' });
       }
       if (act === 'wait') {
         const sid = peek.item.sid;
@@ -288,7 +309,8 @@ window.Messages = (() => {
     if (peek && peek.kind !== 'wait') {
       // A reply being written stays; this comes right after it (hidePeek).
       if (replying()) return;
-      queue.unshift(peek);
+      // A collision's notice comes back from its own list (nextPeek), as it stands then.
+      if (peek.kind !== 'clash') queue.unshift(peek);
     }
     const all = [...waits.values()];
     showPeek({ kind: 'wait', item: all[all.length - 1], more: all.length - 1 });
@@ -306,6 +328,41 @@ window.Messages = (() => {
     if (!NOTICES || !waits.delete(sid) || !peek || peek.kind !== 'wait') return;
     if (waits.size) showWait();
     else hidePeek();
+  }
+
+  // ======================= two chats writing the same file =======================
+  // files.heat's collision (the dashboard page tells Swift, Swift tells this page): it pops up as a chat that needs you
+  // does, after those, and stays until the collision is over or it's put away. Not held back on do-not-disturb either.
+  function showClash() {
+    if (!clashes.size || takeover || alertOn) return;
+    // A chat that needs you goes first; this comes after it (nextPeek).
+    if (peek && peek.kind === 'wait') return;
+    if (peek && peek.kind !== 'clash') {
+      if (replying()) return;
+      queue.unshift(peek);
+    }
+    const all = [...clashes.values()];
+    showPeek({ kind: 'clash', item: all[all.length - 1], more: all.length - 1 });
+  }
+
+  function addClash(c) {
+    if (!NOTICES || !c || !c.key || clashShut.has(c.key)) return;
+    clashes.delete(c.key);
+    clashes.set(c.key, c);
+    Sfx.play('wait');
+    showClash();
+  }
+
+  function clashOver(key) {
+    clashShut.delete(key);
+    if (!NOTICES || !clashes.delete(key) || !peek || peek.kind !== 'clash') return;
+    if (clashes.size) showClash();
+    else hidePeek();
+  }
+
+  function shutClashes() {
+    for (const k of clashes.keys()) clashShut.add(k);
+    clashes.clear();
   }
 
   // ======================= your progress =======================
@@ -1028,6 +1085,8 @@ window.Messages = (() => {
     runaways: (list) => setRunaways(list),
     wait: (w) => addWait(w),
     waitOver: (sid) => waitOver(sid),
+    clash: (c) => addClash(c),
+    clashOver: (key) => clashOver(key),
   };
   Social.load();
   post({ type: 'ready' });
