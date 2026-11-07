@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Unreleased (2026-11-06)
+
+- Spend (Mac): 7d, 30d, 12w and 12m tabs, by project and model; the app keeps each day's spend, as Claude Code deletes transcripts after 30 days
+
 ## 0.17.0
 
 - Dashboard: move the small panels by their strip, hide them (the top bar's panels menu brings them back) and size them by the lines between them; the layout stays. Thanks to @OmerAktas1 on GitHub

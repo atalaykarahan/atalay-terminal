@@ -54,6 +54,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         MessagePanel.dashboard = window
         radar.handleGit(GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] }))
+        radar.handleSpend(SpendBridge(engine: engine))
         overlay.manager = self
         buildLayout()
         wireEngine()

@@ -57,6 +57,11 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "git")
     }
 
+    /// The spend panel's history (web/app.js) comes from the engine's ledger (Ledger.swift).
+    func handleSpend(_ bridge: SpendBridge) {
+        webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "spend")
+    }
+
     func push(_ fn: String, _ json: String) {
         webView.evaluateJavaScript("window.__radar && window.__radar.\(fn)(\(json)); true") { _, error in
             if let error { NSLog("dashboard page: %@ failed: %@", fn, String(describing: error)) }
@@ -111,5 +116,24 @@ final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     init(_ target: WKScriptMessageHandler) { self.target = target }
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(ucc, didReceive: message)
+    }
+}
+
+/// The spend panel's history tabs (web/app.js): the spend of the last days, weeks or months by project, from the engine's
+/// ledger (Ledger.swift).
+final class SpendBridge: NSObject, WKScriptMessageHandlerWithReply {
+    private let engine: RadarEngine
+
+    init(engine: RadarEngine) { self.engine = engine }
+
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        let body = message.body as? [String: Any] ?? [:]
+        guard body["type"] as? String == "history" else {
+            return MainActor.assumeIsolated { replyHandler(nil, "unknown request") }
+        }
+        engine.spendHistory(body["range"] as? String ?? "30d") { out in
+            MainActor.assumeIsolated { replyHandler(out, nil) }
+        }
     }
 }
