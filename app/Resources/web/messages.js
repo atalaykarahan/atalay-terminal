@@ -21,7 +21,9 @@ window.Messages = (() => {
   const who = (p) => {
     if (!p) return '';
     const xp = p.xp || Social.friend(p.id)?.xp;
-    return `${Social.dot(p.presence)}<span>${esc(Social.handle(p))}</span>${xp ? Xp.badge(xp.level) : ''}`;
+    // A nickname you gave them shows instead of their name, as on Steam; their own name#tag on hover.
+    const nick = p.id && Social.nick(p.id);
+    return `${Social.dot(p.presence)}<span${nick ? ` title="${esc(Social.handle(p))}"` : ''}>${esc(nick || Social.handle(p))}</span>${xp ? Xp.badge(xp.level) : ''}`;
   };
   const PEEK_MS = 12_000;
   const STRIP_MS = 6000; // a strip (the daily bonus, a friend online) goes sooner
@@ -776,7 +778,7 @@ window.Messages = (() => {
     if (!isOpen) return;
     const f = Social.friend(current);
     const c = conv(current);
-    if (f) c.name = Social.handle(f);
+    if (f) c.name = Social.label(f);
     q('.mb-who').innerHTML = f ? who(f) : `<span>${esc(c.name)}</span>`;
     q('.mb-time').textContent = f ? Social.PRESENCE[f.presence || 'offline'].label : '';
     // Removed from friends: the conversation stays on screen, but nothing more goes out.
@@ -883,6 +885,10 @@ window.Messages = (() => {
 
   function chatEvent(ev) {
     switch (ev.type) {
+      // A nickname set or taken off: the open chat's title follows.
+      case 'nickname':
+        if (ev.id === current) paint();
+        break;
       case 'message': {
         const c = convs.get(ev.with);
         if (c && c.loaded && !c.list.some((m) => m.id === ev.message.id)) {

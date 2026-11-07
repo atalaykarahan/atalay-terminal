@@ -34,6 +34,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var pendingOpen: [String] = []
     private var hasState = false
 
+    /// The one dashboard window (the cloud bridge sets the terminal text size from a synced setting).
+    static weak var shared: MainWindowController?
+
     init(engine: RadarEngine) {
         self.engine = engine
         UserDefaults.standard.register(defaults: ["sidebarHidden": false])
@@ -53,6 +56,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         window.setFrameAutosaveName("atalay-terminal.main")
         super.init(window: window)
+        Self.shared = self
         window.delegate = self
         MessagePanel.dashboard = window
         radar.handleGit(GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] }))
@@ -1105,6 +1109,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 UserDefaults.standard.set(side.isHidden, forKey: "sidebarHidden")
             }
         })
+    }
+
+    /// The terminals' text size, and whether the user picked it here (else it's their iTerm2 one): Settings sync
+    /// (sync.js) carries it to their other computers.
+    var terminalFont: (size: CGFloat, chosen: Bool) { (fontSize, UserDefaults.standard.double(forKey: "terminalFontSize") >= 9) }
+
+    /// A size from another of the user's computers (Settings sync).
+    func setFont(_ size: CGFloat) {
+        fontSize = min(24, max(9, size))
+        UserDefaults.standard.set(Double(fontSize), forKey: "terminalFontSize")
+        for c in chats.values { c.setFont(fontSize) }
     }
 
     func changeFont(by delta: CGFloat?) {

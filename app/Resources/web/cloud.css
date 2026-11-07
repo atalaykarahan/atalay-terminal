@@ -406,3 +406,87 @@
 .arc-f i { margin-left: 6px; color: var(--dim2); font-style: normal; font-weight: 400; }
 .arc-btn { flex: none; padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--dim); font: 11px var(--font); cursor: pointer; }
 .arc-btn:hover { border-color: var(--accent); color: var(--hi); }
+
+/* ===== Settings → ACCOUNT (account.js): sign in with GitHub or an e-mail code, the account's computers, settings sync;
+   and the two questions it may ask, over the page: which name to keep when two accounts merge, and which settings win. */
+.acct-host { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.acct-why { margin: 0; color: var(--txt2); line-height: 1.5; }
+.acct-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.acct-btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border: 1px solid rgba(var(--glow), 0.5); border-radius: 6px; background: rgba(var(--glow), 0.08); color: var(--hi); font: inherit; font-weight: 700; cursor: pointer; }
+.acct-btn:hover { border-color: var(--accent); background: rgba(var(--glow), 0.16); box-shadow: 0 0 12px rgba(var(--glow), 0.3); }
+.acct-btn svg, .acct-who svg { width: 15px; height: 15px; fill: currentColor; }
+.acct-form { display: flex; align-items: center; gap: 8px; }
+.acct-form .hk-field { flex: 1; margin: 0; }
+.acct-status { margin: 0; }
+.acct-who { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--txt); }
+.acct-who b { color: var(--hi); }
+.acct-who i { color: var(--dim); font-style: normal; }
+.acct-ok { padding: 1px 8px; border-radius: 9px; background: rgba(var(--green-rgb), 0.14); color: var(--green); font-weight: 700; }
+.acct-devs { display: flex; flex-direction: column; gap: 4px; }
+.acct-dev { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid rgba(var(--glow), 0.14); border-radius: 6px; }
+.acct-dev.me { border-color: rgba(var(--glow), 0.4); }
+.acct-os { width: 14px; color: var(--accent-soft); text-align: center; }
+.acct-dev-main { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.acct-dev-main b { color: var(--hi); }
+.acct-dev-main small, .acct-seen { color: var(--dim); }
+.acct-ask { width: 480px; border-color: rgba(var(--glow), 0.55); }
+.acct-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 10px; }
+.acct-side { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 12px 14px; border: 1px solid rgba(var(--glow), 0.25); border-radius: 8px; background: rgba(0, 0, 0, 0.25); color: var(--txt); font: inherit; text-align: left; cursor: pointer; }
+.acct-side:hover { border-color: rgba(var(--glow), 0.6); }
+.acct-side.on { border-color: var(--accent); background: rgba(var(--glow), 0.14); box-shadow: inset 0 0 0 1px var(--accent); }
+.acct-side small { color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8em; }
+.acct-side b { color: var(--hi); font-size: 1.15em; }
+.acct-side b i { color: var(--accent-soft); font-style: normal; font-weight: 400; }
+.acct-side span { color: var(--accent-soft); }
+.acct-side em { color: var(--dim); font-style: normal; }
+.acct-fine { margin: 0 0 14px; padding-left: 18px; color: var(--txt2); line-height: 1.6; }
+.acct-diff { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px 14px; margin: 12px 0 16px; align-items: baseline; }
+.acct-diff small { color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8em; }
+.acct-diff span { color: var(--txt2); }
+.acct-diff b { color: var(--hi); font-size: 1em; }
+/* over the main menu (#cloudui, 2700), as the archive is */
+.acct-merge, .acct-conflict { --glow: var(--accent-rgb); position: fixed; z-index: 2800; border-radius: 0; background: rgba(0, 0, 0, 0.62); }
+
+/* the account's icon on the activity bar, above feedback; a green dot while signed in */
+#activity .vs-ab.vs-ab-acct { margin-top: auto; }
+#activity .vs-ab.vs-ab-acct + .vs-ab-foot { margin-top: 12px; }
+#activity .acct-dot { position: absolute; right: 4px; bottom: 4px; z-index: 1; width: 6px; height: 6px; border: 1.5px solid var(--side); border-radius: 50%; background: var(--green); box-shadow: 0 0 4px rgba(var(--green-rgb), 0.7); }
+#activity .acct-dot[hidden] { display: none; }
+/* its menu, beside the icon (account.js menu) */
+.acct-menu { --glow: var(--accent-rgb); position: fixed; z-index: 2600; width: 280px; padding: 6px; border: 1px solid rgba(var(--accent-rgb), 0.55); border-radius: 8px; background: rgba(var(--surface-rgb), 0.96); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(var(--accent-rgb), 0.18); font-size: 1.05em; }
+.acct-menu-who { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 10px; border-bottom: 1px solid rgba(var(--accent-rgb), 0.2); margin-bottom: 4px; }
+.acct-menu-who b { color: var(--hi); }
+.acct-menu-who b i { color: var(--accent-soft); font-style: normal; font-weight: 400; }
+.acct-menu-who small { color: var(--dim); }
+.acct-menu-who .acct-ok { align-self: flex-start; margin-bottom: 3px; }
+.acct-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 5px; background: none; color: var(--txt); font: inherit; text-align: left; cursor: pointer; }
+.acct-menu button:hover { background: rgba(var(--accent-rgb), 0.14); color: var(--hi); }
+.acct-menu button .vs-ci, .acct-menu button svg { width: 16px; font-size: 16px; color: var(--accent-soft); text-align: center; }
+.acct-menu button svg { height: 16px; fill: currentColor; }
+.acct-menu button em { margin-left: auto; color: var(--dim); font-style: normal; }
+.acct-menu hr { margin: 4px 2px; border: 0; border-top: 1px solid rgba(var(--accent-rgb), 0.2); }
+.acct-menu button.danger, .acct-menu button.danger .vs-ci { color: var(--red); }
+.acct-menu button.danger:hover { background: rgba(var(--red-rgb), 0.14); }
+/* the account section's last row: sign out, delete */
+.acct-end { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.acct-del { color: var(--red); border-color: rgba(var(--red-rgb), 0.5); }
+.acct-ask .acct-warn { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid rgba(var(--red-rgb), 0.45); border-radius: 6px; background: rgba(var(--red-rgb), 0.08); color: var(--txt); line-height: 1.55; }
+.acct-ask.danger { border-color: rgba(var(--red-rgb), 0.6); }
+.acct-menu .vs-ci { display: inline-block; font: normal normal normal 16px/1 codicon; }
+.acct-ask.danger .mn-btn[data-ans=yes] { border-color: rgba(var(--red-rgb), 0.65); color: var(--red); }
+.acct-ask.danger .mn-btn[data-ans=yes]:hover { background: rgba(var(--red-rgb), 0.16); box-shadow: 0 0 12px rgba(var(--red-rgb), 0.35); }
+
+/* nicknames (cloud.js nickBox): the list shows yours for them, their card both */
+.mn-main b.mn-nick { color: var(--hi); }
+.pf-card .pf-rank > b.pf-nick { color: var(--hi); font-size: 1.25em; }
+.pf-card .pf-rank > em.pf-real { color: var(--dim); font-style: normal; font-size: 0.92em; }
+.pf-card .pf-rank > em.pf-real b { color: var(--txt2); font-size: 1em; font-weight: 600; }
+.nick-ask { width: 380px; border-color: rgba(var(--accent-rgb), 0.55); }
+.nick-ask .hk-field { margin: 4px 0 14px; }
+/* the GitHub picture in place of the account icon */
+#activity .vs-ab-acct img.acct-avatar { width: 28px; height: 28px; border: 1px solid rgba(var(--accent-rgb), 0.55); border-radius: 50%; object-fit: cover; }
+.acct-menu-who { position: relative; }
+.acct-menu-who img.acct-avatar { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border: 1px solid rgba(var(--accent-rgb), 0.6); border-radius: 50%; }
+#activity .vs-ci[hidden] { display: none; }
+.mn-main .mn-name i.mn-real { margin-left: 6px; color: var(--dim); font-style: normal; font-size: 0.88em; }
+.nick-ask { width: 420px; }

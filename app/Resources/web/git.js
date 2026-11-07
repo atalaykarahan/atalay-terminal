@@ -35,7 +35,7 @@ window.GitView = (() => {
     tag: 0xea66, 'source-control': 0xea68, files: 0xeaf0, 'git-fetch': 0xecb2, 'collapse-all': 0xeac5, target: 0xebf8,
     bell: 0xeaa2, error: 0xea87, warning: 0xea6c, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, 'git-commit': 0xeafc,
     whitespace: 0xeb7d, map: 0xec05, remote: 0xeb3a, 'split-horizontal': 0xeb56, 'diff-single': 0xec22,
-    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e, 'circle-filled': 0xea71,
+    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, account: 0xeb99, 'sign-out': 0xea6e, trash: 0xea81, github: 0xea84, organization: 0xea7e, 'circle-filled': 0xea71,
     'open-preview': 0xeb28, edit: 0xea73, 'folder-opened': 0xeaf7, save: 0xeb4b, rocket: 0xeb44,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
@@ -106,6 +106,8 @@ window.GitView = (() => {
     `<a class="vs-ab" data-view="board" title="Leaderboard">${ci('trophy')}</a>` +
     `<a class="vs-ab" data-view="themes" title="Themes">${ci('symbol-color')}</a>` +
     `<a class="vs-ab" data-view="notifications" title="Notifications">${ci('bell')}<b class="vs-badge" hidden></b></a>` +
+    // The account (account.js), as in VS Code above its gear: sign in or out, and delete your data.
+    (window.Account ? `<a class="vs-ab vs-ab-acct" data-view="account" title="Account">${ci('account')}<i class="acct-dot" hidden></i></a>` : '') +
     `<a class="vs-ab vs-ab-foot" data-view="feedback" title="Send feedback to the developer">${ci('feedback')}</a>`;
   app.appendChild(bar);
   const view = document.createElement('section');
@@ -1267,6 +1269,7 @@ window.GitView = (() => {
   // in cloud.js.
   function switchTo(v) {
     if (v === 'feedback') return window.Cloud?.openFeedback();
+    if (v === 'account') return window.Account?.menu();
     // Source Control's icon while it shows: its side bar goes (the editor takes the whole width) or comes back, as in
     // VS Code; opened from elsewhere, it comes with its side bar.
     if (v === 'git' && open) {

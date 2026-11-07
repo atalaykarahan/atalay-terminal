@@ -124,6 +124,12 @@ window.Social = (() => {
         }
         break;
       // A friend's new level, sent quietly (no notice): whatever shows them updates.
+      // A nickname set or taken off (here or on another of your computers).
+      case 'nickname': {
+        const f = friend(ev.id);
+        if (f) f.nick = ev.nick || null;
+        break;
+      }
       case 'friend_xp': {
         const f = friend(ev.id);
         if (f) f.xp = { ...(f.xp || {}), level: ev.level, rank: ev.rank };
@@ -155,6 +161,14 @@ window.Social = (() => {
         return r;
       }),
     friend,
+    // What you call a friend: the nickname you gave them (as on Steam), else their name#tag.
+    label: (p) => (p && friend(p.id)?.nick) || handle(p),
+    nick: (id) => friend(id)?.nick || null,
+    setNick: (id, nick) =>
+      api('PUT', `v1/friends/${id}/nickname`, { nick }).then((r) => {
+        if (!r.error) event({ type: 'nickname', id, nick: r.nick });
+        return r;
+      }),
     unread: () => (S ? S.friends.reduce((n, f) => n + (f.unread || 0), 0) : 0),
     requests: () => (S ? S.incoming.length : 0),
     dnd: () => !!(S && S.me.status === 'dnd'),

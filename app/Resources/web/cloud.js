@@ -318,6 +318,7 @@ window.Cloud = (() => {
         <div class="mn-body">
           <section class="mn-page mn-profile" data-page="profile"></section>
           <section class="mn-page mn-settings" data-page="settings">
+            ${window.Account ? '<div class="hk-h">ACCOUNT</div><div class="acct-host"></div>' : ''}
             <div class="hk-h">HACKER NAME</div>
             <label class="hk-field"><span class="hk-prompt">$</span><input class="hk-input fit" maxlength="${MAX}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="hacker name"><span class="hk-tag" title="Your tag: names can repeat, name + tag can't">${tagText(S.tag)}</span><span class="hk-count"></span></label>
             <p class="hk-status"></p>
@@ -368,6 +369,7 @@ window.Cloud = (() => {
 
     q('.hk-sw.act').onclick = toggleActivity;
     q('.hk-sw.brd').onclick = toggleBoard;
+    window.Account?.mount(q('.acct-host'));
     const pwr = q('.hk-sw.pwr-auto');
     if (pwr) pwr.onclick = () => window.webkit.messageHandlers.radar.postMessage({ type: 'powerSaveAuto', on: !window.__powerSave?.auto });
     q('.mn-copy').onclick = () => copyHandle();
@@ -748,8 +750,12 @@ window.Cloud = (() => {
               const today = last24 ? `<span class="mn-today" title="Active in the last 24 hours">24h ${Xp.dur(last24)}</span>` : '';
               // The flames, though, are a daily stat as in games: five hours of work in their today, from their own midnight.
               const fire = (f.xp && f.xp.today) >= 5 * 3600;
+              // A nickname you gave them comes first, their own name#tag beside it, quieter (Steam's "append nicknames
+              // to friends' names", the other way round).
+              const name = f.nick ? `<b class="mn-nick">${esc(f.nick)}</b><i class="mn-real">${esc(f.name)}#${String(f.tag).padStart(4, '0')}</i>` : tagged(f);
+              const hover = f.nick ? `${f.name}#${String(f.tag).padStart(4, '0')} · ` : '';
               return `<div class="mn-row${fire ? ' fire' : ''}${f.id === pickedFriend ? ' sel' : ''}" data-id="${esc(f.id)}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
-                `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" title="Click for their card · double-click to message"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
+                `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" title="${esc(hover)}Click for their card · double-click to message"><span class="mn-name">${name}${lv}</span><small>${line}</small></div>` +
                 `${today}${f.unread ? `<i class="cnt hot">${f.unread}</i>` : ''}<button class="mn-btn" type="button" data-act="profile" title="Profile: level and hours">◎</button>` +
                 '<button class="mn-btn" type="button" data-act="chat" title="Message (right-click for more)">✉</button></div>';
             })
@@ -819,6 +825,8 @@ window.Cloud = (() => {
     menu.className = 'mn-ctx';
     menu.innerHTML =
       '<button type="button" data-ctx="chat">✉ message</button><button type="button" data-ctx="profile">◎ view profile</button>' +
+      `<button type="button" data-ctx="nick">✎ ${f.nick ? 'change nickname' : 'add nickname'}</button>` +
+      (f.nick ? '<button type="button" data-ctx="unnick">⌫ remove nickname</button>' : '') +
       '<button type="button" data-ctx="copy">⧉ copy name#tag</button><hr><button type="button" class="danger" data-ctx="remove">✕ remove friend</button>';
     menu.style.left = `${Math.min(e.clientX - box.left, box.width - 190)}px`;
     menu.style.top = `${Math.min(e.clientY - box.top, box.height - 150)}px`;
@@ -828,6 +836,11 @@ window.Cloud = (() => {
       menu.remove();
       if (b.dataset.ctx === 'chat') return Social.openChat(f.id);
       if (b.dataset.ctx === 'profile') return pickFriend(f.id);
+      if (b.dataset.ctx === 'nick') return nickBox(f);
+      if (b.dataset.ctx === 'unnick') {
+        const r = await Social.setNick(f.id, '');
+        return r.error ? toast(errorText(r.error)) : toast(`nickname removed · ${Social.handle(f)} again`);
+      }
       if (b.dataset.ctx === 'copy') {
         try {
           await navigator.clipboard.writeText(Social.handle(f));
@@ -903,6 +916,45 @@ window.Cloud = (() => {
     );
   }
 
+  // A nickname for a friend, as on Steam: what you call them on your screens only (the friends list, the chat window),
+  // on all your computers. Their own name#tag stays on their card and on hover.
+  function nickBox(f) {
+    fq('.mn-confirm')?.remove();
+    const box = document.createElement('div');
+    box.className = 'mn-confirm';
+    box.innerHTML =
+      `<div class="mn-ask nick-ask"><b>${f.nick ? 'Change the nickname' : 'Add a nickname'} for ${tagged(f)}</b>` +
+      '<p>What you call them on your screens. Only you see it, on all your computers; their own name stays beside it.</p>' +
+      `<label class="hk-field"><span class="hk-prompt">✎</span><input class="hk-input nick-in" maxlength="32" spellcheck="false" autocomplete="off" placeholder="yunus emre öztürk"><span class="hk-count nick-count"></span></label>` +
+      '<div class="mn-ask-btns"><button type="button" class="mn-btn" data-ans="close">cancel</button><button type="button" class="mn-btn go" data-ans="save">save</button></div></div>';
+    const input = box.querySelector('.nick-in');
+    input.value = f.nick || '';
+    // As many as 32 characters: a full name fits ("Yunus Emre Öztürk" is 17), the list still does.
+    const count = () => (box.querySelector('.nick-count').textContent = `${input.value.length}/32`);
+    input.addEventListener('input', count);
+    count();
+    const save = async () => {
+      const nick = input.value.trim();
+      box.remove();
+      if (nick === (f.nick || '')) return;
+      const r = await Social.setNick(f.id, nick);
+      if (r.error) return toast(errorText(r.error));
+      toast(nick ? `${Social.handle(f)} is ${nick} to you now` : `nickname removed · ${Social.handle(f)} again`);
+    };
+    box.onclick = (e) => {
+      const b = e.target.closest('[data-ans]');
+      if (e.target === box || (b && b.dataset.ans === 'close')) return box.remove();
+      if (b && b.dataset.ans === 'save') save();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') save();
+      if (e.key === 'Escape') box.remove();
+    });
+    views.friends.appendChild(box);
+    input.focus();
+    input.select();
+  }
+
   // The friend picked in the list (a click; the first one until then), their card on the right as the leaderboard's:
   // their rank and level, and their active time unless they keep it to themselves.
   let pickedFriend = null;
@@ -921,7 +973,8 @@ window.Cloud = (() => {
     setHTML(
       fq('.fr-host'),
       `<div class="pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(x.level, 'pf-band')}` +
-        `<div class="pf-rank"><small>${Social.dot(f.presence)} ${esc(Social.PRESENCE[f.presence || 'offline'].label)}</small>${tagged(f)}` +
+        `<div class="pf-rank"><small>${Social.dot(f.presence)} ${esc(Social.PRESENCE[f.presence || 'offline'].label)}</small>` +
+        (f.nick ? `<b class="pf-nick">${esc(f.nick)}</b><em class="pf-real">${tagged(f)}</em>` : tagged(f)) +
         `<span>Level ${x.level} · ${esc(r.name)}</span></div></div>` +
         (x.total === null
           ? '<p class="pf-note">keeps their active time to themselves</p>'
@@ -1434,5 +1487,5 @@ window.Cloud = (() => {
   refresh();
   Social.loadNotes();
 
-  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView, renderPower };
+  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView, renderPower, close };
 })();

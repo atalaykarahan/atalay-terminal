@@ -268,6 +268,17 @@ $('sound').addEventListener('click', () => {
   if (soundOn) ping('idle');
 });
 paintSound();
+// Settings sync (sync.js): the sound as set here, or as another of the user's computers set it.
+window.__sound = {
+  on: () => soundOn,
+  set(on) {
+    soundOn = !!on;
+    try {
+      localStorage.setItem('radar.sound', soundOn ? '1' : '0');
+    } catch {}
+    paintSound();
+  },
+};
 
 // ---------- small UI bits ----------
 function flashEdge() {
