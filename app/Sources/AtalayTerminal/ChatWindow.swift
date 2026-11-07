@@ -231,7 +231,7 @@ private struct HUDRow: View {
                       hex: hex, action: onTogglePin)
             HUDButton(symbol: "square.grid.2x2", active: false, help: "Back to the dashboard (this chat keeps running)", hex: hex, action: onDashboard)
             HUDButton(symbol: "power", active: false,
-                      help: hud.mirror ? "Close this mirror (the chat keeps running in the other app)" : hud.status == "terminal" ? "Close this terminal" : "End this chat",
+                      help: hud.mirror ? "End this chat (it runs in the other app, and ends there too)" : hud.status == "terminal" ? "Close this terminal" : "End this chat",
                       hex: ThemeStore.shared.hex("--red"), action: onEnd)
         }
         .font(.mono(10.5))
@@ -1668,10 +1668,18 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             if !terminals(in: activeTab).contains(where: { $0 === terminal }) { return endTab(activeTab, confirm: confirm) }
             return endOwnTab(confirm: confirm && !hud.exited)
         }
-        // A mirror only closes: the chat runs on in the app that owns it.
+        // A mirror (the chat runs in the other build of the app): End Session ends it there too, as its own window's
+        // would; closing the mirror's window only closes it (closeMirror). It used to only close here as well, and the
+        // chat, still running, kept coming back.
         if hud.mirror {
+            let owner = detached.map { Detached.owner($0.name) } ?? "the other app"
+            if confirm, !hud.exited, !ask("End this chat?", "It runs in \(owner): Claude stops there too. The conversation stays saved and you can resume it later.", "End Chat") { return }
+            manager?.dismiss(sessionId: sessionId, pid: hud.brief?.live == true ? hud.brief?.pid : nil)
             let finish = { [weak self] in
                 guard let self else { return }
+                if let detached = self.detached { Detached.quit(detached.name) }
+                // Its own tabs (⌘T in a mirror) end with it.
+                self.endPanes()
                 self.terminal.terminate()
                 self.manager?.removeChat(self.id)
             }
@@ -1802,7 +1810,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
                 terminal.feed(text: history.joined(separator: "\r\n") + String(repeating: "\r\n", count: max(termRows, 60) + 1))
             }
         }
-        // A mirror shows the chat at the size its own app gave it, and never resizes it under that app's window.
+        // A mirror attaches at the size its own app gave the chat; fitSession then fits it to the mirror, the window in use.
         TerminalFactory.attach(terminal, screenName: detached.name, cwd: cwd, fit: isShown && !hud.mirror)
         fitSession()
     }
@@ -1815,14 +1823,36 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     }
 
     private var fitWork: DispatchWorkItem?
-    /// Fits the session to this window once its size has settled, so Claude draws at the window's size.
+    /// Fits the session to this window once its size has settled, so Claude draws at the window's size: a mirror's too.
+    /// Also when the window comes to the front: with a mirror open, the window in use sets the size, and the other one
+    /// takes it back the same way. While two windows show the session, `-X fit` fits it to the one that attached last,
+    /// whichever window asks, so the window types the command into its own display instead (screen's command key,
+    /// Ctrl-^, then :fit; straight to the session, not as typing). That can show ":fit" on the bottom row for a moment,
+    /// so only then.
     func fitSession() {
-        guard let detached, attached, isShown, !hud.mirror else { return }
+        guard let detached, attached, isShown else { return }
         fitWork?.cancel()
         let name = detached.name
-        let work = DispatchWorkItem { Detached.fit(name) }
+        let work = DispatchWorkItem { [weak self] in
+            if Detached.displays(name) > 1 {
+                self?.terminal.process.send(data: ArraySlice("\u{1e}:fit\r".utf8))
+            } else {
+                Detached.fit(name)
+            }
+        }
         fitWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+
+    /// A mirror's window closes; the chat runs on in the app that owns it, and the window's own tabs as cars.
+    private func closeMirror() {
+        parkPanes()
+        let finish = { [weak self] in
+            guard let self else { return }
+            self.terminal.terminate()
+            self.manager?.removeChat(self.id)
+        }
+        if !hide(then: finish) { finish() }
     }
 
     func apply(_ brief: SessionBrief?) {
@@ -1858,6 +1888,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     func windowDidBecomeKey(_ notification: Notification) {
         focusChanged()
         manager?.terminalFocused(window: id)
+        fitSession()
         guard let w = window, let parent = w.parent, parent.childWindows?.last != w else { return }
         parent.removeChildWindow(w)
         parent.addChildWindow(w, ordered: .above)
@@ -1870,7 +1901,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if hud.mirror {
-            endChat()
+            closeMirror()
         } else if hud.exited {
             // Its other tabs, still running, become cars instead of ending with it.
             parkPanes()

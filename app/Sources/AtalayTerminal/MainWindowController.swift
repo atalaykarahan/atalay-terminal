@@ -668,7 +668,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         // Running in another Atalay's Terminal (the installed app and the staging build side by side): a mirror here,
         // a second screen on the same chat. Both windows show it live and type into the one Claude; closing the mirror
-        // leaves the chat running there.
+        // leaves the chat running there, End Session ends it there too.
         if let name = Detached.sessionName(hosting: pid, anyBuild: true) {
             if let c = chats.values.first(where: { $0.detached?.name == name }) { return c.show() }
             openWindow(cwd: cwd, claudeArgs: [], sessionId: sid, title: "⧉ " + title, detached: DetachedLink(name: name), mirror: true)
