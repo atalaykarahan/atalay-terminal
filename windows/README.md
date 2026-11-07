@@ -64,6 +64,7 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/main.js` | windows, IPC between pages and the parts below, keys | MainWindowController, AppDelegate |
 | `src/preload.js` | `window.webkit.messageHandlers` over IPC, the values the Mac injects into pages | RadarView, Messages, Overlay |
 | `src/engine.js` | Claude Code's sessions and transcripts (`%USERPROFILE%\.claude`) into the dashboard's state, and what the other AI tools do from their own records (Codex's logs, Antigravity's databases through `node:sqlite`), counted with Claude's; while a Codex runs, its account limits from `codex app-server` | Engine/*.swift |
+| `src/ledger.js` | spend.ledger's history: each past day's spend by project and model, read once from the transcripts and kept in `%LOCALAPPDATA%\atalay-terminal\ledger.json` (Claude Code deletes transcripts after 30 days) | Ledger.swift |
 | `src/terminals.js` | shells and Claude in ConPTY, one per chat or terminal window, in the session host | ChatTerminal, Detached |
 | `src/host.cs`, `src/sessionhost.js` | the session host, which keeps them running without the app, and the app's line to it | Detached (screen) |
 | `src/git.js` | Source Control's requests: the repos, diffs, history, commit, push | Git.swift |

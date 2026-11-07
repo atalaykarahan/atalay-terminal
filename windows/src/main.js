@@ -1594,6 +1594,10 @@ ipcMain.handle('atl:post', async (e, name, body) => {
     switch (name) {
       case 'radar':
         return handleRadar(body);
+      // The spend panel's history tabs (web/app.js), from the engine's ledger (ledger.js).
+      case 'spend':
+        if (body.type !== 'history') throw new Error('unknown request');
+        return engine.spendHistory(body.range);
       case 'git':
         return await git.handle(body);
       case 'theme':

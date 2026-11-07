@@ -16,6 +16,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const { createLedger, agg: ledgerAgg, addCall: ledgerAdd } = require('./ledger');
 
 const HOME = os.homedir();
 const WIN = process.platform === 'win32';
@@ -1202,6 +1203,7 @@ function freshGlobals() {
     files: new Map(),
     minutes: new Map(), // minute -> { tools, tok, cost, cats }
     byModel: new Map(), // short model -> { model, priced, tokIn, tokOut, tokCr, tokCw, cost, calls }
+    byProject: {}, // today's spend by project folder and model, for the spend ledger (ledger.js): cwd -> model -> totals
   };
 }
 
@@ -1222,6 +1224,11 @@ class RadarEngine {
     this.registry = path.join(this.claudeDir, 'sessions');
     this.userSettings = path.join(this.claudeDir, 'settings.json');
     this.limitsFile = opts.limitsFile || null;
+    // Spend by day and project past today (the spend panel's history), kept by the app (ledger.js).
+    this.ledger = createLedger({
+      file: opts.ledgerFile || path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'atalay-terminal', 'ledger.json'),
+      costOf, shortModel, parseISO, withoutImages, seekTime,
+    });
     this.isAppPid = typeof opts.isAppPid === 'function' ? opts.isAppPid : null;
     this.handlers = { onInit: opts.onInit, onState: opts.onState, onEvents: opts.onEvents, onHistory: opts.onHistory };
 
@@ -1300,6 +1307,7 @@ class RadarEngine {
     clearTimeout(this.regTimer);
     clearTimeout(this.flushTimer);
     clearTimeout(this.historyTimer);
+    clearTimeout(this.ledgerTimer);
     for (const k of Object.keys(this.watchers)) {
       try {
         this.watchers[k]?.close();
@@ -1452,6 +1460,41 @@ class RadarEngine {
     });
     this.every(120, () => this.scanHistory(false));
     this.every(60, () => this.refreshCodexUsage());
+    this.scheduleLedger();
+    this.every(3600, () => this.readLedger());
+  }
+
+  // ----- the spend ledger -----
+
+  // Reads the ledger's days soon: ten minutes into the day, so the last replies of the day before are on disk.
+  scheduleLedger() {
+    clearTimeout(this.ledgerTimer);
+    const wait = Math.max(0, this.day0 + 10 * MIN - Date.now()) + 1000;
+    this.ledgerTimer = setTimeout(() => this.readLedger(), wait);
+  }
+
+  // The days before today the ledger doesn't have yet, read from the transcripts a piece at a time (the first time all
+  // of them, a few seconds' work), then frozen.
+  readLedger() {
+    if (this.stopped || Date.now() - this.day0 < 10 * MIN) return;
+    const span = this.ledger.beginReading(this.day0);
+    if (!span) return;
+    const t0 = Date.now();
+    this.ledger
+      .scan(this.projects, span.from, span.to)
+      .catch((e) => {
+        report(e);
+        return {};
+      })
+      .then((days) => {
+        this.ledger.freeze(days, span.to);
+        console.log(`engine: spend ledger read ${Object.keys(days).length} days in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+      });
+  }
+
+  /** For the dashboard's spend panel: the last 7 or 30 days, 12 weeks or 12 months by project, today live. */
+  spendHistory(range) {
+    return this.ledger.summary(typeof range === 'string' ? range : '30d', this.day0, this.G.byProject);
   }
 
   // Read Codex's current account snapshot through the same local app-server protocol used by its own clients.
@@ -1687,8 +1730,11 @@ class RadarEngine {
   maybeNewDay() {
     const d = dayStart();
     if (d === this.day0) return;
+    // The day that ended stays in the spend panel's history as counted, until its transcripts are read.
+    this.ledger.holdProvisional(this.G.byProject, this.day0);
     this.day0 = d;
     this.G = freshGlobals();
+    this.scheduleLedger();
     this.seenMsg.clear();
     this.recOwner.clear();
     for (const S of this.sessions.values()) S.resetCounters();
@@ -1883,6 +1929,9 @@ class RadarEngine {
         bm.tokIn += i; bm.tokOut += o; bm.tokCr += r; bm.tokCw += w;
         bm.cost += c;
         bm.calls += 1;
+        // A subagent's spend is its chat's project's.
+        const project = (G.byProject[S.cwd || ''] ||= {});
+        ledgerAdd((project[mk] ||= ledgerAgg()), c, i, o, r, w);
         const mb = this.minute(ts);
         mb.tok += i + o + r + w;
         mb.cost += c;
@@ -3259,6 +3308,7 @@ function createEngine(opts = {}) {
     sessionCwd: (sessionId) => e.sessionCwd(sessionId),
     dismiss: (sessionId, pid) => e.dismiss(sessionId, pid),
     transcriptItems: (sessionId, limit) => e.transcriptItems(sessionId, limit),
+    spendHistory: (range) => e.spendHistory(range),
   };
 }
 
