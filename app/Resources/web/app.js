@@ -141,7 +141,7 @@ function setActiveSession(sid) {
   if (STATE) renderTop();
 }
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open(), timeline: tmOpen };
   native({ type: 'ready' });
 }
 
@@ -428,7 +428,8 @@ function renderAll() {
   if (shown('p-spend')) renderSpend();
   renderCall();
   renderTicker();
-  map('state', STATE);
+  // The time machine holds the map at its moment; the live state comes back with "live".
+  if (!TM) map('state', STATE);
   const T = STATE.totals;
   const lc = clearedOf('p-log');
   setText($('m-log'), lc ? `live tool stream · ${since(lc)}` : 'live tool stream');
@@ -1069,6 +1070,65 @@ $('log').addEventListener('click', (e) => {
   if (ln && ln.dataset.sid) focusSession(ln.dataset.sid);
 });
 $('newchat').addEventListener('click', () => native({ type: 'newTerminal' }));
+
+// ---------- time machine ----------
+// The map as it was at a moment of the last 24 hours, from the status changes the app records (Timeline.swift,
+// timeline.js): the map's ⟲ button asks for them and opens the panel, "live" closes it. Only the map and the panel
+// replay; the map takes the moment as it takes the live state.
+const TM_DAY = 24 * 3600_000;
+// What the map and its tooltips read of a session, for one that isn't in today's state any more.
+const TM_BLANK = { title: '', lastPrompt: '', cwd: '', branch: '', model: '', effort: '', ctx: 0, ctxMax: 0, cost: 0, cpu: 0, mem: 0, tools: 0, errors: 0, web: 0, prompts: 0, spark: [], tty: null };
+let TM = null; // { recs, now } while the panel is open; the slider counts minutes before `now`
+$('tm-open').addEventListener('click', () => (TM ? tmClose() : native({ type: 'timeline' })));
+$('tm-live').addEventListener('click', () => tmClose());
+$('tm-range').addEventListener('input', () => tmShow(TM.now + +$('tm-range').value * 60_000));
+$('tm-list').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (b) focusSession(b.dataset.sid);
+});
+function tmOpen(recs) {
+  const now = Date.now();
+  TM = { recs: recs.filter((r) => r.t >= now - TM_DAY).sort((a, b) => a.t - b.t), now };
+  const r = $('tm-range');
+  r.min = String(-Math.ceil((now - (TM.recs.length ? TM.recs[0].t : now - TM_DAY)) / 60_000));
+  r.max = '0';
+  r.value = '0';
+  $('tm').hidden = false;
+  $('tm-open').classList.add('on');
+  tmShow(now);
+}
+function tmClose() {
+  TM = null;
+  $('tm').hidden = true;
+  $('tm-open').classList.remove('on');
+  if (STATE) map('state', STATE);
+}
+// Each session's last record at `t`: those a later launch didn't list again had ended by then, and an ended one stays
+// on the map half an hour, as in the live state.
+function tmAt(t) {
+  let boot = 0;
+  const last = new Map();
+  for (const r of TM.recs) {
+    if (r.t > t) break;
+    if (r.k === 'boot') boot = r.t;
+    else last.set(r.s, r);
+  }
+  return [...last.values()].filter((r) => r.t >= boot && (r.st !== 'ended' || t - r.t < 30 * 60_000));
+}
+function tmShow(t) {
+  const cur = new Map((STATE?.sessions || []).map((s) => [s.id, s]));
+  const sessions = tmAt(t).map((r) => ({
+    ...TM_BLANK, ...(cur.get(r.s) || { name: r.n || '', title: r.n || '', cwd: r.c || '' }),
+    id: r.s, status: r.st, waitingFor: r.w || null, statusSince: r.t, live: r.st !== 'ended', agents: [], pending: [],
+  }));
+  if (STATE) map('state', { ...STATE, sessions });
+  setText($('tm-time'), t >= TM.now ? 'now' : `${hhmmss(t).slice(0, 5)} · ${ago(t)} ago`);
+  setHTML($('tm-list'), sessions.length ? sessions.map((s) => {
+    const st = STATUS[s.status] || { color: '#8f7a66', label: s.status };
+    const why = s.status === 'waiting' && s.waitingFor ? ` · ${esc(clipT(s.waitingFor, 40))}` : '';
+    return `<button type="button" data-sid="${esc(s.id)}"><i style="background:${st.color}"></i>${esc(s.name || sessName(s.id))} · ${esc(st.label)}${why}</button>`;
+  }).join('') : '<span>no session recorded at that time</span>');
+}
 
 // Shared with orbit.js.
 window.RADAR = { CAT, CATS, STATUS, FONT, MAPQ, sessColor, colorIndex, sessName, hexA, fmtTok, fmtUsd, fmtDur, clock, ago, clipT, esc, ctxColor, focusSession, sessionTip, agentTip, stationTip, terminalTip, openTerminal, showTip, hideTip };

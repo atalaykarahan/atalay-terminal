@@ -14,6 +14,7 @@ const { execFile } = require('child_process');
 const { fileURLToPath } = require('url');
 
 const { createEngine } = require('./engine');
+const { createTimeline } = require('./timeline');
 const { createGit } = require('./git');
 const { createCloud } = require('./cloud');
 const { createThemes } = require('./themes');
@@ -166,6 +167,9 @@ const limits = createLimits({
   claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
 });
 
+// The time machine's record of status changes, the last 24 hours, in the app's own folder (src/timeline.js).
+const timeline = createTimeline(app.getPath('userData'));
+
 const engine = createEngine({
   claudeDir: path.join(os.homedir(), '.claude'),
   limitsFile: limits.file,
@@ -178,6 +182,7 @@ const engine = createEngine({
   },
   onState(json) {
     toDash(`state(${json})`);
+    timeline.record(engine.live());
     matchChats();
     pushActiveSession();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
@@ -668,6 +673,9 @@ function handleRadar(msg) {
       return runaways.endLeft(msg.pid, msg.started);
     case 'endSession':
       return endSession(msg.sid);
+    case 'timeline':
+      timeline.read().then((list) => toDash(`timeline(${JSON.stringify(list)})`));
+      return true;
     case 'endRunaway':
       return runaways.end(msg.pid, msg.started);
     // A menu (friends, settings, an update) opened or closed on the dashboard: the windows pinned above it step out of
