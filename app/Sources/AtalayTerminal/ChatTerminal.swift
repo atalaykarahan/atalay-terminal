@@ -25,7 +25,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
 
     override func mouseDown(with event: NSEvent) {
         // ⌥ (as in iTerm2) or ⇧ (SwiftTerm's) with the drag: the terminal's own selection.
-        mouseToProgram = event.modifierFlags.intersection([.command, .option]).isEmpty && claudeInFront && (engine.map { $0.mouseMode != .off } ?? false)
+        mouseToProgram = event.modifierFlags.intersection([.command, .option]).isEmpty && aiInFront && (engine.map { $0.mouseMode != .off } ?? false)
         if mouseToProgram {
             // screen doesn't pass Claude's request for SGR reports (1006) on: without it the clicks reach Claude garbled.
             feed(text: "\u{1b}[?1006h")
@@ -56,7 +56,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
     /// ⌘↑ ⌘↓, ⌘⇞ ⌘⇟, ⌘↖ ⌘↘: through the history, as in iTerm2. Claude's full-screen view keeps its own, so there they
     /// go to Claude as its scroll keys (the wheel, Page Up/Down, Ctrl+Home/End).
     func scrollBuffer(_ step: ScrollStep) {
-        if claudeInFront, let t = engine, t.mouseMode != .off {
+        if aiInFront, let t = engine, t.mouseMode != .off {
             feed(text: "\u{1b}[?1006h")
             let mid = "\(max(1, t.cols / 2));\(max(1, t.rows / 2))"
             switch step {
@@ -282,13 +282,20 @@ final class ChatTerminalView: LocalProcessTerminalView {
         return Proc.foregroundGroup(shell)
     }
 
+    private static func isInteractiveAI(_ pid: Int32) -> Bool {
+        Proc.isClaude(pid) || Proc.otherAI(pid) != nil
+    }
+
+    /// Claude only: its own keys (⌘C asking it to copy its selection, Ctrl-V for a copied picture).
     private var claudeInFront: Bool { foregroundGroup().map(Proc.isClaude) ?? false }
+    /// Claude or another AI tool (Codex, Gemini…): they take bracketed paste, and the mouse once they ask for it.
+    private var aiInFront: Bool { foregroundGroup().map(Self.isInteractiveAI) ?? false }
 
     /// Sets the emulator's bracketed-paste mode to what the program in front takes (only for detached sessions; a
     /// direct shell sends its own mode 2004).
     private func matchPasteMode() {
         guard let group = foregroundGroup(), let program = Proc.name(group) else { return }
-        feed(text: Self.bracketing.contains(program) || Proc.isClaude(group) ? "\u{1b}[?2004h" : "\u{1b}[?2004l")
+        feed(text: Self.bracketing.contains(program) || Self.isInteractiveAI(group) ? "\u{1b}[?2004h" : "\u{1b}[?2004l")
     }
 
     override func paste(_ sender: Any) {
@@ -313,7 +320,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
     /// pass on, so the reports went in an encoding it doesn't read; the emulator is switched to SGR first. If Claude
     /// isn't following the mouse, the wheel scrolls the scrollback as usual.
     func wheelGoesToProgram() -> Bool {
-        guard claudeInFront else { return false }
+        guard aiInFront else { return false }
         feed(text: "\u{1b}[?1006h")
         return true
     }
