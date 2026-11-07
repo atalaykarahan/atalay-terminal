@@ -278,6 +278,7 @@ const runaways = createRunaways({
     toDash(`runaways(${json})`);
     // The alarm, in the middle of the screen (the notices panel can play its sound).
     toNotices(`runaways && __messages.runaways(${json})`);
+    pushTerminals();
   },
 });
 
@@ -979,7 +980,7 @@ function pushTerminals(force) {
       cpu: Math.round(runaways.busy(kids.map((k) => k.pid))),
     });
   }
-  for (const l of runaways.left()) {
+  for (const l of runaways.left(live)) {
     if (ending.has(l.pid)) continue;
     list.push({
       id: `left:${l.pid}:${l.started}`, cwd: tildify(l.cwd), dir: l.cwd ? path.basename(l.cwd) || l.cwd : l.name, cmd: commandLabel(l.cmd),
