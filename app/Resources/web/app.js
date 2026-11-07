@@ -132,6 +132,8 @@ function handleState(next) {
 // What the user can see decides the work: the app reports whether the dashboard is visible and in front;
 // a hidden page pauses CSS animations and the 3D view.
 function setVisibility(visible, focused) {
+  if (focused) awayEnd();
+  else awayStart();
   document.documentElement.classList.toggle('paused', !visible);
   document.documentElement.classList.toggle('behind', visible && !focused);
   map('activity', visible, focused);
@@ -147,6 +149,7 @@ function connect() {
 
 function onEvent(ev) {
   map('event', ev);
+  awayEdit(ev);
   switch (ev.k) {
     case 'tool':
     case 'prompt':
@@ -170,6 +173,8 @@ function transitions(next) {
       logState(s, `● session online · ${s.cwd}`, 'state');
     } else if (prev !== s.status) {
       map('status', s.id, s.status, prev);
+      if (away && s.status === 'idle') away.done.add(s.id);
+      if (away && s.status === 'ended') away.ended.add(s.id);
       if (s.status === 'waiting') {
         flashEdge();
         ping('waiting');
@@ -186,6 +191,48 @@ function transitions(next) {
     lastStatus.set(s.id, s.status);
   }
 }
+
+// ---------- while you were away ----------
+// The dashboard out of front for a minute or more: on return, a card says which turns finished, which sessions need
+// you and which files were written meanwhile. Kept in memory only; nothing is recorded.
+const AWAY_MIN_MS = 60000;
+let away = null;
+// A file as its folder and name, whichever tool or system wrote the path.
+const awayFile = (p) => p.split(/[\\/]/).slice(-2).join('/');
+function awayStart() {
+  if (away || !STATE) return;
+  away = { t: Date.now(), done: new Set(), ended: new Set(), files: new Set(), w: new Map(STATE.files.map((f) => [f.p, f.w])) };
+}
+// Edits by their label (a path; Codex's "apply patch" names none), as files.heat lists only the day's most touched.
+function awayEdit(ev) {
+  if (away && ev.k === 'tool' && ev.c === 'edit' && /[\\/]/.test(ev.l || '')) away.files.add(awayFile(ev.l));
+}
+function awayEnd() {
+  const a = away;
+  away = null;
+  if (!a || !STATE || Date.now() - a.t < AWAY_MIN_MS) return;
+  for (const f of STATE.files) if (f.last >= a.t && f.w > (a.w.get(f.p) ?? 0)) a.files.add(awayFile(f.p));
+  const names = (ids) => [...ids].map((id) => `<button type="button" data-sid="${esc(id)}">${esc(sessName(id))}</button>`).join(' ');
+  const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
+  const waiting = STATE.sessions.filter((s) => s.status === 'waiting');
+  const done = [...a.done].filter((id) => !a.ended.has(id));
+  const files = [...a.files];
+  const rows = [];
+  if (waiting.length) rows.push(`<p class="warn">⚠ ${plural(waiting.length, 'session needs', 'sessions need')} you · ${waiting.map((s) => `${names([s.id])} <small>${esc(clipT(s.waitingFor || 'waiting', 40))}</small>`).join(' ')}</p>`);
+  if (done.length) rows.push(`<p class="cyan">◆ ${plural(done.length, 'session', 'sessions')} finished a turn · ${names(done)}</p>`);
+  if (a.ended.size) rows.push(`<p>■ ${plural(a.ended.size, 'session', 'sessions')} ended · ${names(a.ended)}</p>`);
+  if (files.length) rows.push(`<p class="amber">✎ ${plural(files.length, 'file', 'files')} edited · ${esc(files.slice(0, 5).join(', '))}${files.length > 5 ? ` +${files.length - 5}` : ''}</p>`);
+  if (!rows.length) return;
+  const box = $('away');
+  box.innerHTML = `<header>while you were away · ${fmtDur(Date.now() - a.t)}<button type="button" class="x" title="Close">×</button></header>${rows.join('')}`;
+  box.hidden = false;
+}
+$('away').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.sid) focusSession(b.dataset.sid);
+  $('away').hidden = true;
+});
 
 // ---------- sound ----------
 let soundOn = false;

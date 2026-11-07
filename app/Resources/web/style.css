@@ -416,6 +416,13 @@ body::after {
   pointer-events: none;
 }
 #toast.on { opacity: 1; }
+#away { position: fixed; left: 50%; top: 64px; z-index: 2900; transform: translateX(-50%); max-width: min(560px, 90vw); padding: 8px 12px; border: 1px solid var(--accent-soft); background: rgba(var(--surface-rgb), var(--glass-a)); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); font-size: 12px; }
+#away[hidden] { display: none; }
+#away header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; color: var(--accent-soft); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+#away p { margin: 3px 0; }
+#away small { opacity: 0.7; }
+#away button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+#away button.x { text-decoration: none; font-size: 14px; line-height: 1; }
 #boot { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--bg); color: var(--accent-soft); transition: opacity 0.7s, visibility 0.7s; }
 /* Faded out, it leaves the picture and its logo stops pulsing: under opacity 0 it went on repainting its glow every frame. */
 #boot.gone { opacity: 0; visibility: hidden; pointer-events: none; }
