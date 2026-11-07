@@ -62,8 +62,8 @@ button { display: flex; align-items: center; padding: 0; border: 0; background: 
 .row { display: flex; align-items: center; gap: 8px; margin: 1px 6px 0; padding: 4px 8px 4px 14px; border-radius: 4px; }
 .row:hover { background: rgba(var(--accent-rgb), 0.06); }
 .row.open { background: rgba(var(--accent-rgb), 0.1); }
-.row.active, .row.is-active { background: rgba(var(--accent-rgb), 0.18); box-shadow: inset 2.5px 0 0 var(--accent); }
-.row.active .t, .row.is-active .t { color: var(--hi); font-weight: 600; }
+.row.active { background: rgba(var(--accent-rgb), 0.18); box-shadow: inset 2.5px 0 0 var(--accent); }
+.row.active .t { color: var(--hi); font-weight: 600; }
 .txt { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
 .t, .m { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .t { color: var(--txt); font-size: 11px; }

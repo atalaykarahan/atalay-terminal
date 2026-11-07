@@ -53,16 +53,9 @@
   // Copy-on-select, as on the Mac: dragging or double-clicking a selection copies it to the clipboard on mouse release,
   // shows the "COPIED N CHARS" badge in the HUD, and keeps the selection highlighted.
   let mouseDown = false, pendingCopy = false, copyTimer = 0;
-  const copiedEl = document.getElementById('copied') || (() => {
-    const el = document.createElement('span');
-    el.id = 'copied';
-    el.hidden = true;
-    const hud = document.getElementById('hud');
-    if (hud) hud.insertBefore(el, document.getElementById('dash'));
-    return el;
-  })();
+  const copiedEl = document.getElementById('copied');
   const showCopied = (n) => {
-    if (!copiedEl || !(n > 0)) return;
+    if (!(n > 0)) return;
     copiedEl.textContent = `COPIED ${n} CHAR${n === 1 ? '' : 'S'}`;
     copiedEl.hidden = false;
     clearTimeout(copyTimer);
@@ -88,7 +81,6 @@
       return;
     }
     if (mouseDown) pendingCopy = true;
-    else copySelection();
   });
   addEventListener('mouseup', () => {
     if (!mouseDown) return;
@@ -107,6 +99,8 @@
     if (k === 'c' && term.hasSelection()) {
       e.preventDefault();
       copySelection();
+      // Cleared, as in Windows Terminal: the next Ctrl+C interrupts again.
+      term.clearSelection();
       return false;
     }
     // Ctrl+N (a new terminal), Ctrl+K (the shortcut wheel) and Ctrl+W (close the window: what runs in it goes on) are

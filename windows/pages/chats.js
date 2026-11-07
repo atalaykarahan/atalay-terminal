@@ -43,8 +43,7 @@
   function meta(r) {
     const bits = [relative(r.mtime)];
     if (r.size > 0) bits.push(fmtBytes(r.size));
-    const isActive = r.active || r.id === activeId;
-    if (isActive) bits.push('active window');
+    if (r.id === activeId) bits.push('active window');
     else if (r.open) bits.push('in a window');
     else if (r.status) bits.push(r.host === 'term' ? 'in another terminal' : 'live');
     if (r.status === 'waiting') bits.push('NEEDS YOU');
@@ -54,8 +53,7 @@
 
   function row(r) {
     const st = r.status || 'ended';
-    const isActive = r.active || r.id === activeId;
-    return `<div class="row${r.open ? ' open' : ''}${isActive ? ' active is-active' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
+    return `<div class="row${r.open ? ' open' : ''}${r.id === activeId ? ' active' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
       `<span class="dot s-${esc(st)}${r.status ? '' : ' hollow'}"></span>` +
       (r.id === renaming
         ? `<span class="txt"><input class="ren" value="${esc(r.title || r.lastPrompt)}" spellcheck="false" maxlength="120">`
