@@ -1094,7 +1094,9 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
 ipcMain.on('term:input', (e, data) => {
   const found = chatOf(e);
   if (found) {
-    touchTerminal(found[0]);
+    // The shell's focus reports (ESC[I, ESC[O, which xterm.js sends as the window gains or loses focus) aren't the user
+    // at it: a window losing focus, or closed, would take the chats list's "active window" back from the one in front.
+    if (data !== '\x1b[I' && data !== '\x1b[O') touchTerminal(found[0]);
     terminals.write(found[0], data);
   }
 });

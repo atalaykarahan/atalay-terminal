@@ -241,7 +241,7 @@ function createChatList({ settings }) {
         const fav = favorites.has(i.id);
         rows.push({
           id: i.id, cwd: i.cwd, key, mtime: i.mtime, size: i.size, title: titles.get(i.id) || i.title, lastPrompt: i.lastPrompt, fav,
-          status: b ? b.status : null, host: b ? b.host : null, open: open.has(i.id), active: activeId === i.id,
+          status: b ? b.status : null, host: b ? b.host : null, open: open.has(i.id),
         });
         if (!fav && !shown.has(key)) shown.set(key, i.cwd);
       }

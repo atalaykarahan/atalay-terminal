@@ -64,7 +64,7 @@
   function meta(r) {
     const bits = [relative(r.mtime)];
     if (r.size > 0) bits.push(fmtBytes(r.size));
-    const isActive = r.active || r.id === activeId;
+    const isActive = r.id === activeId;
     if (isActive) bits.push('active window');
     else if (r.open) bits.push('in a window');
     else if (r.status) bits.push(r.host === 'term' ? 'in another terminal' : 'live');
@@ -75,7 +75,7 @@
 
   function row(r) {
     const st = r.status || 'ended';
-    const isActive = r.active || r.id === activeId;
+    const isActive = r.id === activeId;
     return `<div class="row${r.open ? ' open' : ''}${isActive ? ' active is-active' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
       `<span class="dot s-${esc(st)}${r.status ? '' : ' hollow'}"></span>` +
       (r.id === renaming
