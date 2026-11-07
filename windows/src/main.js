@@ -365,7 +365,11 @@ app.on('web-contents-created', (_e, contents) => {
   contents.on('will-navigate', (e, url) => {
     if (ownPage(url)) return;
     e.preventDefault();
-    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url);
+    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url).catch(() => {});
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
   });
 });
 
@@ -1114,7 +1118,9 @@ ipcMain.on('term:copy', (e, text) => {
 ipcMain.on('term:dashboard', () => showDashboard());
 ipcMain.on('term:open', (_e, uri) => {
   if (typeof uri !== 'string') return;
-  const clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
+  let clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
+  if (/^www\./i.test(clean)) clean = 'https://' + clean;
+  else if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(clean)) clean = 'http://' + clean;
   if (/^https?:\/\//i.test(clean)) shell.openExternal(clean).catch(() => {});
 });
 

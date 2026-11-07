@@ -19,12 +19,20 @@
     fontSize: 14, lineHeight: 1.1, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
     // Text never fades into its background (Claude's diffs paint lines green and red), as the Mac app's terminals do.
     minimumContrastRatio: 4.5, theme: palette(),
+    linkHandler: {
+      activate: (_e, text) => atl.send('term:open', text),
+    },
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
-  term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => atl.send('term:open', uri)));
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(
+    (_e, uri) => atl.send('term:open', uri),
+    {
+      urlRegex: /((?:https?:\/\/|www\.|localhost:|127\.0\.0\.1:)[^\s"'!*(){}|\\\^<>`]*[^\s"':,.!?{}|\\\^~\[\]`()<>])/i,
+    }
+  ));
   term.open(document.getElementById('term'));
   try {
     const webgl = new WebglAddon.WebglAddon();
