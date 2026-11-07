@@ -552,10 +552,10 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
                 cloud.setUpdateRightAway(body["on"] as? Bool ?? false)
                 replyHandler(cloud.json, nil)
             case "social":
-                // Only the friends, messages, notifications and feedback endpoints; the page never reaches anything else
-                // with the token.
+                // Only the friends, messages, notifications, feedback and Roadmap endpoints; the page never reaches anything
+                // else with the token.
                 let path = body["path"] as? String ?? ""
-                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
                       !path.contains("..") else {
                     replyHandler(["error": "bad_path"], nil)
                     return

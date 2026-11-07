@@ -36,7 +36,7 @@ window.GitView = (() => {
     bell: 0xeaa2, error: 0xea87, warning: 0xea6c, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, 'git-commit': 0xeafc,
     whitespace: 0xeb7d, map: 0xec05, remote: 0xeb3a, 'split-horizontal': 0xeb56, 'diff-single': 0xec22,
     trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e, 'circle-filled': 0xea71,
-    'open-preview': 0xeb28, edit: 0xea73, 'folder-opened': 0xeaf7, save: 0xeb4b,
+    'open-preview': 0xeb28, edit: 0xea73, 'folder-opened': 0xeaf7, save: 0xeb4b, rocket: 0xeb44,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
   // The command key as this platform names it (the Windows app sets __platform), and how its paths are written.
@@ -92,14 +92,16 @@ window.GitView = (() => {
   const dirname = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 
   // ---------- the frame: activity bar, side bar (CHANGES and GRAPH), editor ----------
-  // The activity bar switches what the dashboard's middle shows: the dashboard, Source Control (here), friends and
-  // messages, the leaderboard, the themes or the notifications (cloud.js); feedback, at its foot, opens its window over
-  // whatever shows.
+  // The activity bar switches what the dashboard's middle shows: the dashboard, Source Control (here), the Roadmap
+  // (roadmap.js), friends and messages, the leaderboard, the themes or the notifications (cloud.js); feedback, at its
+  // foot, opens its window over whatever shows.
   const bar = document.createElement('nav');
   bar.id = 'activity';
   bar.innerHTML =
     `<a class="vs-ab on" data-view="dash" title="Dashboard">${ci('files')}</a>` +
     `<a class="vs-ab" data-view="git" title="Source Control (${window.__platform === 'win32' ? 'Ctrl+Shift+G' : '⌃⇧G'})">${ci('source-control')}<b class="vs-badge" hidden></b></a>` +
+    // The Roadmap (roadmap.js): vote for what comes next; its badge counts the votes left.
+    (window.Roadmap ? `<a class="vs-ab" data-view="roadmap" title="Roadmap: vote for what comes next">${ci('rocket')}<b class="vs-badge" hidden></b></a>` : '') +
     `<a class="vs-ab" data-view="friends" title="Friends and messages">${ci('organization')}<b class="vs-badge" hidden></b></a>` +
     `<a class="vs-ab" data-view="board" title="Leaderboard">${ci('trophy')}</a>` +
     `<a class="vs-ab" data-view="themes" title="Themes">${ci('symbol-color')}</a>` +
@@ -1274,7 +1276,7 @@ window.GitView = (() => {
     }
     if (v === 'git') view.classList.remove('side-off');
     setOpen(v === 'git');
-    if (['friends', 'board', 'themes', 'notifications'].includes(v)) {
+    if (['friends', 'board', 'themes', 'notifications', 'roadmap'].includes(v)) {
       window.Cloud?.showView(v);
       mark(v);
     } else window.Cloud?.showView(null);

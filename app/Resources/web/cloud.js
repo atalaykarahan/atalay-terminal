@@ -1251,7 +1251,7 @@ window.Cloud = (() => {
 
   // ---------- the activity bar's views (git.js): the leaderboard and the themes, where the dashboard's middle is ----------
   const views = {};
-  for (const v of ['friends', 'board', 'themes', 'notifications']) {
+  for (const v of ['friends', 'board', 'themes', 'notifications', ...(window.Roadmap ? ['roadmap'] : [])]) {
     const el = document.createElement('section');
     el.id = `${v}-view`;
     el.className = 'cv';
@@ -1262,6 +1262,8 @@ window.Cloud = (() => {
     '<section class="panel cv-list"><header><span class="tag">leaderboard</span><span class="meta">everyone with XP</span></header><div class="body lb-host"></div></section>' +
     '<section class="panel cv-card"><header><span class="tag">hacker</span><span class="meta"></span></header><div class="body pf-host"></div></section>';
   views.board.querySelector('.lb-host').addEventListener('click', boardAction);
+  // The Roadmap: what comes next, and the users' votes on it (roadmap.js).
+  if (views.roadmap) window.Roadmap.mount(views.roadmap);
   const fq = (sel) => views.friends.querySelector(sel);
   views.friends.innerHTML =
     '<section class="panel cv-friends"><header><span class="tag">friends</span><span class="meta"></span></header><div class="body">' +
@@ -1353,6 +1355,8 @@ window.Cloud = (() => {
     if (v === 'board') loadBoard();
     if (v === 'themes') openThemes();
     if (v === 'notifications') openNotes();
+    if (v === 'roadmap') window.Roadmap.show();
+    else window.Roadmap?.hide();
   }
 
   function close() {
