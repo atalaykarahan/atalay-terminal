@@ -416,7 +416,8 @@ body::after {
   pointer-events: none;
 }
 #toast.on { opacity: 1; }
-#away { position: fixed; left: 50%; top: 64px; z-index: 2900; transform: translateX(-50%); max-width: min(560px, 90vw); padding: 8px 12px; border: 1px solid var(--accent-soft); background: rgba(var(--surface-rgb), var(--glass-a)); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); font-size: 12px; }
+/* On the map, under its tag line: it covers neither that line nor the panels around the map. */
+#away { position: absolute; left: 50%; top: 27px; z-index: 5; transform: translateX(-50%); max-width: min(560px, calc(100% - 24px)); padding: 8px 12px; border: 1px solid var(--accent-soft); background: rgba(var(--surface-rgb), var(--glass-a)); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); font-size: 12px; }
 #away[hidden] { display: none; }
 #away header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; color: var(--accent-soft); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
 #away p { margin: 3px 0; }
