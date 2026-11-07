@@ -81,44 +81,18 @@
     document.getElementById('status').textContent = label;
     document.getElementById('where').textContent = i.cwd || '';
     document.body.style.setProperty('--st', `var(${color})`);
+    showCollision(i.collision);
   });
+  // Another live session editing a file this one edited in the last 20 minutes (the engine's, in term:info). The
+  // terminal's ResizeObserver refits it as the banner slides.
   const collisionBanner = document.getElementById('collision-banner');
-  const collisionText = document.getElementById('collision-text');
-  const isolateBtn = document.getElementById('isolate-btn');
-  const hudToast = document.getElementById('hud-toast');
-  let collisionSid = null;
-  let hudToastTimer = 0;
-  function showHudToast(msg) {
-    if (!hudToast || !msg) return;
-    hudToast.textContent = String(msg);
-    hudToast.classList.add('on');
-    clearTimeout(hudToastTimer);
-    hudToastTimer = setTimeout(() => hudToast.classList.remove('on'), 2800);
-  }
-  atl.on('term:toast', (msg) => showHudToast(msg));
-  atl.on('term:collision', (c) => {
-    if (!collisionBanner) return;
-    if (c && c.active && c.event !== 'COLLISION_RESOLVED') {
-      collisionSid = c.sid || (Array.isArray(c.sessions) && c.sessions[0]) || null;
-      const other = c.otherSession || (Array.isArray(c.sessions) && c.sessions[1]) || (Array.isArray(c.sessions) && c.sessions[0]) || 'unknown';
-      const file = c.file || 'file';
-      if (collisionText) collisionText.textContent = `⚠ COLLISION RISK: Session ${other} is also editing "${file}"`;
-      else collisionBanner.textContent = `⚠ COLLISION RISK: Session ${other} is also editing "${file}"`;
-      collisionBanner.classList.add('active');
-    } else {
-      collisionSid = null;
-      collisionBanner.classList.remove('active');
-      if (collisionText) collisionText.textContent = '';
-    }
-    refit();
-  });
-  if (isolateBtn) {
-    isolateBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    isolateBtn.addEventListener('click', () => {
-      const payload = { type: 'isolate_session', sid: collisionSid || '' };
-      if (window.webkit?.messageHandlers?.radar) window.webkit.messageHandlers.radar.postMessage(payload);
-      else atl.send('term:isolate', payload);
-    });
+  let collisionText = '';
+  function showCollision(c) {
+    const text = c ? `⚠ COLLISION RISK: Session ${c.with} is also editing "${c.file}"` : '';
+    if (text === collisionText) return;
+    collisionText = text;
+    collisionBanner.textContent = text;
+    collisionBanner.classList.toggle('active', !!text);
   }
   document.getElementById('hud').addEventListener('mousedown', (e) => e.preventDefault());
   document.getElementById('dash').onclick = () => {

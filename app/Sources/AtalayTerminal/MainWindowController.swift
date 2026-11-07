@@ -177,92 +177,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.apply(list)
         }
         engine.onEvents = { [weak self] js in self?.radar.push("events", js) }
-        engine.onCollision = { [weak self] js, ev in
-            guard let self else { return }
-            self.radar.push("collision", js)
-            self.applyCollision(ev)
-        }
         engine.onNativeEvents = { [weak self] events in self?.route(events) }
         engine.onHistory = { [weak self] items in self?.sidebar.items = items }
-    }
-
-    private func applyCollision(_ ev: CollisionEvent) {
-        if ev.active {
-            var matched = false
-            for sid in ev.sessions {
-                let others = ev.sessions.filter { $0 != sid }
-                let otherId = others.first ?? sid
-                let otherName = briefs[otherId]?.name ?? String(otherId.prefix(8))
-                if let b = briefs[sid], let c = chat(for: b) {
-                    c.hud.showCollisionBanner(otherSession: otherName, file: ev.file, sid: sid)
-                    matched = true
-                } else if let c = chats.values.first(where: { $0.sessionId == sid }) {
-                    c.hud.showCollisionBanner(otherSession: otherName, file: ev.file, sid: sid)
-                    matched = true
-                }
-            }
-            if !matched, let activeId = activeTerminalWindow, let c = chats[activeId] {
-                let firstSid = ev.sessions.first
-                let otherId = ev.sessions.last ?? "unknown"
-                let otherName = briefs[otherId]?.name ?? String(otherId.prefix(8))
-                c.hud.showCollisionBanner(otherSession: otherName, file: ev.file, sid: firstSid)
-            }
-        } else {
-            for c in chats.values {
-                c.hud.hideCollisionBanner()
-            }
-        }
-    }
-
-    func isolateSession(_ sid: String, chat explicitChat: ChatWindowController? = nil) {
-        let targetChat = explicitChat
-            ?? briefs[sid].flatMap { chat(for: $0) }
-            ?? chats.values.first(where: { $0.sessionId == sid })
-            ?? activeTerminalWindow.flatMap { chats[$0] }
-        let repoDir = targetChat?.currentFolder ?? briefs[sid]?.cwd ?? targetChat?.cwd ?? ""
-        let fm = FileManager.default
-        let gitPath = (repoDir as NSString).appendingPathComponent(".git")
-        guard !repoDir.isEmpty, fm.fileExists(atPath: gitPath) else {
-            targetChat?.showToast("Not a git repository")
-            radar.push("toast", "\"Not a git repository\"")
-            return
-        }
-        let repoName = (repoDir as NSString).lastPathComponent
-        let newBranch = "auto-isolate-\(sid)"
-        let newPath = "../\(repoName)-\(sid)"
-        let parentDir = (repoDir as NSString).deletingLastPathComponent
-        do {
-            guard fm.isWritableFile(atPath: parentDir) else {
-                throw NSError(domain: "WorktreeIsolation", code: 1, userInfo: [NSLocalizedDescriptionKey: "Parent directory is not writable"])
-            }
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            proc.arguments = ["git", "worktree", "add", newPath, "-b", newBranch]
-            proc.currentDirectoryURL = URL(fileURLWithPath: repoDir)
-            let errPipe = Pipe()
-            proc.standardError = errPipe
-            proc.standardOutput = Pipe()
-            try proc.run()
-            proc.waitUntilExit()
-            if proc.terminationStatus != 0 {
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                let errMsg = String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                throw NSError(domain: "WorktreeIsolation", code: Int(proc.terminationStatus),
-                              userInfo: [NSLocalizedDescriptionKey: errMsg.isEmpty ? "git worktree add failed" : errMsg])
-            }
-            let cmd = "cd \(newPath) && echo \"Moved to isolated worktree: \(newBranch)\""
-            targetChat?.injectCommand(cmd)
-            for c in chats.values { c.hideCollisionBanner() }
-            engine.releaseFile(nil, sid: sid)
-            radar.push("collision", "{\"type\":\"collision\",\"event\":\"COLLISION_RESOLVED\",\"active\":false,\"file\":\"\",\"sessions\":[]}")
-        } catch {
-            let msg = error.localizedDescription
-            targetChat?.showToast(msg)
-            if let data = try? JSONSerialization.data(withJSONObject: [msg]),
-               let arr = String(data: data, encoding: .utf8), arr.count >= 2 {
-                radar.push("toast", String(arr.dropFirst().dropLast()))
-            }
-        }
     }
 
     private func handleRadar(_ msg: [String: Any]) {
@@ -289,7 +205,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 runaways.endLeft(pid: pid, started: started)
             }
         case "endSession": if let sid = msg["sid"] as? String { endSession(sid) }
-        case "isolate_session": if let sid = msg["sid"] as? String { isolateSession(sid) }
         case "endRunaway":
             if let pid = (msg["pid"] as? NSNumber)?.int32Value, let started = (msg["started"] as? NSNumber)?.doubleValue {
                 runaways.end(pid: pid, started: started)

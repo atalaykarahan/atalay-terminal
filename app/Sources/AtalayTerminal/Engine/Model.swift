@@ -165,27 +165,7 @@ final class FileHeat {
     let p: String
     var r = 0, w = 0, last = 0.0
     var editors: [String: (t: Double, s: String, a: String?)] = [:]
-    var activeSessions = Set<String>()
-    var sessionWrites: [String: Double] = [:]
     init(p: String) { self.p = p }
-}
-
-struct CollisionEvent: Equatable {
-    let event: String
-    let file: String
-    let path: String
-    let sessions: [String]
-    var active: Bool { event == "COLLISION_DETECTED" }
-    var dict: [String: Any] {
-        [
-            "type": "collision",
-            "event": event,
-            "active": active,
-            "file": file,
-            "path": path,
-            "sessions": sessions,
-        ]
-    }
 }
 
 final class Minute {
@@ -246,6 +226,9 @@ struct SessionBrief: Equatable {
     var actionCat = ""
     var actionLabel = ""
     var actionSince = 0.0
+    /// A file another live session also edited in the last 20 minutes, and that session's name ("" when none).
+    var collisionFile = ""
+    var collisionWith = ""
 }
 
 /// Live event for the native chat windows (tool calls, results, prompts, replies).
