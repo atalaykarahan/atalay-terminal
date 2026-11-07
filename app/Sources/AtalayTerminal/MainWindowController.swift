@@ -214,6 +214,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let open = msg["open"] as? Bool == true
             for c in chats.values { open ? c.stepAside() : c.stepBack() }
             MessagePanel.stepAside(open)
+        case "timeline": Timeline.read { [weak self] json in self?.radar.push("timeline", json) }
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
         default: break
         }
@@ -280,6 +281,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func apply(_ list: [SessionBrief]) {
         briefs = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        Timeline.record(list)
         if !hasState {
             hasState = true
             let open = pendingOpen
