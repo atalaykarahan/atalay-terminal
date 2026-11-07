@@ -30,6 +30,40 @@ final class SidebarModel: ObservableObject {
     }
     /// The chat whose name is being edited in its row.
     @Published var renaming: String?
+    /// The app's terminals with no Claude in them, each in the folder it was opened in (MainWindowController.pushTerminals).
+    @Published var terminals: [TermRow] = []
+    /// Folders opened from the list (its open folder button), the newest first: they stay at its top, chats or none, until
+    /// taken out of it or archived. Kept across launches.
+    @Published var pinned = UserDefaults.standard.stringArray(forKey: "chatListPinned") ?? [] {
+        didSet { UserDefaults.standard.set(pinned, forKey: "chatListPinned") }
+    }
+    /// Folders folded shut with a click on their strip. Kept across launches.
+    @Published var folded = Set(UserDefaults.standard.stringArray(forKey: "chatFolded") ?? []) {
+        didSet { UserDefaults.standard.set(Array(folded), forKey: "chatFolded") }
+    }
+
+    /// The same folder however it's written (a trailing slash, `..`).
+    static func folderKey(_ cwd: String) -> String {
+        let p = (cwd as NSString).standardizingPath
+        return p.count > 1 && p.hasSuffix("/") ? String(p.dropLast()) : p
+    }
+
+    func pin(_ cwd: String) {
+        let key = Self.folderKey(cwd)
+        if archivedFolders.contains(cwd) { setFolder(cwd, archived: false) }
+        pinned.removeAll { Self.folderKey($0) == key }
+        pinned.insert(cwd, at: 0)
+    }
+
+    func unpin(_ cwd: String) {
+        let key = Self.folderKey(cwd)
+        pinned.removeAll { Self.folderKey($0) == key }
+    }
+
+    func toggleFold(_ cwd: String) {
+        let key = Self.folderKey(cwd)
+        if folded.contains(key) { folded.remove(key) } else { folded.insert(key) }
+    }
 
     func title(of item: ChatItem) -> String {
         customTitles[item.id] ?? (item.title.isEmpty ? item.lastPrompt : item.title)
@@ -83,6 +117,8 @@ final class SidebarModel: ObservableObject {
             archivedFolders.insert(cwd)
             restored.subtract(ids)
             favorites.subtract(ids)
+            // Archived, a folder opened from the list leaves it too.
+            unpin(cwd)
         } else {
             archivedFolders.remove(cwd)
             archived.subtract(ids)
@@ -99,6 +135,29 @@ final class SidebarModel: ObservableObject {
             return items.isEmpty ? nil : (g.cwd, items)
         }
         return (favs, rest)
+    }
+
+    /// The list's folders, each a card: the ones opened from the list first (as they were opened), then the rest by their
+    /// newest chat, then those only a terminal of the app is in; each with its terminals over its chats. Searching, only the
+    /// folders with something that matches.
+    var cards: [FolderCard] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        var order: [String] = []
+        var map: [String: FolderCard] = [:]
+        func card(_ cwd: String) -> String {
+            let key = Self.folderKey(cwd)
+            if map[key] == nil {
+                order.append(key)
+                map[key] = FolderCard(cwd: cwd, items: [], terms: [], pinned: false)
+            }
+            return key
+        }
+        for p in pinned where !archivedFolders.contains(p) { map[card(p)]?.pinned = true }
+        for g in sections.groups { map[card(g.cwd)]?.items = g.items }
+        for t in terminals where q.isEmpty || "\(t.title) \(t.job) \(t.cwd)".lowercased().contains(q) {
+            map[card(t.cwd)]?.terms.append(t)
+        }
+        return order.compactMap { map[$0] }.filter { q.isEmpty || !$0.items.isEmpty || !$0.terms.isEmpty }
     }
 
     /// Every chat, newest first; live sessions without a saved title too.
@@ -156,12 +215,35 @@ final class SidebarModel: ObservableObject {
     func labels(for cwds: [String]) -> [String: String] { distinctLabels(for: cwds) }
 }
 
+/// One of the app's terminals with no Claude in it, in the chats list: the folder it was opened in, what runs in it,
+/// whether its window shows.
+struct TermRow: Identifiable, Equatable {
+    let id: String
+    let cwd: String
+    let title: String
+    let job: String
+    let shown: Bool
+}
+
+/// A folder of the chats list: its chats, the app's terminals in it, and whether it was opened from the list.
+struct FolderCard {
+    let cwd: String
+    var items: [ChatItem]
+    var terms: [TermRow]
+    var pinned: Bool
+}
+
 struct SidebarActions {
     let open: (String) -> Void
     let fork: (String) -> Void
     let newTerminal: (String) -> Void
     let reveal: (String) -> Void
     let copyId: (String) -> Void
+    /// One of the app's terminals (its car id): shows it, or ends it.
+    let openTerminal: (String) -> Void
+    let endTerminal: (String) -> Void
+    /// The open folder button: a folder from the system's picker, kept in the list, with a terminal in it.
+    let openFolder: () -> Void
     /// The list closes (sliding, as with its shortcut).
     let close: () -> Void
 }
@@ -208,6 +290,25 @@ struct SidebarView: View {
             .frame(height: 26)
             .background(RoundedRectangle(cornerRadius: 4).fill(Color.black.opacity(0.25)))
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.cLineSoft, lineWidth: 1))
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+
+            // A folder from the system's picker: it stays at the top of the list, with a terminal opened in it.
+            Button(action: actions.openFolder) {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.badge.plus").font(.system(size: 10.5))
+                    Text("open folder").font(.mono(10.5, .semibold))
+                    Spacer()
+                }
+                .foregroundColor(Theme.cAccentSoft)
+                .padding(.horizontal, 8)
+                .frame(height: 24)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.cAccent.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.cLineSoft, lineWidth: 1))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open a folder: it stays at the top of the list, and a terminal opens in it")
             .padding(10)
 
             // Folders picked (a click on their headers): archive or unarchive them all at once.
@@ -233,8 +334,8 @@ struct SidebarView: View {
 
             ScrollView {
                 let sections = model.sections
-                let groups = sections.groups
-                let labels = model.labels(for: groups.map(\.cwd))
+                let cards = model.cards
+                let labels = model.labels(for: cards.map(\.cwd))
                 // A plain stack: the lazy one went round placing its rows for ever (the app froze) once rows changed under
                 // the pointer while it scrolled.
                 VStack(alignment: .leading, spacing: 1) {
@@ -242,22 +343,15 @@ struct SidebarView: View {
                         SectionHeader(icon: "star.fill", title: "favorites", count: sections.favorites.count)
                         ForEach(sections.favorites) { item in row(item) }
                     }
-                    ForEach(groups, id: \.cwd) { group in
-                        header(group.cwd, labels[group.cwd] ?? projectLabel(group.cwd), group.items.count, archived: false)
-                        let expanded = model.expanded.contains(group.cwd) || !model.query.isEmpty
-                        ForEach(expanded ? group.items : Array(group.items.prefix(5))) { item in row(item) }
-                        if !expanded && group.items.count > 5 {
-                            Button {
-                                model.expanded.insert(group.cwd)
-                            } label: {
-                                Text("+\(group.items.count - 5) more")
-                                    .font(.mono(9.5))
-                                    .foregroundColor(Theme.cDim)
-                                    .padding(.leading, 26)
-                                    .padding(.vertical, 3)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    ForEach(cards, id: \.cwd) { card in
+                        folderCard(card, label: labels[card.cwd] ?? projectLabel(card.cwd))
+                    }
+                    if cards.isEmpty && sections.favorites.isEmpty {
+                        Text(model.query.isEmpty ? "no chats yet · open a folder to start" : "nothing matches")
+                            .font(.mono(10))
+                            .foregroundColor(Theme.cDim)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 10)
                     }
                 }
                 .padding(.bottom, 12)
@@ -266,6 +360,64 @@ struct SidebarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.cPanel)
         .id(theme.current.id)
+    }
+
+    /// A folder as a panel of its own, in the dashboard's panel look: its strip (a click folds it shut or open), the app's
+    /// terminals in it, then its chats. It lights up while one of them is in a window.
+    private func folderCard(_ card: FolderCard, label: String) -> some View {
+        let shut = model.folded.contains(SidebarModel.folderKey(card.cwd)) && model.query.isEmpty
+        let expanded = model.expanded.contains(card.cwd) || !model.query.isEmpty
+        let live = card.terms.contains(where: \.shown) || card.items.contains { model.openInTabs.contains($0.id) }
+        return VStack(alignment: .leading, spacing: 1) {
+            header(card, label: label, shut: shut)
+            if !shut {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(card.terms) { t in termRow(t) }
+                    ForEach(expanded ? card.items : Array(card.items.prefix(5))) { item in row(item) }
+                    if !expanded && card.items.count > 5 {
+                        Button {
+                            model.expanded.insert(card.cwd)
+                        } label: {
+                            Text("+\(card.items.count - 5) more")
+                                .font(.mono(9.5))
+                                .foregroundColor(Theme.cDim)
+                                .padding(.leading, 26)
+                                .padding(.vertical, 3)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if card.items.isEmpty && card.terms.isEmpty {
+                        HStack(spacing: 4) {
+                            Text("nothing here yet ·").font(.mono(9.5)).foregroundColor(Theme.cDim)
+                            Button { actions.newTerminal(card.cwd) } label: {
+                                Text("open a terminal").font(.mono(9.5, .semibold)).foregroundColor(Theme.cAccentSoft)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .background(FolderCardFrame(live: live))
+        .padding(.horizontal, 6)
+        .padding(.top, 6)
+    }
+
+    /// One of the app's terminals with no Claude in it: what runs in it, and whether its window shows. A click shows it;
+    /// ending it is in its menu only, so it can't go by mistake.
+    private func termRow(_ t: TermRow) -> some View {
+        TerminalRow(term: t)
+            .onTapGesture { actions.openTerminal(t.id) }
+            .contextMenu {
+                Button("Show Terminal") { actions.openTerminal(t.id) }
+                Button("New Terminal in This Folder") { actions.newTerminal(t.cwd) }
+                Button("Show Folder in Finder") { actions.reveal(t.cwd) }
+                Divider()
+                Button("End Terminal") { actions.endTerminal(t.id) }
+            }
     }
 
     private func bulkButton(_ title: String, _ action: @escaping () -> Void) -> some View {
@@ -282,13 +434,18 @@ struct SidebarView: View {
         .buttonStyle(.plain)
     }
 
-    /// A folder's header, in the list or in ARCHIVED: a click picks it for the bulk bar.
-    private func header(_ cwd: String, _ label: String, _ count: Int, archived: Bool) -> some View {
-        ProjectHeader(cwd: cwd, label: label, count: count, archived: archived, selected: model.selectedFolders.contains(cwd),
-                      bulk: model.selectedFolders.count, onNew: { actions.newTerminal(cwd) },
-                      onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.setFolder(cwd, archived: !archived) } },
-                      onSelect: { model.selectFolder(cwd) },
-                      onBulk: { on in withAnimation(.easeInOut(duration: 0.25)) { model.setSelectedFolders(archived: on) } })
+    /// A folder card's strip: a click folds it shut or open, ⌘-click picks it for the bulk bar.
+    private func header(_ card: FolderCard, label: String, shut: Bool) -> some View {
+        let cwd = card.cwd
+        return ProjectHeader(cwd: cwd, label: label, count: card.items.count + card.terms.count, terms: card.terms.count,
+                             pinned: card.pinned, shut: shut, archived: false, selected: model.selectedFolders.contains(cwd),
+                             bulk: model.selectedFolders.count, onNew: { actions.newTerminal(cwd) },
+                             onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.setFolder(cwd, archived: true) } },
+                             onSelect: { model.selectFolder(cwd) },
+                             onFold: { withAnimation(.easeInOut(duration: 0.2)) { model.toggleFold(cwd) } },
+                             onUnpin: { withAnimation(.easeInOut(duration: 0.25)) { model.unpin(cwd) } },
+                             onReveal: { actions.reveal(cwd) },
+                             onBulk: { on in withAnimation(.easeInOut(duration: 0.25)) { model.setSelectedFolders(archived: on) } })
     }
 
     private func row(_ item: ChatItem) -> some View {
@@ -346,26 +503,47 @@ private struct ProjectHeader: View {
     let cwd: String
     let label: String
     let count: Int
+    /// The app's terminals in it, whether it was opened from the list, and whether it's folded shut.
+    let terms: Int
+    let pinned: Bool
+    let shut: Bool
     /// In the ARCHIVED section: its button takes the whole folder out of the archive.
     let archived: Bool
-    /// Picked for the bulk bar (a click on the header), and how many are.
+    /// Picked for the bulk bar (⌘-click on the strip), and how many are.
     let selected: Bool
     let bulk: Int
     let onNew: () -> Void
     let onArchive: () -> Void
     let onSelect: () -> Void
+    let onFold: () -> Void
+    let onUnpin: () -> Void
+    let onReveal: () -> Void
     let onBulk: (Bool) -> Void
     @State private var hover = false
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "folder").font(.system(size: 9.5)).foregroundColor(Theme.cAccent.opacity(0.8))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(Theme.cDim)
+                .rotationEffect(.degrees(shut ? 0 : 90))
+                .frame(width: 9)
+            Image(systemName: pinned ? "pin.fill" : "folder").font(.system(size: 9.5)).foregroundColor(Theme.cAccent.opacity(0.8))
+                .help(pinned ? "Opened from the list" : "")
             Text(label)
                 .font(.mono(10, .semibold))
                 .foregroundColor(Theme.cAccentSoft)
                 .lineLimit(1)
                 .truncationMode(.head)
             Text("\(count)").font(.mono(9)).foregroundColor(Theme.cDim2)
+            if terms > 0 {
+                HStack(spacing: 2) {
+                    Image(systemName: "terminal").font(.system(size: 8.5))
+                    Text("\(terms)").font(.mono(9))
+                }
+                .foregroundColor(Theme.cDim)
+                .help("\(terms) terminal\(terms > 1 ? "s" : "") in the app")
+            }
             Spacer()
             // On hover: the whole folder in or out of the archive (one chat in it can come back alone). Always laid out.
             Button(action: onArchive) {
@@ -382,19 +560,21 @@ private struct ProjectHeader: View {
             .opacity(hover ? 1 : 0.35)
             .help("New terminal in this folder")
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 10)
-        .padding(.bottom, 3)
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        // The card's strip, as a dashboard panel's.
         .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(selected ? Theme.cAccent.opacity(0.16) : .clear)
-                .padding(.horizontal, 6)
-                .padding(.top, 6)
+            Rectangle().fill(selected ? Theme.cAccent.opacity(0.2) : Theme.cAccent.opacity(hover ? 0.1 : 0.06))
         )
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.cLineSoft).frame(height: 1).opacity(shut ? 0 : 1) }
         // All of it hovers, the empty middle too: on the way to its buttons the pointer crossed nothing, they vanished.
         .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
-        .help(selected ? "Selected · click again to leave it out" : "\(tildify(cwd)) · click to select, for archiving several at once")
+        .onTapGesture {
+            // ⌘-click picks it for archiving several at once; a click folds it shut or open.
+            if NSEvent.modifierFlags.contains(.command) { onSelect() } else { onFold() }
+        }
+        .help(selected ? "Selected · ⌘-click again to leave it out"
+              : "\(tildify(cwd)) · click to fold \(shut ? "open" : "shut") · ⌘-click to select, for archiving several at once")
         .onHover { hover = $0 }
         .contextMenu {
             if bulk > 1 && selected {
@@ -402,10 +582,77 @@ private struct ProjectHeader: View {
                 Button("Unarchive the \(bulk) Selected Folders") { onBulk(false) }
                 Divider()
             }
+            Button("New Terminal in This Folder", action: onNew)
+            Button("Show Folder in Finder", action: onReveal)
+            Divider()
             Button(archived ? "Unarchive Folder" : "Archive Folder", action: onArchive)
             Button(selected ? "Deselect" : "Select", action: onSelect)
-            Button("New Terminal in This Folder", action: onNew)
+            if pinned { Button("Remove from the List", action: onUnpin) }
         }
+    }
+}
+
+/// A folder card's frame, in the dashboard's panel look: a thin line with the accent's corner marks; brighter, with a
+/// glow, while one of its chats or terminals is in a window.
+private struct FolderCardFrame: View {
+    let live: Bool
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(Theme.cAccent.opacity(live ? 0.05 : 0.02))
+            Rectangle().stroke(live ? Theme.cLine : Theme.cLineSoft, lineWidth: 1)
+            CornerMarks().stroke(Theme.cAccent.opacity(live ? 1 : 0.75), lineWidth: 1.5)
+        }
+        .shadow(color: live ? Theme.cAccent.opacity(0.35) : .clear, radius: live ? 6 : 0)
+    }
+}
+
+/// The short L at each corner of a dashboard panel.
+private struct CornerMarks: Shape {
+    func path(in r: CGRect) -> Path {
+        let k: CGFloat = 7
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.minY + k)); p.addLine(to: CGPoint(x: r.minX, y: r.minY)); p.addLine(to: CGPoint(x: r.minX + k, y: r.minY))
+        p.move(to: CGPoint(x: r.maxX - k, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.minY + k))
+        p.move(to: CGPoint(x: r.maxX, y: r.maxY - k)); p.addLine(to: CGPoint(x: r.maxX, y: r.maxY)); p.addLine(to: CGPoint(x: r.maxX - k, y: r.maxY))
+        p.move(to: CGPoint(x: r.minX + k, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY - k))
+        return p
+    }
+}
+
+/// One of the app's terminals with no Claude in it, in its folder's card.
+private struct TerminalRow: View {
+    let term: TermRow
+    @State private var hover = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "terminal")
+                .font(.system(size: 10))
+                .foregroundColor(term.job.isEmpty ? Theme.cDim : Theme.cAccent)
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(term.title.isEmpty ? "terminal" : term.title)
+                    .font(.mono(11, term.shown ? .semibold : .regular))
+                    .foregroundColor(Theme.cHi)
+                    .lineLimit(1)
+                Text((["terminal", term.job.isEmpty ? "idle" : term.job] + (term.shown ? ["showing"] : [])).joined(separator: " · "))
+                    .font(.mono(9.5))
+                    .foregroundColor(Theme.cDim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(term.shown ? Theme.cAccent.opacity(0.14) : (hover ? Theme.cAccent.opacity(0.06) : .clear))
+        )
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .help("\(term.title) · \(tildify(term.cwd))")
     }
 }
 

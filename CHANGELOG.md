@@ -3,10 +3,6 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
-## Unreleased (2026-11-06)
-
-- Spend (Mac): 7d, 30d, 12w and 12m tabs, by project and model; the app keeps each day's spend, as Claude Code deletes transcripts after 30 days
-
 ## 0.17.0
 
 - Dashboard: move the small panels by their strip, hide them (the top bar's panels menu brings them back) and size them by the lines between them; the layout stays. Thanks to @OmerAktas1 on GitHub
@@ -127,10 +123,14 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Spend (Mac): 7d, 30d, 12w and 12m tabs by project and model; the app keeps each day's spend, as Claude Code deletes transcripts after 30 days. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
+- Chats list (Mac): each folder is a card of its own, folded shut or open with a click on its strip (⌘-click selects it for archiving several at once); the app's terminals show in their folders with what runs in them; open folder keeps a folder at the top of the list with a terminal in it. After @OmerAktas1's design (#10)
+- Runaways: macOS system and XPC services no longer raise the alarm, a process stuck under a closed terminal's leftover burns as its blue box instead of flying as a car, and work a live session started in its folder is left alone (Mac and Windows). Thanks to @EmirCobanOfficial on GitHub
+- Chats list: the chat in front lights up as the active window (Mac and Windows); Windows terminals copy a selection as the Mac's do. Thanks to @EmirCobanOfficial on GitHub
+- Codex and Antigravity in the app's terminals take a multi-line paste whole and the scroll wheel (Mac), and the orbit's cars free all their graphics memory. Thanks to @EmirCobanOfficial on GitHub
+- Windows: links in a terminal window open in the browser. Thanks to @farukiskender on GitHub
+- Terminal view (PR #10, Ömer; Mac version written 2026-11-07, set aside): the chats and terminals shown take the dashboard's middle side by side, up to six in a grid, and the activity bar's terminal button brings them back. Hard to use as it is: they cover the map, so another one opens only from the chats list. Idea: the button brings every open one at once. The Mac code is kept at `refs/postponed/terminal-view` (`git cherry-pick refs/postponed/terminal-view`)
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines. Cause (found 2026-11-04, reproduced headless with SwiftTerm + the relay + screen): screen 4.0 resizes a window bottom-anchored. Shrinking keeps the cursor's distance from the bottom, so with blank rows under the cursor (short output, after a clear) the output above it goes into screen's own history, which the view never shows, and only blank rows remain; growing pulls lines back in at the top. Fix to try: before a shrink, put the cursor on row max(0, old rows - new rows - blank rows under it) (screen then drops the blank bottom rows instead), apply the size, put the cursor back; the pty size has to wait for that (LocalProcessTerminalView.sizeChanged isn't open, so the relay holds it). Windows has no screen: check it there separately
-- Runaways (bug, reported 2026-11-04): a frozen project shows on the orbit as a car, not as the burning blue box (the TARDIS) that runaway processes get; find out why it isn't taken for a runaway, or why its box is drawn as a car (Mac and Windows)
-- Runaways (bug, reported 2026-11-04): a long job Claude starts in a shell (a video edit's render, for one) flies as a car of its own, and a click on it offers to end it as if it were left running loose, while it's doing the user's work; tell real work (still busy, started by a live session) from leftovers, and don't offer to end it there (Mac and Windows)
-- Chat list (requested 2026-11-04): the chat whose window is in front lights up as selected in the list, and moves with the click: with two chat windows open, the one you click to the top glows in the list (Mac and Windows)
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
 - Themes of your own: make a theme and keep up to 4 in slots; watching someone on the leaderboard, copy their theme into one of your 4 slots, as CS2 copies a crosshair: a copy of its own, so it stays as it was when its owner changes or deletes theirs
 - Big update · accounts: sign in, and a user's Macs and Windows PCs join one account: their hours and XP add up there, and their settings sync between them by default (as VS Code's Settings Sync), which Settings can turn off

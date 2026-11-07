@@ -104,6 +104,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString($0, forType: .string)
             },
+            openTerminal: { [weak self] in self?.openTerminal($0) },
+            endTerminal: { [weak self] in self?.endTerminal($0) },
+            openFolder: { [weak self] in self?.openFolder() },
             close: { [weak self] in self?.toggleSidebar() })))
         sidebarHost = side
         ThemeStore.glow(side, on: ThemeStore.shared.glows, soft: true)
@@ -391,17 +394,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             measured.insert(key)
             return cpu
         }
+        // The chats list shows them too, each in the folder it was opened in (with what runs in it).
+        var rows: [TermRow] = []
         // An ended window's other tabs are still running: their cars stay.
         for c in chats.values {
             for pane in c.plainShells() {
                 let jobs = Proc.children(of: pane.shell)
                 let cwd = Proc.cwd(pane.shell) ?? pane.cwd
                 let cpu = busy(pane.shell, jobs, work: true)
+                let cmd = jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? ""
                 list.append([
                     "id": pane.id, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
-                    "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
-                    "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                    "cmd": cmd, "running": !jobs.isEmpty, "cpu": cpu.rounded(),
                 ])
+                rows.append(TermRow(id: pane.id, cwd: pane.cwd, title: (pane.cwd as NSString).lastPathComponent, job: cmd,
+                                    shown: c.isShown && !c.hud.exited))
             }
         }
         // Closed tabs and panes, still running (an AI in one, Claude or Codex…, is a session on the orbit, not a car).
@@ -416,12 +423,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let jobs = Proc.children(of: shell)
             let cwd = Proc.cwd(shell) ?? HOME
             let cpu = busy(shell, jobs, work: true)
+            let cmd = jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? ""
             list.append([
                 "id": "s:" + name, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
-                "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
-                "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                "cmd": cmd, "running": !jobs.isEmpty, "cpu": cpu.rounded(),
             ])
+            rows.append(TermRow(id: "s:" + name, cwd: cwd, title: (cwd as NSString).lastPathComponent, job: cmd, shown: false))
         }
+        rows.sort { $0.id < $1.id }
+        if sidebar.terminals != rows { sidebar.terminals = rows }
         if gone { saveParked() }
         for l in runaways.left {
             let cpu = busy(l.pid, [l.pid], work: false)
@@ -878,6 +888,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return c.focusCar(id)
         }
         if id.hasPrefix("s:") { reopenParked(String(id.dropFirst(2)), own: true) }
+    }
+
+    /// The chats list's End Terminal: a window's own terminal ends as its End button does (it asks when something runs in
+    /// it); a tab's or split pane's, or a closed one still running, ends its session.
+    private func endTerminal(_ id: String) {
+        if let c = chats.values.first(where: { $0.carId == id && $0.hud.status == "terminal" && !$0.hud.exited }) {
+            return c.endChat()
+        }
+        guard id.hasPrefix("s:") else { return }
+        let name = String(id.dropFirst(2))
+        if parked.removeValue(forKey: name) != nil { saveParked() }
+        Detached.quit(name)
+        terminalEnding(id)
+        pushTerminals()
+    }
+
+    /// The chats list's open folder button: a folder from the system's picker stays at the list's top, with a terminal
+    /// opened in it.
+    private func openFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Open a folder in the chats list"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        let done = { [weak self] (r: NSApplication.ModalResponse) in
+            guard let self, r == .OK, let url = panel.url else { return }
+            self.sidebar.pin(url.path)
+            self.newTerminal(in: url.path)
+        }
+        if let w = window, w.isVisible { panel.beginSheetModal(for: w, completionHandler: done) } else { done(panel.runModal()) }
     }
 
     /// A terminal ended with its End button: its car explodes on the orbit now, not at the next terminals update.
