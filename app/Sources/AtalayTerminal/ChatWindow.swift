@@ -667,6 +667,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private(set) var extras: [ExtraPane] = []
     private var paneTop: NSLayoutConstraint!
     private var paneTopUnderTabs: NSLayoutConstraint!
+    private var tabBarTop: NSLayoutConstraint!
     /// ⇧⌘↩: only the pane in front shows in its tab.
     private var zoomed = false
     /// Terminals in the order they had the keyboard, the latest last (a tab shown again gives it back to its latest).
@@ -871,6 +872,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         tabs = [terminal]
         mount(terminal)
         paneTop = paneArea.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6)
+        tabBarTop = tabBar.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4)
         paneTopUnderTabs = paneArea.topAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 5)
         for v in [backdrop, tint, border, flash] as [NSView] { pin(v, to: container) }
         NSLayoutConstraint.activate([
@@ -893,7 +895,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             ticker.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             ticker.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             ticker.heightAnchor.constraint(equalToConstant: 26),
-            tabBar.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
+            tabBarTop,
             tabBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
             tabBar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
             tabBar.heightAnchor.constraint(equalToConstant: 24),
@@ -960,6 +962,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         if let text {
             collisionLabel.stringValue = text
             collisionBanner.isHidden = false
+            makeRoomForCollision(true)
         }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = text == nil ? 0.18 : 0.22
@@ -968,9 +971,19 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             self.collisionBanner.animator().alphaValue = text == nil ? 0 : 1
         }, completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                if self?.collisionText == nil { self?.collisionBanner.isHidden = true }
+                guard let self, self.collisionText == nil else { return }
+                self.collisionBanner.isHidden = true
+                self.makeRoomForCollision(false)
             }
         })
+    }
+
+    /// The tab bar and the terminals move down under the banner (26pt, and a gap) instead of losing their top lines to
+    /// it; back up once it's gone. At once, not animated: every step of a slide would resize the terminals.
+    private func makeRoomForCollision(_ on: Bool) {
+        let room: CGFloat = on ? 30 : 0
+        paneTop.constant = 6 + room
+        tabBarTop.constant = 4 + room
     }
 
     private func pin(_ v: NSView, to p: NSView) {
