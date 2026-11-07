@@ -139,7 +139,7 @@ window.GitEditor = (() => {
       const s = scopeOf(path);
       return s ? window.__tmLanguages.labels[s] || s : 'Plain Text';
     };
-    return { init, tokenize, label, ready: () => !!registry };
+    return { init, tokenize, label, scopeOf, ready: () => !!registry };
   })();
   TM.init();
 
@@ -663,5 +663,9 @@ window.GitEditor = (() => {
     toggle,
     state: () => (view ? { ignoreTrim: view.ignoreTrim, collapse: view.collapse, inline: view.inline, mode: view.mode } : null),
     measure: () => view && measure(),
+    // The highlighter, for the files Source Control's editor opens beside the diff (file-editor.js): one for the page
+    // (it loads its grammars and its wasm once), with the theme's role of a colour of its theme (`var(--a1)`) and the
+    // user's Better Comments.
+    tm: { init: TM.init, scopeOf: TM.scopeOf, label: TM.label, roleOf: (c) => VAR[String(c).toUpperCase()] || null, better: BETTER },
   };
 })();

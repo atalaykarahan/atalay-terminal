@@ -4,9 +4,10 @@
 // rounded and set in 4 px), the GitHub Dark Default theme and the Material Icon Theme. The activity bar opens it (⌃⇧G).
 // Changes lists every repo today's sessions and the app's terminals work in: its message box, its Commit button, its
 // staged changes and its changes. Graph below is VS Code's history graph (its lanes, colours and badges, the branch's
-// base included) of the repo last used; a commit opens to the files it changed. A file opens in the editor
-// (git-editor.js), with the status bar under it. Swift runs git (Git.swift) and asks the questions and shows the menus
-// natively, as VS Code does on a Mac. Files a Claude session edited carry a ✦.
+// base included) of the repo last used; a commit opens to the files it changed. A change opens in the editor
+// (git-editor.js), with the status bar under it; beside it, a tab each, the files a terminal's ⌘-click opens and ⌘N's new
+// ones (file-editor.js). Swift runs git (Git.swift) and asks the questions and shows the menus natively, as VS Code does
+// on a Mac. Files a Claude session edited carry a ✦.
 window.GitView = (() => {
   const app = document.getElementById('app');
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -34,7 +35,8 @@ window.GitView = (() => {
     tag: 0xea66, 'source-control': 0xea68, files: 0xeaf0, 'git-fetch': 0xecb2, 'collapse-all': 0xeac5, target: 0xebf8,
     bell: 0xeaa2, error: 0xea87, warning: 0xea6c, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, 'git-commit': 0xeafc,
     whitespace: 0xeb7d, map: 0xec05, remote: 0xeb3a, 'split-horizontal': 0xeb56, 'diff-single': 0xec22,
-    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e,
+    trophy: 0xecf9, 'symbol-color': 0xeb5c, feedback: 0xeb96, organization: 0xea7e, 'circle-filled': 0xea71,
+    'open-preview': 0xeb28, edit: 0xea73, 'folder-opened': 0xeaf7, save: 0xeb4b,
   };
   const ch = (n) => String.fromCodePoint(CP[n]);
   // The command key as this platform names it (the Windows app sets __platform), and how its paths are written.
@@ -111,7 +113,7 @@ window.GitView = (() => {
     '<div class="vs-card vs-left">' +
     '<aside class="vs-sb">' +
     `<div class="vs-title"><h2>Source Control</h2><div class="vs-tact"><a class="vs-al" data-act="views-menu" title="Views and More Actions...">${ci('ellipsis')}</a></div></div>` +
-    `<div class="vs-pane changes"><div class="vs-ph" data-pane="changes">${ci('chevron-down', 'vs-pt')}<h3>Changes</h3><div class="vs-pa">` +
+    `<div class="vs-pane changes"><div class="vs-ph" data-pane="changes">${ci('chevron-down', 'vs-pt')}<h3>Changes</h3><span class="vs-scope"></span><div class="vs-pa">` +
     `<a class="vs-al" data-act="commit-focused" title="Commit">${ci('check')}</a>` +
     `<a class="vs-al" data-act="refresh-all" title="Refresh">${ci('refresh')}</a>` +
     `<a class="vs-al" data-act="changes-menu" title="More Actions...">${ci('ellipsis')}</a></div></div>` +
@@ -140,6 +142,19 @@ window.GitView = (() => {
   let open = false;
   let sel = null; // the selected row: r:<root>, g:<root>|index, f:<root>|<path>|<0|1>, c:<hash>, h:<hash>|<path>
   let editor = null; // { kind: 'change', root, path, staged, status } | { kind: 'commit', root, hash, parent, path, status }
+  // The editor's tabs: the diff (`editor`, VS Code's preview tab) and the files open beside it (file-editor.js, null in
+  // the Windows app); `front` is the one shown, 'diff' or a file's id.
+  const FE = window.FileEditor;
+  let front = 'diff';
+  // While files are open, Changes shows only the repo of the one shown last (the project its chat works in), the files a
+  // Claude session edited first: what the AI did there, to go over beside it. "Show All Repositories" (the title's menu)
+  // shows every repo again, until another file opens.
+  let allRepos = false, scoped = null;
+  function fileRepo() {
+    const path = !allRepos && FE ? FE.list().find((f) => f.id === FE.current())?.path : null;
+    if (!path) return null;
+    return repos.filter((r) => path.startsWith(`${r.root}/`)).sort((a, b) => b.root.length - a.root.length)[0] || null;
+  }
   let graphRoot = null; // the repo the graph shows: the one last used in CHANGES (VS Code's "Auto")
   let graph = { root: null, rows: [], n: 50, more: false, sig: '', at: 0 };
   let graphAll = false; // the graph's refs: VS Code's "Auto" (the branch, its upstream and base), or every branch
@@ -283,9 +298,14 @@ window.GitView = (() => {
     const focused = document.activeElement && document.activeElement.matches('.vs-msg') ? document.activeElement : null;
     const keep = focused && { root: focused.dataset.root, start: focused.selectionStart, end: focused.selectionEnd, top: focused.scrollTop };
     // One repo shows without its row, as in VS Code; several each under theirs.
-    const multi = repos.length > 1;
+    const only = fileRepo();
+    scoped = only?.root || null;
+    view.querySelector('.vs-scope').textContent = only ? only.name : '';
+    const shown = only ? [only] : repos;
+    const multi = shown.length > 1;
+    const edited = (f) => (only && f.editors && f.editors.length ? 1 : 0);
     let html = '';
-    for (const r of repos) {
+    for (const r of shown) {
       const depth = multi ? 2 : 1;
       if (multi) {
         html += repoRow(r);
@@ -293,7 +313,7 @@ window.GitView = (() => {
       }
       html += inputRow(r, depth) + buttonRow(r, depth);
       for (const [group, label, staged] of [['index', 'Staged Changes', true], ['work', 'Changes', false]]) {
-        const list = r.files.filter((f) => f.staged === staged).sort((a, b) => comparePaths(a.path, b.path));
+        const list = r.files.filter((f) => f.staged === staged).sort((a, b) => edited(b) - edited(a) || comparePaths(a.path, b.path));
         if (!list.length) continue;
         html += groupRow(r, group, label, list, depth);
         if (!shut.has(`g:${r.root}|${group}`)) html += list.map((f) => fileRow(r, f, depth + 1)).join('');
@@ -617,18 +637,13 @@ window.GitView = (() => {
     if (!editor || editor.kind !== 'change') return;
     const f = repos.find((r) => r.root === editor.root)?.files.find((x) => x.path === editor.path && x.staged === editor.staged);
     const sig = f ? `${f.add}/${f.del}/${f.status}` : 'gone';
-    if (sig !== shownSig) showEditor();
+    if (sig === shownSig) return;
+    if (front === 'diff') showEditor();
+    else renderTabs();
   }
 
-  async function showEditor() {
-    const my = ++editorSeq;
-    cursor = blame = null;
-    if (!editor) {
-      edEl.innerHTML = '';
-      facts = null;
-      window.GitEditor.close();
-      return renderStatus();
-    }
+  // The diff's tab: its name and letter in the file's git colour (VS Code's editor decorations), italic as a preview.
+  function diffTab() {
     const r = repos.find((x) => x.root === editor.root);
     let letter = editor.status;
     if (editor.kind === 'change') {
@@ -636,23 +651,96 @@ window.GitView = (() => {
       if (f) editor.status = letter = f.status;
       shownSig = f ? `${f.add}/${f.del}/${f.status}` : 'gone';
     }
-    // The tab: its name and letter in the file's git colour (VS Code's editor decorations), italic while a preview.
     const side = editor.kind === 'commit' ? 'work' : editor.staged ? 'index' : 'work';
     const color = LETTER[side][letter] || LETTER.work.M;
-    const st = window.GitEditor.state() || { ignoreTrim: stored('git.ignoreTrim', '1') === '1', collapse: stored('git.collapse', '0') === '1', inline: stored('git.inline', '0') === '1' };
-    const crumbs = editor.path.split('/').map((p, i, all) => `<span class="vs-bi">${i === all.length - 1 ? fileIcon(editor.path) : ''}${esc(p)}</span>`).join(ci('chevron-right', 'vs-bs')) + `${ci('chevron-right', 'vs-bs')}<span class="vs-bi">…</span>`;
-    edEl.innerHTML =
-      `<div class="vs-tabs"><div class="vs-tab" title="${esc(`${r?.path || editor.root}/${editor.path}`)}">${fileIcon(editor.path)}<span class="vs-tl" style="color:${color}">${esc(title())}</span>` +
+    return (
+      `<div class="vs-tab vs-dtab${front === 'diff' ? ' on' : ''}" data-tab="diff" title="${esc(`${r?.path || editor.root}/${editor.path}`)}">${fileIcon(editor.path)}<span class="vs-tl" style="color:${color}">${esc(title())}</span>` +
       `<span class="vs-tdeco" style="color:${color}">${esc(letter || '')}</span>` +
-      `<div class="vs-ta"><a class="vs-al" data-act="close-editor" title="Close (${MOD}W)">${ci('close')}</a></div></div>` +
-      `<div class="vs-eda"><a class="vs-al" data-act="open-file" title="Open File">${ci('go-to-file')}</a>` +
-      `<a class="vs-al" data-act="prev-change" title="Previous Change">${ci('arrow-up')}</a><a class="vs-al" data-act="next-change" title="Next Change">${ci('arrow-down')}</a>` +
-      `<a class="vs-al${st.ignoreTrim ? '' : ' on'}" data-act="toggle-whitespace" title="Show Leading/Trailing Whitespace Differences">${ci('whitespace')}</a>` +
-      `<a class="vs-al${st.collapse ? ' on' : ''}" data-act="toggle-collapse" title="Collapse Unchanged Regions">${ci('map')}</a>` +
-      `<a class="vs-al${st.inline ? ' on' : ''}" data-act="toggle-inline" title="Toggle Inline View">${ci(st.inline ? 'diff-single' : 'split-horizontal')}</a>` +
-      `<a class="vs-al" data-act="editor-menu" title="More Actions...">${ci('ellipsis')}</a></div></div>` +
-      `<div class="vs-crumbs">${crumbs}</div><div class="vs-view"><div class="vs-dv"></div></div>`;
-    const result = await window.GitEditor.open(edEl.querySelector('.vs-dv'), { ...editor, root: editor.root }, {
+      `<div class="vs-ta"><a class="vs-al" data-act="close-editor" title="Close (${MOD}W)">${ci('close')}</a></div></div>`
+    );
+  }
+
+  // The editor's frame, made when something opens: the tabs and the toolbar, the path, and the view (the diff's, and
+  // file-editor.js's for the files).
+  function frame() {
+    if (edEl.querySelector('.vs-view')) return;
+    edEl.innerHTML = '<div class="vs-tabs"><div class="vs-tabrow"></div><div class="vs-eda"></div></div><div class="vs-crumbs"></div><div class="vs-view"><div class="vs-dv"></div></div>';
+    if (FE) edEl.querySelector('.vs-view').appendChild(FE.host);
+  }
+
+  // The tabs (the diff's first, then the files', a dot on one with unsaved changes) and the toolbar of the one in front.
+  function renderTabs() {
+    const row = edEl.querySelector('.vs-tabrow');
+    if (!row) return;
+    let html = editor ? diffTab() : '';
+    for (const f of FE ? FE.list() : []) {
+      html +=
+        `<div class="vs-tab vs-ftab${front === f.id ? ' on' : ''}${f.dirty ? ' dirty' : ''}${f.gone ? ' gone' : ''}" data-tab="${f.id}" title="${esc(f.tip)}">${fileIcon(f.name)}` +
+        `<span class="vs-tl">${esc(f.name)}</span>${f.twin ? `<span class="vs-tdesc">${esc(f.twin)}</span>` : ''}` +
+        `<div class="vs-ta"><a class="vs-al" data-close="${f.id}" title="Close (${MOD}W)">${ci('circle-filled', 'vs-dot')}${ci('close', 'vs-x')}</a></div></div>`;
+    }
+    row.innerHTML = html;
+    row.querySelector('.vs-tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    let acts;
+    if (front === 'diff') {
+      const st = window.GitEditor.state() || { ignoreTrim: stored('git.ignoreTrim', '1') === '1', collapse: stored('git.collapse', '0') === '1', inline: stored('git.inline', '0') === '1' };
+      acts =
+        `<a class="vs-al" data-act="open-file" title="Open File">${ci('go-to-file')}</a>` +
+        `<a class="vs-al" data-act="prev-change" title="Previous Change">${ci('arrow-up')}</a><a class="vs-al" data-act="next-change" title="Next Change">${ci('arrow-down')}</a>` +
+        `<a class="vs-al${st.ignoreTrim ? '' : ' on'}" data-act="toggle-whitespace" title="Show Leading/Trailing Whitespace Differences">${ci('whitespace')}</a>` +
+        `<a class="vs-al${st.collapse ? ' on' : ''}" data-act="toggle-collapse" title="Collapse Unchanged Regions">${ci('map')}</a>` +
+        `<a class="vs-al${st.inline ? ' on' : ''}" data-act="toggle-inline" title="Toggle Inline View">${ci(st.inline ? 'diff-single' : 'split-horizontal')}</a>` +
+        `<a class="vs-al" data-act="editor-menu" title="More Actions...">${ci('ellipsis')}</a>`;
+    } else {
+      acts = FE.actions(front).map((b) => `<a class="vs-al${b.label ? ' vs-btn' : ''}" data-fact="${b.act}" title="${esc(b.title)}">${ci(b.icon)}${b.label ? `<span>${esc(b.label)}</span>` : ''}</a>`).join('');
+    }
+    edEl.querySelector('.vs-eda').innerHTML = acts;
+  }
+
+  // The path: the diff's in its repo, a file's from its chat's folder (VS Code's breadcrumbs).
+  function renderCrumbs() {
+    const el = edEl.querySelector('.vs-crumbs');
+    if (!el) return;
+    const diff = front === 'diff';
+    const parts = diff ? editor.path.split('/') : FE.crumbs(front);
+    el.innerHTML =
+      parts.map((p, i) => `<span class="vs-bi">${i === parts.length - 1 ? fileIcon(diff ? editor.path : p) : ''}${esc(p)}</span>`).join(ci('chevron-right', 'vs-bs')) +
+      (diff ? `${ci('chevron-right', 'vs-bs')}<span class="vs-bi">…</span>` : '');
+  }
+
+  async function showEditor() {
+    const my = ++editorSeq;
+    cursor = blame = null;
+    const files = FE ? FE.list() : [];
+    // The tab in front: the one picked, else the diff, else the file shown last (or the last one opened).
+    if (front !== 'diff' && !files.some((f) => f.id === front)) front = 'diff';
+    if (front === 'diff' && !editor && files.length) front = files.some((f) => f.id === FE.current()) ? FE.current() : files[files.length - 1].id;
+    if (!editor && !files.length) {
+      edEl.innerHTML = FE ? `<div class="vs-wm"><div><span>New File</span><kbd>${MOD}N</kbd></div><div><span>Open a File</span><span>${MOD}-click its path in a terminal</span></div></div>` : '';
+      facts = null;
+      window.GitEditor.close();
+      return renderStatus();
+    }
+    frame();
+    renderTabs();
+    renderCrumbs();
+    const dv = edEl.querySelector('.vs-dv');
+    if (front !== 'diff') {
+      dv.hidden = true;
+      FE.host.hidden = false;
+      window.GitEditor.close();
+      facts = null;
+      edEl.dataset.abs = '';
+      renderStatus();
+      await FE.show(front);
+      if (my !== editorSeq) return;
+      renderTabs();
+      follow();
+      return renderStatus();
+    }
+    dv.hidden = false;
+    if (FE) FE.host.hidden = true;
+    const result = await window.GitEditor.open(dv, { ...editor, root: editor.root }, {
       onCursor: (c) => ((cursor = c), renderStatus()),
       onBlame: (b) => ((blame = b), renderStatus()),
     });
@@ -661,6 +749,36 @@ window.GitView = (() => {
     edEl.dataset.abs = result.abs || '';
     renderStatus();
   }
+
+  // Changes narrows to the project of the file shown (or widens when none is), and the graph shows its history.
+  function follow() {
+    const r = fileRepo();
+    if ((r?.root || null) === scoped) return;
+    renderChanges();
+    if (r) useRepo(r.root);
+  }
+
+  // A tab picked: the diff or a file, with the keyboard.
+  async function pick(id) {
+    front = id;
+    await showEditor();
+    if (id !== 'diff') FE.focus();
+  }
+
+  // ⌘W: the tab in front closes (a file saves first; a new one with text asks).
+  async function closeTab(id) {
+    if (id === 'diff') editor = null;
+    else if (!(await FE.close(id))) return;
+    await showEditor();
+    follow();
+  }
+
+  // The files open beside the diff tell when their tabs or the status bar change.
+  FE?.onChange((tabs) => {
+    if (!edEl.querySelector('.vs-view')) return;
+    if (tabs) renderTabs(), front !== 'diff' && renderCrumbs();
+    renderStatus();
+  });
 
   // The status bar, VS Code's: the branch and its sync, the problems; for the file open, GitLens's blame of the line,
   // the cursor, the indent, the encoding, the line ends and the language.
@@ -675,9 +793,21 @@ window.GitView = (() => {
         ? item(ci('cloud-upload'), 'Publish Branch', 'status-publish')
         : item(`${ci('sync')}${r.ahead || r.behind ? `<span>${r.behind}↓ ${r.ahead}↑</span>` : ''}`, 'Synchronize Changes', 'status-sync');
     }
-    left += item(`${ci('error')}<span>0</span>${ci('warning')}<span>0</span>`, 'No Problems');
+    // A file in front: its problems (JSON's), its cursor, indent, encoding, line ends and language (file-editor.js).
+    const fs = front !== 'diff' && FE ? FE.status(front) : null;
+    left += fs && (fs.errors || fs.warnings)
+      ? item(`${ci('error')}<span>${fs.errors}</span>${ci('warning')}<span>${fs.warnings}</span>`, 'Go to Next Problem (F8)', 'file-problem')
+      : item(`${ci('error')}<span>0</span>${ci('warning')}<span>0</span>`, 'No Problems');
     let right = '';
-    if (editor && facts && !facts.note) {
+    if (fs) {
+      right += fs.preview
+        ? item(`${ci('open-preview')}<span>Preview</span>`, 'The Markdown as it reads (⇧⌘V edits it)')
+        : item(`<span>Ln ${fs.line || 1}, Col ${fs.col || 1}${fs.selected ? ` (${fs.selected} selected)` : ''}</span>`, 'Go to Line/Column', 'file-goto');
+      if (fs.indent) right += item(`<span>${esc(fs.indent)}</span>`, 'Select Indentation');
+      right += item(`<span>${esc(fs.encoding)}</span>`, 'Select Encoding');
+      right += item(`<span>${esc(fs.eol)}</span>`, 'Select End of Line Sequence');
+      right += item(`<span>{ }</span><span>${esc(fs.language)}</span>`, 'Select Language Mode');
+    } else if (front === 'diff' && editor && facts && !facts.note) {
       if (blame) right += item(`${ci('git-commit')}<span>${esc(blame.who)}, ${esc(blame.when)}</span>`, blame.uncommitted ? 'Uncommitted changes' : `${blame.author}, ${blame.when}\n${blame.summary || ''}\n${(blame.hash || '').slice(0, 7)}`);
       right += item(`<span>Ln ${cursor ? cursor.line : 1}, Col ${cursor ? cursor.col : 1}</span>`, 'Go to Line/Column');
       right += item(`<span>${esc(facts.indent)}</span>`, 'Select Indentation');
@@ -842,7 +972,7 @@ window.GitView = (() => {
       if (a === 'unstage-all') return act('unstage', root, r.files.filter((f) => f.staged).map((f) => f.path));
       if (a === 'discard-all') return discard(root, r.files.filter((f) => !f.staged));
       const p = rowEl.dataset.path;
-      if (a === 'open') return openInVSCode(`${root}/${p}`);
+      if (a === 'open') return openFile(`${root}/${p}`, root);
       if (a === 'stage') return act('stage', root, [p]);
       if (a === 'unstage') return act('unstage', root, [p]);
       if (a === 'discard') return discard(root, r.files.filter((f) => f.path === p && !f.staged));
@@ -853,6 +983,7 @@ window.GitView = (() => {
     if (rowEl.classList.contains('vs-file')) {
       select(key, changesEl);
       editor = { kind: 'change', root, path: rowEl.dataset.path, staged: rowEl.dataset.staged === '1' };
+      front = 'diff';
       return showEditor();
     }
     // A group folds with a click anywhere on it; a repo with its twistie (its row has buttons).
@@ -871,6 +1002,18 @@ window.GitView = (() => {
     link.click();
   }
 
+  // Open File: in the editor beside the diff, as VS Code opens it (the app checks it's text, else its app opens it);
+  // in VS Code where there's no file editor (the Windows app).
+  function openFile(abs, root) {
+    if (!FE) return openInVSCode(abs);
+    window.webkit.messageHandlers.files.postMessage({ type: 'openPath', path: abs, cwd: root || '' });
+  }
+  // A middle click closes a tab, as in VS Code.
+  edEl.addEventListener('auxclick', (e) => {
+    const tab = e.button === 1 && e.target.closest('.vs-tab[data-tab]');
+    if (tab) e.preventDefault(), closeTab(tab.dataset.tab);
+  });
+
   graphEl.addEventListener('click', (e) => {
     const rowEl = e.target.closest('.vs-r');
     if (!rowEl) return;
@@ -883,19 +1026,23 @@ window.GitView = (() => {
     if (rowEl.classList.contains('vs-hc')) {
       const row = graph.rows.find((x) => x.item.id === rowEl.dataset.hash);
       editor = { kind: 'commit', root: graph.root, hash: rowEl.dataset.hash, parent: row?.item.parentIds[0], path: rowEl.dataset.path, status: rowEl.dataset.status };
+      front = 'diff';
       showEditor();
     }
   });
 
   edEl.addEventListener('click', async (e) => {
+    const closer = e.target.closest('[data-close]');
+    if (closer) return closeTab(closer.dataset.close);
+    const fact = e.target.closest('[data-fact]')?.dataset.fact;
+    if (fact) return FE.act(fact);
     const el = e.target.closest('[data-act]');
     const a = el?.dataset.act;
+    const tab = e.target.closest('.vs-tab[data-tab]');
+    if (tab && !a) return tab.classList.contains('on') ? front !== 'diff' && FE.focus() : pick(tab.dataset.tab);
     const E = window.GitEditor;
-    if (a === 'close-editor') {
-      editor = null;
-      return showEditor();
-    }
-    if (a === 'open-file') return edEl.dataset.abs && openInVSCode(edEl.dataset.abs);
+    if (a === 'close-editor') return closeTab('diff');
+    if (a === 'open-file') return edEl.dataset.abs && openFile(edEl.dataset.abs, editor?.root);
     if (a === 'prev-change' || a === 'next-change') return E.reveal(a === 'next-change' ? 1 : -1);
     const toggles = { 'toggle-whitespace': 'whitespace', 'toggle-collapse': 'collapse', 'toggle-inline': 'inline' };
     if (toggles[a]) {
@@ -912,12 +1059,13 @@ window.GitView = (() => {
       const st = E.state() || {};
       const i = await menu(el, [st.inline ? 'Side by Side View' : 'Inline View', st.collapse ? 'Show Unchanged Regions' : 'Collapse Unchanged Regions', st.ignoreTrim ? 'Show Leading/Trailing Whitespace Differences' : 'Ignore Leading/Trailing Whitespace Differences', '', 'Open File']);
       if (i >= 0 && i <= 2) edEl.querySelector(`[data-act="${['toggle-inline', 'toggle-collapse', 'toggle-whitespace'][i]}"]`).click();
-      if (i === 4 && edEl.dataset.abs) openInVSCode(edEl.dataset.abs);
+      if (i === 4 && edEl.dataset.abs) openFile(edEl.dataset.abs, editor?.root);
     }
   });
 
   statusEl.addEventListener('click', async (e) => {
     const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'file-goto' || a === 'file-problem') return FE?.act(a.slice(5));
     const root = editor?.root || graphRoot;
     if (!root || !a) return;
     if (a === 'status-sync') await sync(root);
@@ -931,8 +1079,17 @@ window.GitView = (() => {
 
   view.querySelector('.vs-sb').addEventListener('click', async (e) => {
     if (e.target.closest('.vs-title [data-act="views-menu"]')) {
-      const i = await menu(e.target.closest('[data-act]'), [`${changesPane.classList.contains('shut') ? 'Expand' : 'Collapse'} Changes`, `${graphPane.classList.contains('shut') ? 'Expand' : 'Collapse'} Graph`]);
-      if (i >= 0) [changesPane, graphPane][i].querySelector('.vs-ph h3').click();
+      // While files are open: Changes narrowed to the file's project, or every repo.
+      const narrowed = !!fileRepo();
+      const scope = narrowed ? ['', 'Show All Repositories'] : allRepos && FE?.list().some((f) => f.path) ? ['', "Show Only the File's Project"] : [];
+      const i = await menu(e.target.closest('[data-act]'), [`${changesPane.classList.contains('shut') ? 'Expand' : 'Collapse'} Changes`, `${graphPane.classList.contains('shut') ? 'Expand' : 'Collapse'} Graph`, ...scope]);
+      if (i === 0 || i === 1) [changesPane, graphPane][i].querySelector('.vs-ph h3').click();
+      if (i === 3) {
+        allRepos = narrowed;
+        renderChanges();
+        const r = fileRepo();
+        if (r) useRepo(r.root);
+      }
       return;
     }
     const head = e.target.closest('.vs-ph');
@@ -1108,6 +1265,14 @@ window.GitView = (() => {
   // in cloud.js.
   function switchTo(v) {
     if (v === 'feedback') return window.Cloud?.openFeedback();
+    // Source Control's icon while it shows: its side bar goes (the editor takes the whole width) or comes back, as in
+    // VS Code; opened from elsewhere, it comes with its side bar.
+    if (v === 'git' && open) {
+      view.classList.toggle('side-off');
+      dispatchEvent(new Event('resize'));
+      return requestAnimationFrame(() => window.GitEditor.measure());
+    }
+    if (v === 'git') view.classList.remove('side-off');
     setOpen(v === 'git');
     if (['friends', 'board', 'themes', 'notifications'].includes(v)) {
       window.Cloud?.showView(v);
@@ -1120,11 +1285,27 @@ window.GitView = (() => {
     if (b) switchTo(b.dataset.view);
   });
   addEventListener('keydown', (e) => {
-    // ⌃⇧G opens it, as in VS Code; Esc goes back to the dashboard.
+    // ⌃⇧G opens it, as in VS Code; Esc goes back to the dashboard (not from a file being written).
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyG') return setOpen(!open);
-    if (!open || e.target.closest('input, textarea')) return;
+    if (!open || e.target.closest?.('input, textarea, .fe-host')) return;
     if (e.key === 'Escape') return setOpen(false);
   });
+  // VS Code's: ⌘W closes the tab in front, ⌃Tab goes through the tabs. (The Windows app keeps its keys as they were.)
+  addEventListener('keydown', (e) => {
+    if (!open || WIN) return;
+    const tabs = [...edEl.querySelectorAll('.vs-tab[data-tab]')].map((t) => t.dataset.tab);
+    if (!tabs.length) return;
+    if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyW') {
+      e.preventDefault();
+      e.stopPropagation();
+      return closeTab(front);
+    }
+    if (e.ctrlKey && !e.metaKey && e.key === 'Tab' && tabs.length > 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      return pick(tabs[(tabs.indexOf(front) + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length]);
+    }
+  }, true);
 
   // The list keeps up while it's open (a session writing shows at once); the badge and the cards every 15 s.
   // Only while the dashboard shows (the app pauses it when hidden): every few seconds when open, else for the badge.
@@ -1133,5 +1314,21 @@ window.GitView = (() => {
   setInterval(() => !open && shown() && load(), 15_000);
   load();
 
-  return { show, view: switchTo, open: () => setOpen(true), close: () => setOpen(false) };
+  // A file from a terminal's ⌘-click or a Markdown preview's link (FileEditor.swift), and ⌘N's new one: Source Control
+  // opens on it, in a tab beside the diff.
+  async function openFileTab(spec) {
+    if (!FE) return;
+    if (!open) setOpen(true);
+    const id = await FE.open(spec);
+    if (!id) return;
+    allRepos = false;
+    await pick(id);
+  }
+  async function newFile() {
+    if (!FE) return;
+    if (!open) setOpen(true);
+    await pick(FE.newFile());
+  }
+
+  return { show, view: switchTo, open: () => setOpen(true), close: () => setOpen(false), openFile: openFileTab, newFile };
 })();

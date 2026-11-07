@@ -711,6 +711,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         terminal.onSelection = { [weak self] text in self?.showSelection(text) }
         terminal.onCopy = { [weak self] text in self?.showCopied(text) }
         terminal.onFocus = { [weak self] in self?.focusChanged() }
+        terminal.onOpenFile = { [weak self] url, line, column in
+            self?.openFile(url, line: line, column: column, from: self?.terminal) ?? false
+        }
         buildLayout()
         paintTheme()
         themeWatch = NotificationCenter.default.addObserver(forName: ThemeStore.changed, object: nil, queue: .main) { [weak self] _ in
@@ -1250,6 +1253,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         pane.terminal.onSelection = { [weak self] in self?.showSelection($0) }
         pane.terminal.onCopy = { [weak self] in self?.showCopied($0) }
         pane.terminal.onFocus = { [weak self] in self?.focusChanged() }
+        pane.terminal.onOpenFile = { [weak self, weak pane] url, line, column in
+            self?.openFile(url, line: line, column: column, from: pane?.terminal) ?? false
+        }
         pane.terminal.suspendsRenderingWhenNotVisible = !isShown
         extras.append(pane)
         return pane
@@ -1291,6 +1297,14 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         refreshPanes()
         if focus { self.focus(pane.terminal) }
         pane.start(session: session, parent: detached?.name, fit: isShown)
+    }
+
+    /// A text file ⌘-clicked in `tv`: in Source Control's editor, its path shown from the folder `tv` is in. False for a
+    /// file the editor doesn't show (the terminal opens it in its app).
+    func openFile(_ url: URL, line: Int?, column: Int?, from tv: ChatTerminalView?) -> Bool {
+        let tv = tv ?? focusedTerminal
+        let folder = tv === terminal ? (shellPid > 0 ? Proc.cwd(shellPid) : nil) ?? cwd : extra(of: tv)?.currentFolder ?? cwd
+        return manager?.openFile(url, line: line, column: column, cwd: folder) ?? false
     }
 
     /// `new` goes beside `old`: after it (right or below), or `before` it.

@@ -15,6 +15,9 @@ final class ChatTerminalView: LocalProcessTerminalView {
     var onFocus: (() -> Void)?
     /// The folder a relative path in the output is taken from (the session's), for ⌘-click.
     var workingDirectory: () -> String? = { nil }
+    /// A file ⌘-clicked: Source Control's editor opens it (FileEditor.swift), at the line the path names; false when
+    /// that's not a file the editor shows.
+    var onOpenFile: ((URL, Int?, Int?) -> Bool)?
 
     /// A click or a drag goes to Claude when its full-screen view is in front and follows the mouse, as in iTerm2: Claude
     /// selects across its whole history, the selection staying on the text as it scrolls (when the drag reaches the
@@ -157,40 +160,57 @@ final class ChatTerminalView: LocalProcessTerminalView {
         }
     }
 
-    /// ⌘-click on a link: a web address opens in the browser, a file in its app, as in iTerm2. Claude wraps its own
+    /// ⌘-click on a link: a web address opens in the browser; a text file in Source Control's editor (onOpenFile), as
+    /// VS Code would open it; any other file in its app, as in iTerm2. Claude wraps its own
     /// text, so a long path it printed can sit on two or three lines the terminal doesn't know belong together: a
     /// piece that isn't a file is joined with the path text ending the line above or starting the line below.
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        if link.contains("://") || ["mailto:", "tel:", "file:"].contains(where: link.hasPrefix), let url = URL(string: link) {
+        if link.hasPrefix("file:"), let url = URL(string: link), url.isFileURL {
+            open(FileTarget(url: url))
+        } else if link.contains("://") || ["mailto:", "tel:"].contains(where: link.hasPrefix), let url = URL(string: link) {
             NSWorkspace.shared.open(url)
-        } else if let url = fileURL(link) ?? wholePath(around: link) {
-            NSWorkspace.shared.open(url)
+        } else if let target = fileTarget(link) ?? wholePath(around: link) {
+            open(target)
         }
+    }
+
+    /// A file a path names, and the line and column it names with it ("file.swift:12:4").
+    private struct FileTarget {
+        let url: URL
+        var line: Int?
+        var column: Int?
+    }
+
+    private func open(_ target: FileTarget) {
+        if onOpenFile?(target.url, target.line, target.column) != true { NSWorkspace.shared.open(target.url) }
     }
 
     /// The file `text` names (from the session's folder when relative), also as "file.swift:12" or "file.swift:12:4",
     /// or followed by a sentence's full stop or a closing bracket (the link takes those in).
-    private func fileURL(_ text: String) -> URL? {
+    private func fileTarget(_ text: String) -> FileTarget? {
         var trimmed = text
         while let last = trimmed.last, ".,;:!?)]}'\"`".contains(last) { trimmed.removeLast() }
         return existingFile(text) ?? (trimmed == text || trimmed.isEmpty ? nil : existingFile(trimmed))
     }
 
-    private func existingFile(_ text: String) -> URL? {
+    private func existingFile(_ text: String) -> FileTarget? {
         var path = (text as NSString).expandingTildeInPath
         if !path.hasPrefix("/") {
             guard let cwd = workingDirectory() else { return nil }
             path = (cwd as NSString).appendingPathComponent(path)
         }
+        var numbers: [Int] = []
         if let line = path.range(of: #":[0-9]+(?::[0-9]+)?$"#, options: .regularExpression),
            !FileManager.default.fileExists(atPath: path) {
+            numbers = path[line].split(separator: ":").compactMap { Int($0) }
             path = String(path[..<line.lowerBound])
         }
-        return FileManager.default.fileExists(atPath: path) ? URL(fileURLWithPath: path) : nil
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        return FileTarget(url: URL(fileURLWithPath: path), line: numbers.first, column: numbers.dropFirst().first)
     }
 
     /// The longest existing path that `piece`, found on screen, is part of, up to two lines above and below it.
-    private func wholePath(around piece: String) -> URL? {
+    private func wholePath(around piece: String) -> FileTarget? {
         guard let terminal = engine else { return nil }
         let rows: [String] = terminal.terminalLock.withLock {
             (0..<terminal.rows).map { terminal.getLine(row: $0)?.translateToString(trimRight: true) ?? "" }
@@ -199,7 +219,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
         let head = { (s: String) in String(s.drop { $0.isWhitespace }.prefix { !$0.isWhitespace }) }
         // A line that's nothing but path text goes on the path whole; otherwise it ends or starts it.
         let alone = { (s: String) in !s.isEmpty && !s.trimmingCharacters(in: .whitespaces).contains(" ") }
-        var best: URL?
+        var best: FileTarget?
         for (i, row) in rows.enumerated() {
             var from = row.startIndex
             while let r = row.range(of: piece, range: from..<row.endIndex) {
@@ -218,7 +238,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
                 }
                 for a in above {
                     for b in below where !(a.isEmpty && b.isEmpty) {
-                        if let url = fileURL(a + piece + b), url.path.count > best?.path.count ?? 0 { best = url }
+                        if let target = fileTarget(a + piece + b), target.url.path.count > best?.url.path.count ?? 0 { best = target }
                     }
                 }
             }

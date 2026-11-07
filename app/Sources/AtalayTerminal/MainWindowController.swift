@@ -11,6 +11,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let overlay = OverlayController()
     /// Processes left burning a core where nobody sees them; the dashboard sounds the alarm.
     let runaways = Runaways()
+    /// Source Control's files (FileEditor.swift): the ones the page may read and write.
+    let files = FilesBridge()
 
     private var chats: [String: ChatWindowController] = [:]
     private var briefs: [String: SessionBrief] = [:]
@@ -55,6 +57,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         MessagePanel.dashboard = window
         radar.handleGit(GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] }))
         radar.handleSpend(SpendBridge(engine: engine))
+        radar.handleFiles(files)
+        files.onOpen = { [weak self] url, line, cwd in self?.radar.openFile(url, line: line, column: nil, cwd: cwd) }
         overlay.manager = self
         buildLayout()
         wireEngine()
@@ -546,6 +550,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// A text file ⌘-clicked in a terminal: in Source Control's editor, as VS Code opens one, in a tab of its own (at
+    /// `line`). False for a file the editor doesn't show (the terminal opens it in its app). `cwd`: the terminal's folder,
+    /// its path is shown from there.
+    func openFile(_ url: URL, line: Int?, column: Int?, cwd: String) -> Bool {
+        guard FilesBridge.canOpen(url) else { return false }
+        files.allow(url)
+        showDashboard()
+        window?.makeFirstResponder(radar.webView)
+        radar.openFile(url, line: line, column: column, cwd: cwd)
+        return true
+    }
+
+    /// ⌘N: a new file in Source Control's editor (VS Code's Untitled-1), from any window.
+    func newFile() {
+        showDashboard()
+        window?.makeFirstResponder(radar.webView)
+        radar.newFile()
+    }
+
     // Friend chats stay above the dashboard when it's clicked, like the terminals.
     func windowDidBecomeKey(_ notification: Notification) {
         MessagePanel.pinAll()
@@ -982,6 +1005,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Chats that stop when the app quits: only those whose detached session couldn't start.
     var runningChatCount: Int { chats.values.filter { !$0.hud.exited && $0.detached == nil }.count }
+
+    /// What Source Control's editor hasn't saved yet goes to disk (the app quits), then `done`, always later: at the
+    /// latest in 2 s (a page that doesn't answer).
+    func flushFiles(_ done: @escaping () -> Void) {
+        var finished = false
+        let finish = {
+            guard !finished else { return }
+            finished = true
+            DispatchQueue.main.async(execute: done)
+        }
+        radar.flushFiles { finish() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish() }
+    }
 
     func terminateAll() {
         for c in chats.values {

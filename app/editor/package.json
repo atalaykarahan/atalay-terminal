@@ -1,0 +1,16 @@
+{
+  "name": "atalay-terminal-editor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The file editor's Monaco (VS Code's own editor), built into Resources/web/editor",
+  "type": "module",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "monaco-editor": "0.57.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

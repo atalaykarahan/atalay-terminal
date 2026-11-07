@@ -1,0 +1,46 @@
+/* ===== Source Control's files (file-editor.js): Monaco see-through on the editor's colour, as the diff is drawn, its
+   widgets (find, suggestions, hovers) solid; the Markdown preview as VS Code's (its markdown.css) in the theme's
+   colours. ===== */
+#git .fe-host { position: absolute; inset: 0; display: flex; flex-direction: column; }
+#git .fe-host[hidden], #git .fe-banner[hidden], #git .fe-code[hidden], #git .fe-preview[hidden] { display: none; }
+#git .fe-view { position: relative; flex: 1; min-height: 0; }
+#git .fe-code, #git .fe-preview { position: absolute; inset: 0; }
+#git .fe-host .monaco-editor, #git .fe-host .monaco-editor-background, #git .fe-host .monaco-editor .margin { background-color: transparent !important; }
+
+/* A file changed on disk while it had unsaved changes, or a save that failed. */
+#git .fe-banner { display: flex; flex: none; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid color-mix(in srgb, var(--amber, #ffd23f) 35%, transparent); background: color-mix(in srgb, var(--amber, #ffd23f) 9%, transparent); color: var(--fg); font-size: 12px; }
+#git .fe-banner span { flex: 1; }
+#git .fe-banner button { padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px; background: none; color: var(--fg); font: 12px var(--ui); cursor: pointer; }
+#git .fe-banner button:hover { border-color: var(--focus); }
+
+#git .fe-preview { overflow-y: auto; outline: none; user-select: text; -webkit-user-select: text; }
+#git .fe-md { max-width: 880px; margin: 0 auto; padding: 18px 26px 40vh; color: var(--code-fg, var(--fg)); font: 14px/1.6 var(--ui); word-wrap: break-word; }
+#git .fe-md > :first-child { margin-top: 0; }
+#git .fe-md h1, #git .fe-md h2, #git .fe-md h3, #git .fe-md h4, #git .fe-md h5, #git .fe-md h6 { margin: 1.3em 0 0.6em; color: var(--hi, var(--fg)); font-weight: 600; line-height: 1.25; }
+#git .fe-md h1 { padding-bottom: 0.3em; border-bottom: 1px solid var(--border-soft); font-size: 2em; }
+#git .fe-md h2 { padding-bottom: 0.3em; border-bottom: 1px solid var(--border-soft); font-size: 1.5em; }
+#git .fe-md h3 { font-size: 1.25em; }
+#git .fe-md h4 { font-size: 1em; }
+#git .fe-md h5 { font-size: 0.875em; }
+#git .fe-md h6 { color: var(--desc); font-size: 0.85em; }
+#git .fe-md p, #git .fe-md ul, #git .fe-md ol, #git .fe-md blockquote, #git .fe-md pre, #git .fe-md table, #git .fe-md dl { margin: 0 0 1em; }
+#git .fe-md ul, #git .fe-md ol { padding-left: 2em; }
+#git .fe-md li + li, #git .fe-md li > ul, #git .fe-md li > ol { margin-top: 0.25em; }
+#git .fe-md li > p { margin: 0.4em 0; }
+#git .fe-md li:has(> input[type="checkbox"]) { list-style: none; }
+#git .fe-md li > input[type="checkbox"] { margin: 0 0.4em 0 -1.4em; vertical-align: -1px; accent-color: var(--focus); }
+#git .fe-md a { color: var(--focus); text-decoration: none; cursor: pointer; }
+#git .fe-md a:hover { text-decoration: underline; }
+#git .fe-md strong { color: var(--hi, var(--fg)); }
+#git .fe-md hr { height: 1px; margin: 1.6em 0; border: 0; background: var(--border-soft); }
+#git .fe-md blockquote { padding: 0 1em; border-left: 3px solid var(--border); color: var(--desc); }
+#git .fe-md code { padding: 0.15em 0.35em; border-radius: 4px; background: rgba(var(--accent-rgb), 0.1); font: 0.9em var(--code); }
+#git .fe-md pre { padding: 12px 14px; overflow-x: auto; border: 1px solid var(--border-soft); border-radius: 6px; background: rgba(var(--bg-rgb), 0.45); line-height: 1.45; }
+#git .fe-md pre code { padding: 0; background: none; color: var(--code-fg, var(--fg)); font-size: var(--code-size, 13px); white-space: pre; }
+#git .fe-md table { display: block; width: max-content; max-width: 100%; overflow: auto; border-collapse: collapse; }
+#git .fe-md th, #git .fe-md td { padding: 5px 12px; border: 1px solid var(--border-soft); }
+#git .fe-md th { color: var(--hi, var(--fg)); font-weight: 600; text-align: left; }
+#git .fe-md tr:nth-child(2n) td { background: rgba(var(--accent-rgb), 0.04); }
+#git .fe-md img { max-width: 100%; }
+#git .fe-md kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; font: 0.85em var(--code); }
+#git .fe-md .fe-empty { color: var(--desc); font-style: italic; }

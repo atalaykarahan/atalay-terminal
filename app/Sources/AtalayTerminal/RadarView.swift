@@ -26,9 +26,9 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         webView.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
     }
 
-    /// The terminals' font for the page (Source Control shows code in it), the user's iTerm2 one, as
-    /// `window.__terminalLook`; their colours are the theme's (ThemeStore).
-    private static let terminalLook: String = {
+    /// The terminals' font for the pages that show code in it (Source Control, the file editor), the user's iTerm2 one,
+    /// as `window.__terminalLook`; their colours are the theme's (ThemeStore).
+    static let terminalLook: String = {
         let look = ITermLook.current
         let family = look?.fontName.flatMap { NSFont(name: $0, size: 13)?.familyName } ?? "Menlo"
         let value: [String: Any] = ["font": family, "size": Double(look?.fontSize ?? 13)]
@@ -60,6 +60,35 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     /// The spend panel's history (web/app.js) comes from the engine's ledger (Ledger.swift).
     func handleSpend(_ bridge: SpendBridge) {
         webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "spend")
+    }
+
+    /// Source Control's files (web/file-editor.js) are read and written by FileEditor.swift.
+    func handleFiles(_ bridge: FilesBridge) {
+        bridge.web = webView
+        webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "files")
+    }
+
+    /// A file in Source Control's editor, in a tab of its own (or the one it has), at `line`; `cwd`: the folder its path
+    /// is shown from.
+    func openFile(_ url: URL, line: Int?, column: Int?, cwd: String) {
+        var spec: [String: Any] = ["path": url.standardizedFileURL.path, "cwd": cwd, "home": NSHomeDirectory()]
+        if let line { spec["line"] = line }
+        if let column { spec["column"] = column }
+        callPage("window.GitView && GitView.openFile(spec)", ["spec": spec])
+    }
+
+    /// ⌘N: a new file in Source Control's editor, VS Code's Untitled-1.
+    func newFile() { callPage("window.GitView && GitView.newFile()") }
+
+    /// What the editor hasn't saved yet goes to disk (the app quits), then `done`.
+    func flushFiles(_ done: @escaping @MainActor () -> Void) {
+        webView.callAsyncJavaScript("return window.FileEditor ? await FileEditor.flush() : true", arguments: [:], in: nil, in: .page) { _ in done() }
+    }
+
+    private func callPage(_ js: String, _ args: [String: Any] = [:]) {
+        webView.callAsyncJavaScript(js, arguments: args, in: nil, in: .page) { result in
+            if case .failure(let error) = result { NSLog("dashboard page: %@ failed: %@", js, String(describing: error)) }
+        }
     }
 
     func push(_ fn: String, _ json: String) {
