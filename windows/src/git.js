@@ -172,6 +172,16 @@ async function change(dir, args) {
   return { error: said.length ? said.slice(-3).join(' ') : 'git failed' };
 }
 
+// The collision banner's Isolate (main.js): a worktree of `dir`'s repository beside it (`<repo>-<name>`), on a new
+// branch (`isolate-<name>`). { path } or { error }.
+async function worktree(dir, name) {
+  const root = ((await read(dir, ['rev-parse', '--show-toplevel'])) || '').trim();
+  if (!root) return { error: 'not in a git repository' };
+  const where = path.join(path.dirname(root), `${path.basename(root)}-${name}`);
+  const r = await change(root, ['worktree', 'add', '-b', `isolate-${name}`, where]);
+  return r.ok ? { path: where } : r;
+}
+
 // Windows takes a command line of up to 32767 characters, so a long list of paths (Stage All on a big change) goes to
 // git in parts, as VS Code's git extension sends it.
 function batches(root, paths) {
@@ -699,7 +709,7 @@ function createGit({ folders = () => [], written = null, confirm = async () => -
     }
   }
 
-  return { handle };
+  return { handle, worktree };
 }
 
 module.exports = { createGit };

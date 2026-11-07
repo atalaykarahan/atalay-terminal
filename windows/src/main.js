@@ -1040,6 +1040,18 @@ ipcMain.on('term:resize', (e, { cols, rows }) => {
   const found = chatOf(e);
   if (found) terminals.resize(found[0], cols, rows);
 });
+// The collision banner's Isolate: a git worktree of the session's repository beside it, on a branch of its own, and a
+// terminal there to carry on in. The session itself stays where it is; git's reason, when it fails, shows in its window.
+ipcMain.on('term:isolate', async (e) => {
+  const found = chatOf(e);
+  if (!found) return;
+  const [id, c] = found;
+  const s = engine.live().find((x) => x.tab === id || (c.sessionId && x.sessionId === c.sessionId));
+  const name = String((s && s.sessionId) || id).replace(/[^a-z0-9]/gi, '').slice(0, 8);
+  const r = await git.worktree((s && s.cwd) || c.cwd, name);
+  if (r.path) openChatWindow({ cwd: r.path, claudeArgs: null, title: path.basename(r.path) });
+  else send(c.win, 'term:toast', r.error);
+});
 ipcMain.on('term:end', (e) => {
   const found = chatOf(e);
   if (found) endTerminal(found[0]);

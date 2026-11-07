@@ -679,6 +679,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private let collisionLabel = NSTextField(labelWithString: "")
     private var collisionTop: NSLayoutConstraint!
     private var collisionText: String?
+    private let collisionIsolate = NSButton(title: "Isolate in worktree", target: nil, action: nil)
 
     /// `claudeArgs` nil opens a plain terminal in `cwd`.
     init(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, fontSize: CGFloat, frame: NSRect,
@@ -847,10 +848,23 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         collisionBanner.translatesAutoresizingMaskIntoConstraints = false
         collisionLabel.font = Theme.mono(11, .bold)
         collisionLabel.textColor = .white
-        collisionLabel.alignment = .center
+        collisionLabel.alignment = .left
         collisionLabel.lineBreakMode = .byTruncatingTail
         collisionLabel.translatesAutoresizingMaskIntoConstraints = false
         collisionBanner.addSubview(collisionLabel)
+        collisionIsolate.isBordered = false
+        collisionIsolate.wantsLayer = true
+        collisionIsolate.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        collisionIsolate.layer?.borderColor = NSColor.white.withAlphaComponent(0.85).cgColor
+        collisionIsolate.layer?.borderWidth = 1
+        collisionIsolate.layer?.cornerRadius = 3
+        collisionIsolate.font = Theme.mono(10, .bold)
+        collisionIsolate.contentTintColor = .white
+        collisionIsolate.toolTip = "A git worktree of this repository beside it, on a branch of its own, and a terminal there"
+        collisionIsolate.target = self
+        collisionIsolate.action = #selector(isolateCollision)
+        collisionIsolate.translatesAutoresizingMaskIntoConstraints = false
+        collisionBanner.addSubview(collisionIsolate)
         container.addSubview(collisionBanner)
         collisionTop = collisionBanner.topAnchor.constraint(equalTo: container.topAnchor, constant: 34)
 
@@ -870,7 +884,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             collisionBanner.heightAnchor.constraint(equalToConstant: 26),
             collisionLabel.centerYAnchor.constraint(equalTo: collisionBanner.centerYAnchor),
             collisionLabel.leadingAnchor.constraint(equalTo: collisionBanner.leadingAnchor, constant: 10),
-            collisionLabel.trailingAnchor.constraint(equalTo: collisionBanner.trailingAnchor, constant: -10),
+            collisionLabel.trailingAnchor.constraint(lessThanOrEqualTo: collisionIsolate.leadingAnchor, constant: -8),
+            collisionIsolate.centerYAnchor.constraint(equalTo: collisionBanner.centerYAnchor),
+            collisionIsolate.trailingAnchor.constraint(equalTo: collisionBanner.trailingAnchor, constant: -8),
+            collisionIsolate.widthAnchor.constraint(equalToConstant: 136),
+            collisionIsolate.heightAnchor.constraint(equalToConstant: 18),
             ticker.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             ticker.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             ticker.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -916,6 +934,19 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         selectionBadge.isHidden = false
         copiedUntil = Date().addingTimeInterval(2.5)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in
+            guard let self else { return }
+            self.showSelection(self.terminal.getSelection())
+        }
+    }
+
+    @objc private func isolateCollision() { manager?.isolate(self) }
+
+    /// A word in the selection badge's place for a few seconds (Isolate's git error).
+    func showNote(_ text: String) {
+        selectionBadge.stringValue = " \(text) "
+        selectionBadge.isHidden = false
+        copiedUntil = Date().addingTimeInterval(4)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.1) { [weak self] in
             guard let self else { return }
             self.showSelection(self.terminal.getSelection())
         }

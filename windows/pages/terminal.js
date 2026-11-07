@@ -91,9 +91,21 @@
     const text = c ? `⚠ COLLISION RISK: Session ${c.with} is also editing "${c.file}"` : '';
     if (text === collisionText) return;
     collisionText = text;
-    collisionBanner.textContent = text;
+    document.getElementById('collision-text').textContent = text;
     collisionBanner.classList.toggle('active', !!text);
   }
+  // Isolate: the app makes a git worktree and opens a terminal there (main.js); git's reason, when it fails, shows here.
+  const isolateBtn = document.getElementById('isolate-btn');
+  isolateBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  isolateBtn.addEventListener('click', () => atl.send('term:isolate'));
+  const hudToast = document.getElementById('hud-toast');
+  let hudToastTimer = 0;
+  atl.on('term:toast', (msg) => {
+    hudToast.textContent = String(msg || '');
+    hudToast.classList.add('on');
+    clearTimeout(hudToastTimer);
+    hudToastTimer = setTimeout(() => hudToast.classList.remove('on'), 4000);
+  });
   document.getElementById('hud').addEventListener('mousedown', (e) => e.preventDefault());
   document.getElementById('dash').onclick = () => {
     term.focus();

@@ -520,6 +520,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         MessagePanel.pinAll()
     }
 
+    /// The collision banner's Isolate: a git worktree of the session's repository beside it, on a branch of its own,
+    /// and a terminal there to carry on in. The session itself stays where it is (a running program can't change
+    /// folders); git's reason, when it fails, shows in its window.
+    func isolate(_ c: ChatWindowController) {
+        let name = String((c.hud.brief?.id ?? c.id).filter { $0.isLetter || $0.isNumber }.prefix(8))
+        Git.addWorktree(from: c.hud.brief?.cwd ?? c.cwd, name: name) { [weak self, weak c] path, error in
+            if let path { self?.newTerminal(in: path) } else { c?.showNote(error ?? "git failed") }
+        }
+    }
+
     /// A terminal in `cwd`, not a chat: a new conversation starts with `claude`, an earlier one in that folder
     /// with `claude -r`. Whatever Claude runs there shows up in the window like any chat.
     func newTerminal(in cwd: String, frame: NSRect? = nil) {

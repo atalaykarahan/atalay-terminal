@@ -160,6 +160,23 @@ enum Git {
         return String(decoding: r.out, as: UTF8.self)
     }
 
+    /// The collision banner's Isolate: a worktree of `dir`'s repository beside it (`<repo>-<name>`), on a new branch
+    /// (`isolate-<name>`). Its path, or git's reason it couldn't, on the main thread.
+    static func addWorktree(from dir: String, name: String, completion: @escaping (_ path: String?, _ error: String?) -> Void) {
+        queue.async {
+            var path: String?, error: String?
+            let root = read(dir, ["rev-parse", "--show-toplevel"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if root.isEmpty {
+                error = "not in a git repository"
+            } else {
+                let at = (root as NSString).deletingLastPathComponent + "/" + (root as NSString).lastPathComponent + "-" + name
+                let r = change(root, ["worktree", "add", "-b", "isolate-\(name)", at])
+                if r["ok"] != nil { path = at } else { error = r["error"] as? String ?? "git failed" }
+            }
+            DispatchQueue.main.async { completion(path, error) }
+        }
+    }
+
     /// A change to the repo; when it fails, git's last words for the page to show.
     private static func change(_ dir: String, _ args: [String]) -> [String: Any] {
         guard let r = exec(dir, args, timeout: 60, locks: true) else { return ["error": "git didn't start"] }
