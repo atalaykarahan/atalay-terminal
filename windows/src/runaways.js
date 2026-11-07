@@ -362,12 +362,9 @@ function createRunaways({ onChange, onRead }) {
       const p = last.get(Number(pid));
       if (!p || Math.abs(p.started - Number(started)) > 1000) return false;
       const all = tree(Number(pid));
+      // At once, deepest first: ending the root first left its children running without it until a later pass.
       if (WIN) {
-        execFile('taskkill.exe', ['/PID', String(pid), '/T'], { windowsHide: true }, () => {});
-        try {
-          process.kill(pid);
-        } catch {}
-        setTimeout(() => fresh().then(() => kill(all)), 2000);
+        kill(all);
         return true;
       }
       const targets = all.length ? all.map((t) => t.pid) : [Number(pid)];
