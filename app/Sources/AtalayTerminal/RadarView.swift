@@ -9,6 +9,8 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 
     override init() {
         let config = WKWebViewConfiguration()
+        // Dashboard pings play when sound is on without a click on the page first, as the notices' sounds do.
+        config.mediaTypesRequiringUserActionForPlayback = []
         let ucc = WKUserContentController()
         ucc.addUserScript(WKUserScript(source: Self.terminalLook, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = ucc

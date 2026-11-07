@@ -41,6 +41,8 @@ const PROBE = process.env.ATL_PROBE || '';
 // Run from the sources on a Mac (development), its data must not land in the Mac app's own folder.
 if (process.platform !== 'win32') app.setPath('userData', path.join(app.getPath('appData'), 'atalay-terminal-windows-dev'));
 if (!app.requestSingleInstanceLock()) return app.quit();
+// Sounds (the turn-finished chime when sound is on, the notices' pings) play without a click on the page first, as on the Mac.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 nativeTheme.themeSource = 'dark';
 // The installer's shortcuts carry the app's id (build.appId in package.json) as their AppUserModelID; the windows must
 // too, or a pinned shortcut and the running app sit apart on the taskbar.
