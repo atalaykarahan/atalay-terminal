@@ -784,9 +784,10 @@ const GONE = new Map();
 function syncShips(list) {
   const seen = new Set(), now = performance.now();
   const listed = new Set((list || []).map((t) => t.id));
+  const burning = new Set([...BOXES.values()].filter((b) => !b.dying).map((b) => b.r.pid));
   for (const [id, until] of GONE) if (until < now || !listed.has(id)) GONE.delete(id);
   for (const t of list || []) {
-    if (GONE.has(t.id)) continue;
+    if (GONE.has(t.id) || (t.left && burning.has(t.pid))) continue;
     seen.add(t.id);
     let s = SHIPS.get(t.id);
     if (!s || s.dying) {
@@ -982,6 +983,7 @@ function syncBoxes(list) {
     const k = `${r.pid}:${r.started}`;
     seen.add(k);
     if (killed.has(k)) continue;
+    for (const s of [...SHIPS.values()]) if (s.t.left && s.t.pid === r.pid) disposeShip(s);
     let b = BOXES.get(k);
     if (!b) {
       const model = buildBlueBox();
