@@ -81,21 +81,19 @@
     document.getElementById('status').textContent = label;
     document.getElementById('where').textContent = i.cwd || '';
     document.body.style.setProperty('--st', `var(${color})`);
+    showCollision(i.collision);
   });
+  // Another live session editing a file this one edited in the last 20 minutes (the engine's, in term:info). The
+  // terminal's ResizeObserver refits it as the banner slides.
   const collisionBanner = document.getElementById('collision-banner');
-  atl.on('term:collision', (c) => {
-    if (!collisionBanner) return;
-    if (c && c.active && c.event !== 'COLLISION_RESOLVED') {
-      const other = c.otherSession || (Array.isArray(c.sessions) && c.sessions[1]) || (Array.isArray(c.sessions) && c.sessions[0]) || 'unknown';
-      const file = c.file || 'file';
-      collisionBanner.textContent = `⚠ COLLISION RISK: Session ${other} is also editing "${file}"`;
-      collisionBanner.classList.add('active');
-    } else {
-      collisionBanner.classList.remove('active');
-      collisionBanner.textContent = '';
-    }
-    refit();
-  });
+  let collisionText = '';
+  function showCollision(c) {
+    const text = c ? `⚠ COLLISION RISK: Session ${c.with} is also editing "${c.file}"` : '';
+    if (text === collisionText) return;
+    collisionText = text;
+    collisionBanner.textContent = text;
+    collisionBanner.classList.toggle('active', !!text);
+  }
   document.getElementById('hud').addEventListener('mousedown', (e) => e.preventDefault());
   document.getElementById('dash').onclick = () => {
     term.focus();

@@ -678,6 +678,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private let collisionBanner = NSView()
     private let collisionLabel = NSTextField(labelWithString: "")
     private var collisionTop: NSLayoutConstraint!
+    private var collisionText: String?
 
     /// `claudeArgs` nil opens a plain terminal in `cwd`.
     init(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, fontSize: CGFloat, frame: NSRect,
@@ -920,27 +921,23 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         }
     }
 
-    func showCollisionBanner(otherSession: String, file: String) {
-        collisionLabel.stringValue = "⚠ COLLISION RISK: Session \(otherSession) is also editing \"\(file)\""
-        collisionBanner.alphaValue = 1
-        collisionBanner.isHidden = false
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            self.collisionTop.animator().constant = 64
+    /// The banner under the header while another live session also edits a file this one edited in the last 20
+    /// minutes (the engine's brief): it slides in, changes its text, and slides out when that's over.
+    private func showCollision(_ text: String?) {
+        guard text != collisionText else { return }
+        collisionText = text
+        if let text {
+            collisionLabel.stringValue = text
+            collisionBanner.isHidden = false
         }
-    }
-
-    func hideCollisionBanner() {
-        guard !collisionBanner.isHidden else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.18
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            self.collisionTop.animator().constant = 34
-            self.collisionBanner.animator().alphaValue = 0
+            ctx.duration = text == nil ? 0.18 : 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: text == nil ? .easeIn : .easeOut)
+            self.collisionTop.animator().constant = text == nil ? 34 : 64
+            self.collisionBanner.animator().alphaValue = text == nil ? 0 : 1
         }, completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                self?.collisionBanner.isHidden = true
+                if self?.collisionText == nil { self?.collisionBanner.isHidden = true }
             }
         })
     }
@@ -1870,6 +1867,9 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             let title = brief.title.isEmpty ? brief.name : brief.title
             if window?.title != title { window?.title = title }
         }
+        showCollision(brief.flatMap { b in
+            b.collisionFile.isEmpty ? nil : "⚠ COLLISION RISK: Session \(b.collisionWith) is also editing \"\(b.collisionFile)\""
+        })
         border.setStatus(hud.status)
     }
 

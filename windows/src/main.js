@@ -187,34 +187,6 @@ const engine = createEngine({
     pushChats();
   },
   onEvents: (json) => toDash(`events(${json})`),
-  onCollision(ev) {
-    toDash(`collision(${JSON.stringify(ev)})`);
-    const live = engine.live();
-    const nameOf = (sid) => {
-      const s = live.find((x) => x.sessionId === sid);
-      return (s && s.name) || String(sid || '').slice(0, 8);
-    };
-    if (ev && ev.active) {
-      let matched = false;
-      for (const sid of ev.sessions || []) {
-        const otherId = (ev.sessions || []).find((x) => x !== sid) || sid;
-        const otherSession = nameOf(otherId);
-        for (const [id, c] of chats) {
-          const s = live.find((x) => x.sessionId === sid);
-          if (c.sessionId === sid || (s && s.tab === id)) {
-            send(c.win, 'term:collision', { ...ev, otherSession });
-            matched = true;
-          }
-        }
-      }
-      if (!matched && activeTerminalId && chats.has(activeTerminalId)) {
-        const otherId = (ev.sessions && ev.sessions[ev.sessions.length - 1]) || 'unknown';
-        send(chats.get(activeTerminalId).win, 'term:collision', { ...ev, otherSession: nameOf(otherId) });
-      }
-    } else {
-      for (const c of chats.values()) send(c.win, 'term:collision', { ...(ev || {}), active: false, event: 'COLLISION_RESOLVED' });
-    }
-  },
   // The saved conversations, for the chats list.
   onHistory(items) {
     chatlist.setItems(items);
@@ -760,7 +732,13 @@ function chatInfo(id, c) {
   const status = !terminals.has(id) ? 'ended' : s ? s.status : starting ? 'busy' : 'terminal';
   // Another AI tool running in it (Codex, Antigravity…): the page leaves it the keys it needs (terminal.js).
   const tool = engine.live().find((x) => x.ai && x.tab === id);
-  return { title: (s && s.name) || c.title, status: status === 'shell' ? 'idle' : status, cwd: tildify(c.cwd), tool: tool ? tool.name : null };
+  // Another live session editing a file this one edited in the last 20 minutes: the banner (terminal.js).
+  const col = (s && s.collision) || (tool && tool.collision);
+  const other = col && engine.live().find((x) => x.sessionId === col.with);
+  return {
+    title: (s && s.name) || c.title, status: status === 'shell' ? 'idle' : status, cwd: tildify(c.cwd), tool: tool ? tool.name : null,
+    collision: col ? { file: col.file, with: (other && other.name) || String(col.with).slice(0, 8) } : null,
+  };
 }
 
 const tildify = (p) => (p && p.startsWith(os.homedir()) ? '~' + p.slice(os.homedir().length) : p || '');
