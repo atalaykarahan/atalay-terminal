@@ -3,8 +3,10 @@
 // the live ones that have none yet, newest first, by project. Starred chats get a section of their own at the top;
 // archived ones (a chat, or a whole folder with its later chats too) leave the list altogether and are listed in
 // Settings instead, as Claude's and ChatGPT's are, so a stream shows only what's meant to be seen. Stars and the archive
-// are kept across launches. The page (pages/chats.*) draws it and keeps what's only its own: the search, the folders
-// opened past their first five chats and the folders picked for archiving several at once.
+// are kept across launches. Folders opened from the list (its open folder button) stay in it, at the top, with or
+// without chats, and the app's own terminals with no Claude in them show in their folders too. The page
+// (pages/chats.*) draws it and keeps what's only its own: the search, the folders opened past their first five chats,
+// the folders folded shut and the folders picked for archiving several at once.
 const os = require('os');
 const path = require('path');
 
@@ -63,15 +65,19 @@ function createChatList({ settings }) {
   const restored = kept('restored');
   // Names the user gave chats (right-click → Rename…), over the titles Claude gave them, as on the Mac.
   const titles = new Map(Object.entries(saved.titles && typeof saved.titles === 'object' ? saved.titles : {}).filter(([, v]) => typeof v === 'string'));
+  // Folders opened from the list, in the order they were opened: path as it was picked.
+  const pinned = (Array.isArray(saved.pinned) ? saved.pinned : []).filter((x) => typeof x === 'string' && x);
   const save = () => settings.set('chatList', {
     favorites: [...favorites], archived: [...archived], folders: [...folders], restored: [...restored], titles: Object.fromEntries(titles),
+    pinned: [...pinned],
   });
 
   let items = []; // the engine's history: { id, cwd, mtime, size, title, lastPrompt }
   let live = []; // engine.live()
   let open = new Set(); // sessions with a window of the app
   let activeId = null; // session of the focused chat window
-  let liveKey = '', openKey = '', version = 0;
+  let terms = []; // the app's terminals with no Claude in them: { id, cwd, title, job, shown }
+  let liveKey = '', openKey = '', termsKey = '', version = 0;
 
   // Every chat, newest first, with the live sessions that have no saved title yet (they head the list, "now").
   function everything() {
@@ -105,6 +111,9 @@ function createChatList({ settings }) {
     const ids = everything().filter((i) => folderKey(i.cwd) === key).map((i) => i.id);
     if (on) {
       folders.add(key);
+      // Archived, an opened folder leaves the list too.
+      const at = pinned.findIndex((c) => folderKey(c) === key);
+      if (at >= 0) pinned.splice(at, 1);
       for (const id of ids) {
         restored.delete(id);
         favorites.delete(id);
@@ -149,7 +158,33 @@ function createChatList({ settings }) {
       activeId = next;
       return true;
     },
+    /** The app's terminals with no Claude in them, for their folders; what the list shows of them changed: true. */
+    setTerms(list) {
+      terms = Array.isArray(list) ? list : [];
+      const key = JSON.stringify(terms);
+      if (key === termsKey) return false;
+      termsKey = key;
+      version++;
+      return true;
+    },
     version: () => version,
+
+    /** A folder opened from the list: it stays there (at the top) until it's taken out or archived. */
+    pin(cwd) {
+      const c = String(cwd || '');
+      if (!c) return;
+      const key = folderKey(c);
+      if (folders.has(key)) setFolder(c, false);
+      if (!pinned.some((x) => folderKey(x) === key)) pinned.unshift(c);
+      changed();
+    },
+    unpin(cwd) {
+      const key = folderKey(cwd);
+      const at = pinned.findIndex((x) => folderKey(x) === key);
+      if (at < 0) return;
+      pinned.splice(at, 1);
+      changed();
+    },
 
     toggleFavorite(id) {
       const item = find(id);
@@ -210,10 +245,25 @@ function createChatList({ settings }) {
         });
         if (!fav && !shown.has(key)) shown.set(key, i.cwd);
       }
+      // The opened folders and the terminals' folders have a place in the list too, chats or none.
+      const pins = [];
+      for (const c of pinned) {
+        const key = folderKey(c);
+        if (folders.has(key)) continue;
+        pins.push(key);
+        if (!shown.has(key)) shown.set(key, c);
+      }
+      const termRows = [];
+      for (const t of terms) {
+        if (!t.cwd) continue;
+        const key = folderKey(t.cwd);
+        termRows.push({ ...t, key });
+        if (!shown.has(key)) shown.set(key, t.cwd);
+      }
       const names = labels([...shown.values()]);
       const where = {};
-      for (const [key, cwd] of shown) where[key] = { label: names.get(cwd) || projectLabel(cwd), path: tildify(cwd) };
-      return { rows, saved: items.length, live: live.length, folders: where, active: activeId };
+      for (const [key, cwd] of shown) where[key] = { label: names.get(cwd) || projectLabel(cwd), path: tildify(cwd), cwd };
+      return { rows, terms: termRows, pinned: pins, saved: items.length, live: live.length, folders: where, active: activeId };
     },
 
     /** For Settings (cloud.js's archived chats): the archived chats by folder, each folder's newest first. */

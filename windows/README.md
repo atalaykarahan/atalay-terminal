@@ -75,7 +75,7 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/savers.js` | the token savers, rtk and caveman, on for Claude Code, Codex and Antigravity (`scripts/fetch-rtk.js` gets rtk for the build) | TokenSavers |
 | `src/limits.js` | Claude's 5-hour and weekly limits for the top bar: a script of the app's as Claude Code's status line, a status line of the user's own run through it | Limits |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
-| `src/chatlist.js`, `pages/chats.*` | the chats list beside the dashboard (a view of its own in the dashboard window): every saved chat by project, favourites, the archive (Settings lists it) | Sidebar.swift |
+| `src/chatlist.js`, `pages/chats.*` | the chats list beside the dashboard (a view of its own in the dashboard window): every saved chat by project, each folder a card with the app's terminals in it, folders opened from the list, favourites, the archive (Settings lists it) | Sidebar.swift |
 | `pages/terminal.*` | a chat or terminal window: xterm.js and its header | ChatWindow |
 
 ### The session host

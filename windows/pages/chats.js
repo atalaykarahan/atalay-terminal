@@ -1,8 +1,11 @@
 'use strict';
 // The chats list beside the dashboard (the Mac's SidebarView, Sidebar.swift): the saved conversations by project, newest
-// first, the starred ones on top. A click opens a chat, a right-click has the rest; a star or the archive box shows on
-// hover. The app sends the list (src/chatlist.js) and does what's asked of it; the search, the folders opened past their
-// first five chats and the folders picked (a click on a folder's header) for archiving several at once are this page's.
+// first, the starred ones on top, each folder a panel of its own with the app's terminals in it over its chats. The
+// folders opened with the open folder button head the list. A click opens a chat or shows a terminal, a right-click has
+// the rest; a star or the archive box shows on hover; a click on a folder's strip folds it shut or open. The app sends
+// the list (src/chatlist.js) and does what's asked of it; the search, the folders opened past their first five chats,
+// the folded ones (kept in this page's storage) and the folders picked (Ctrl+click on a folder's strip) for archiving
+// several at once are this page's.
 (() => {
   const post = (msg) => window.webkit.messageHandlers.chats.postMessage(msg);
   const $ = (id) => document.getElementById(id);
@@ -15,15 +18,33 @@
     archive: svg('<rect x="1.5" y="2.5" width="13" height="3.5" rx=".8"/><path d="M2.8 6v6.7c0 .5.4.8.8.8h8.8c.4 0 .8-.3.8-.8V6M6.3 8.8h3.4"/>'),
     folder: svg('<path d="M1.5 4.2c0-.6.5-1.2 1.1-1.2h3.3l1.5 1.6h6c.6 0 1.1.5 1.1 1.1v6.6c0 .6-.5 1.2-1.1 1.2H2.6c-.6 0-1.1-.6-1.1-1.2z"/>'),
     plus: svg('<path d="M8 3v10M3 8h10"/>'),
+    chev: svg('<path d="M6 4l4 4-4 4"/>'),
+    term: svg('<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6.2 6.8 8l-2.3 1.8M8.5 10.2h3"/>'),
+    pin: svg('<path d="M9.8 1.8 14.2 6.2l-2 .4-2.6 2.6.3 3.1-1.3 1.3L5.9 10.9 2.6 14.2M5.9 10.9 2.8 7.8l1.3-1.3 3.1.3 2.6-2.6z"/>'),
+    open: svg('<path d="M1.5 4.2c0-.6.5-1.2 1.1-1.2h3.3l1.5 1.6h6c.6 0 1.1.5 1.1 1.1v1.2"/><path d="M1.5 4.2v7.6c0 .6.5 1.2 1.1 1.2h9.2l2.7-6H4.4L1.6 13"/>'),
   };
+  $('openFolder').querySelector('.ic').innerHTML = ICON.open;
   $('lens').innerHTML = ICON.lens;
   $('close').innerHTML = ICON.x;
   $('bulkClear').innerHTML = ICON.x;
 
-  let data = { rows: [], saved: 0, live: 0, folders: {} };
+  let data = { rows: [], terms: [], pinned: [], saved: 0, live: 0, folders: {} };
   let activeId = null;
   let query = '';
   const expanded = new Set();
+  // Folders folded shut: kept in this page's storage.
+  const folded = (() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('chats.folded') || '[]'));
+    } catch {
+      return new Set();
+    }
+  })();
+  const keepFolded = () => {
+    try {
+      localStorage.setItem('chats.folded', JSON.stringify([...folded]));
+    } catch {}
+  };
   const picked = new Set();
   // The chat being renamed in place: ↩ keeps the name, Esc (or a click elsewhere) leaves it.
   let renaming = null;
@@ -65,12 +86,26 @@
       `<button type="button" data-act="archive" title="Archive: out of the list (Settings lists it)">${ICON.archive}</button></div>`;
   }
 
+  // One of the app's terminals with no Claude in it: what runs in it, whether its window shows.
+  function termRow(t) {
+    const bits = ['terminal', t.job || 'idle'];
+    if (t.shown) bits.push('showing');
+    return `<div class="row term${t.shown ? ' open' : ''}" data-term="${esc(t.id)}" title="${esc(`${t.title} · ${t.cwd}`)}">` +
+      `<span class="ti${t.job ? ' busy' : ''}">${ICON.term}</span>` +
+      `<span class="txt"><span class="t live">${esc(t.title || 'terminal')}</span><span class="m">${esc(bits.join(' · '))}</span></span></div>`;
+  }
+
   function head(g) {
     const f = data.folders[g.key] || { label: g.cwd, path: g.cwd };
     const sel = picked.has(g.key);
-    const tip = sel ? 'Selected · click again to leave it out' : `${f.path} · click to select, for archiving several at once`;
-    return `<div class="head${sel ? ' sel' : ''}" data-key="${esc(g.key)}" data-cwd="${esc(g.cwd)}" title="${esc(tip)}">${ICON.folder}` +
-      `<span class="lbl"><bdi>${esc(f.label)}</bdi></span><span class="n">${g.items.length}</span><span class="fill"></span>` +
+    const shut = folded.has(g.key) && !query;
+    const tip = sel ? 'Selected · Ctrl+click again to leave it out' : `${f.path} · click to fold ${shut ? 'open' : 'shut'} · Ctrl+click to select, for archiving several at once`;
+    const n = g.items.length + g.terms.length;
+    return `<div class="head${sel ? ' sel' : ''}" data-key="${esc(g.key)}" data-cwd="${esc(g.cwd)}" data-pinned="${g.pinned ? 1 : ''}" title="${esc(tip)}">` +
+      `<span class="chev">${ICON.chev}</span>${g.pinned ? `<span class="pin" title="Opened from the list">${ICON.pin}</span>` : ICON.folder}` +
+      `<span class="lbl"><bdi>${esc(f.label)}</bdi></span><span class="n">${n}</span>` +
+      (g.terms.length ? `<span class="tn" title="${g.terms.length} terminal${g.terms.length > 1 ? 's' : ''} in the app">${ICON.term}${g.terms.length}</span>` : '') +
+      '<span class="fill"></span>' +
       `<button type="button" class="farc" data-act="archive" title="Archive the folder: all its chats out of the list">${ICON.archive}</button>` +
       `<button type="button" class="plus" data-act="new" title="New terminal in this folder">${ICON.plus}</button></div>`;
   }
@@ -79,24 +114,39 @@
     $('count').textContent = `${data.saved} saved · ${data.live} live`;
     const q = query.trim().toLowerCase();
     const rows = q ? data.rows.filter((r) => `${r.title} ${r.lastPrompt} ${r.cwd}`.toLowerCase().includes(q)) : data.rows;
+    const terms = (data.terms || []).filter((t) => !q || `${t.title} ${t.job} ${t.cwd}`.toLowerCase().includes(q));
     const favs = rows.filter((r) => r.fav);
     const groups = [];
     const byKey = new Map();
-    for (const r of rows) {
-      if (r.fav) continue;
-      let g = byKey.get(r.key);
+    const group = (key, cwd) => {
+      let g = byKey.get(key);
       if (!g) {
-        byKey.set(r.key, (g = { key: r.key, cwd: r.cwd, items: [] }));
+        byKey.set(key, (g = { key, cwd: (data.folders[key] && data.folders[key].cwd) || cwd, items: [], terms: [], pinned: false }));
         groups.push(g);
       }
-      g.items.push(r);
-    }
-    let html = favs.length ? `<div class="sec">${ICON.star}<b>FAVORITES</b><span class="n">${favs.length}</span></div>${favs.map(row).join('')}` : '';
+      return g;
+    };
+    // The folders opened from the list first, as they were opened, then the rest by their newest chat.
+    for (const key of data.pinned || []) group(key, '').pinned = true;
+    for (const r of rows) if (!r.fav) group(r.key, r.cwd).items.push(r);
+    for (const t of terms) group(t.key, t.cwd).terms.push(t);
+    let html = favs.length
+      ? `<section class="grp fav"><div class="sec">${ICON.star}<b>FAVORITES</b><span class="n">${favs.length}</span></div>${favs.map(row).join('')}</section>`
+      : '';
     for (const g of groups) {
+      // Searching: only the folders with something that matches.
+      if (q && !g.items.length && !g.terms.length) continue;
+      const shut = folded.has(g.key) && !q;
       const all = expanded.has(g.key) || query !== '';
-      html += head(g) + (all ? g.items : g.items.slice(0, 5)).map(row).join('');
-      if (!all && g.items.length > 5) html += `<button type="button" class="more" data-key="${esc(g.key)}">+${g.items.length - 5} more</button>`;
+      let body = '';
+      if (!shut) {
+        body += g.terms.map(termRow).join('') + (all ? g.items : g.items.slice(0, 5)).map(row).join('');
+        if (!all && g.items.length > 5) body += `<button type="button" class="more" data-key="${esc(g.key)}">+${g.items.length - 5} more</button>`;
+        if (!g.items.length && !g.terms.length) body += '<div class="empty">nothing here yet · <button type="button" data-act="new">open a terminal</button></div>';
+      }
+      html += `<section class="grp${g.pinned ? ' pinned' : ''}${shut ? ' shut' : ''}${g.terms.some((t) => t.shown) || g.items.some((r) => r.open) ? ' live' : ''}" data-key="${esc(g.key)}" data-cwd="${esc(g.cwd)}">${head(g)}${body}</section>`;
     }
+    if (!html) html = `<div class="none">${q ? 'nothing matches' : 'no chats yet · open a folder to start'}</div>`;
     $('list').innerHTML = html;
     const ren = renaming && $('list').querySelector('.ren');
     if (ren) {
@@ -137,6 +187,10 @@
       expanded.add(button.dataset.key);
       return render();
     }
+    const tr = e.target.closest('.row.term');
+    if (tr) return post({ type: 'showTerminal', id: tr.dataset.term });
+    const empty = e.target.closest('.empty');
+    if (empty && button) return post({ type: 'newTerminal', cwd: empty.closest('.grp').dataset.cwd });
     const r = e.target.closest('.row');
     if (r && e.target.classList.contains('ren')) return;
     if (r) {
@@ -148,13 +202,39 @@
     const act = button && button.dataset.act;
     if (act === 'archive') return post({ type: 'folders', keys: [h.dataset.key], on: true });
     if (act === 'new') return post({ type: 'newTerminal', cwd: h.dataset.cwd });
-    pick(h.dataset.key);
+    // Ctrl+click picks it for archiving several at once; a click folds it shut or open.
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return pick(h.dataset.key);
+    fold(h.dataset.key);
   });
+
+  function fold(key) {
+    if (!folded.delete(key)) folded.add(key);
+    keepFolded();
+    render();
+  }
 
   // A chat's or a folder's menu, as on the Mac (a native one, from the app).
   document.addEventListener('contextmenu', async (e) => {
     e.preventDefault();
     const at = { x: Math.round(e.clientX), y: Math.round(e.clientY) };
+    const tr = e.target.closest('.row.term');
+    if (tr) {
+      const t = (data.terms || []).find((x) => x.id === tr.dataset.term);
+      if (!t) return;
+      const choice = await post({
+        type: 'menu', at, items: [
+          { id: 'show', title: 'Show Terminal' },
+          { id: 'new', title: 'New Terminal in This Folder' },
+          { id: 'reveal', title: 'Show Folder in Explorer' },
+          { separator: true },
+          { id: 'end', title: 'End Terminal' },
+        ],
+      });
+      if (choice === 'show') post({ type: 'showTerminal', id: t.id });
+      else if (choice === 'end') post({ type: 'endTerminal', id: t.id });
+      else if (choice === 'new' || choice === 'reveal') post({ type: choice === 'new' ? 'newTerminal' : 'reveal', cwd: t.cwd });
+      return;
+    }
     const r = e.target.closest('.row');
     const h = !r && e.target.closest('.head');
     if (r) {
@@ -185,13 +265,33 @@
       if (n > 1 && sel) {
         items.push({ id: 'bulkOn', title: `Archive the ${n} Selected Folders` }, { id: 'bulkOff', title: `Unarchive the ${n} Selected Folders` }, { separator: true });
       }
-      items.push({ id: 'archive', title: 'Archive Folder' }, { id: 'select', title: sel ? 'Deselect' : 'Select' }, { id: 'new', title: 'New Terminal in This Folder' });
+      items.push(
+        { id: 'new', title: 'New Terminal in This Folder' },
+        { id: 'fold', title: folded.has(key) ? 'Unfold' : 'Fold' },
+        { id: 'reveal', title: 'Show Folder in Explorer' },
+        { separator: true },
+        { id: 'select', title: sel ? 'Deselect' : 'Select' },
+        { id: 'archive', title: 'Archive Folder' },
+      );
+      if (h.dataset.pinned) items.push({ id: 'unpin', title: 'Remove from the List' });
       const choice = await post({ type: 'menu', at, items });
       if (choice === 'bulkOn' || choice === 'bulkOff') archiveFolders([...picked], choice === 'bulkOn');
       else if (choice === 'archive') post({ type: 'folders', keys: [key], on: true });
       else if (choice === 'select') pick(key);
-      else if (choice === 'new') post({ type: 'newTerminal', cwd: h.dataset.cwd });
+      else if (choice === 'new' || choice === 'reveal') post({ type: choice === 'new' ? 'newTerminal' : 'reveal', cwd: h.dataset.cwd });
+      else if (choice === 'fold') fold(key);
+      else if (choice === 'unpin') post({ type: 'unpin', cwd: h.dataset.cwd });
     }
+  });
+
+  // A folder from the system's picker: it heads the list (unfolded), with a terminal in it.
+  $('openFolder').addEventListener('click', async () => {
+    const d = await post({ type: 'openFolder' });
+    if (!d) return;
+    query = '';
+    $('q').value = '';
+    $('list').scrollTop = 0;
+    render();
   });
 
   $('q').addEventListener('input', (e) => {

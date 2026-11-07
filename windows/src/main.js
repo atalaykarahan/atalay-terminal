@@ -534,6 +534,18 @@ function pushChats(force) {
   run(chatsView, `window.__chats && __chats.update(${json})`);
 }
 
+// The chats list's open folder button: a folder from the system's picker stays at the list's top, with a terminal opened
+// in it.
+async function openFolder() {
+  const r = await dialog.showOpenDialog(dash || undefined, { title: 'Open a folder in the chats list', properties: ['openDirectory'] });
+  const d = !r.canceled && r.filePaths && r.filePaths[0];
+  if (!d || !fs.existsSync(d)) return null;
+  chatlist.pin(d);
+  pushChats(true);
+  openChatWindow({ cwd: d, claudeArgs: null, title: path.basename(d) || d });
+  return d;
+}
+
 // The chats list's requests (pages/chats.js).
 function handleChats(msg) {
   const dir = () => {
@@ -561,6 +573,17 @@ function handleChats(msg) {
     }
     case 'copyId':
       if (typeof msg.id === 'string' && msg.id) clipboard.writeText(msg.id);
+      return true;
+    case 'openFolder':
+      return openFolder();
+    case 'unpin':
+      chatlist.unpin(String(msg.cwd || ''));
+      break;
+    // One of the app's terminals in a folder: its window comes to the front, or it ends (as its End button does).
+    case 'showTerminal':
+      return chats.has(msg.id) && terminals.has(msg.id) && showChat(msg.id);
+    case 'endTerminal':
+      if (chats.has(msg.id)) endTerminal(msg.id);
       return true;
     case 'favorite':
       chatlist.toggleFavorite(String(msg.id || ''));
@@ -849,6 +872,8 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
       pushActiveSession();
     }
     pushWinOpen();
+    pushTerminals();
+    pushChats();
   });
   win.on('closed', () => {
     if (chats.get(id)?.win === win) {
@@ -874,6 +899,9 @@ function showChat(id) {
   c.win.focus();
   touchTerminal(id);
   pushWinOpen();
+  // The chats list's terminal rows say which windows show.
+  pushTerminals();
+  pushChats();
   return true;
 }
 
@@ -995,6 +1023,8 @@ let terminalsJSON = '';
 const ending = new Map(); // pid -> until when it's an ended terminal's process, not a car left behind
 function pushTerminals(force) {
   const live = engine.live(), list = [], jobs = [];
+  // The chats list shows them too, each in the folder it was opened in, with what runs in it and whether its window shows.
+  const rows = [];
   for (const [pid, until] of ending) if (until < Date.now()) ending.delete(pid);
   for (const t of terminals.list()) {
     const c = chats.get(t.id);
@@ -1006,11 +1036,17 @@ function pushTerminals(force) {
     if (job) jobs.push(job.pid);
     // The folder the job runs in (PowerShell's cd doesn't move the shell's own), else the one the terminal opened in.
     const cwd = (job && job.cwd) || c.cwd || os.homedir();
+    const cmd = job ? commandLabel(job.cmd || job.name) : '';
     list.push({
-      id: t.id, cwd: tildify(cwd), dir: path.basename(cwd) || cwd, cmd: job ? commandLabel(job.cmd || job.name) : '', running: !!job,
+      id: t.id, cwd: tildify(cwd), dir: path.basename(cwd) || cwd, cmd, running: !!job,
       cpu: Math.round(runaways.busy(kids.map((k) => k.pid))),
     });
+    const home = c.cwd || os.homedir();
+    const shown = !!c.win && !c.win.isDestroyed() && c.win.isVisible() && !c.win.isMinimized();
+    rows.push({ id: t.id, cwd: home, title: path.basename(home) || home, job: cmd, shown });
   }
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  chatlist.setTerms(rows);
   for (const l of runaways.left(live)) {
     if (ending.has(l.pid)) continue;
     list.push({
