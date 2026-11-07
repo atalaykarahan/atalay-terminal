@@ -727,6 +727,8 @@ window.Cloud = (() => {
       setHTML(fq('.mn-friends'), `<div class="mn-empty">${why}</div>`);
       return;
     }
+    // The friend whose card shows on the right: the one picked, else the first.
+    pickedFriend = (s.friends.find((f) => f.id === pickedFriend) || s.friends[0])?.id ?? null;
     setHTML(
       fq('.mn-friends'),
       s.friends.length
@@ -740,8 +742,8 @@ window.Cloud = (() => {
               const today = last24 ? `<span class="mn-today" title="Active in the last 24 hours">24h ${Xp.dur(last24)}</span>` : '';
               // The flames, though, are a daily stat as in games: five hours of work in their today, from their own midnight.
               const fire = (f.xp && f.xp.today) >= 5 * 3600;
-              return `<div class="mn-row${fire ? ' fire' : ''}" data-id="${esc(f.id)}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
-                `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" data-act="chat"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
+              return `<div class="mn-row${fire ? ' fire' : ''}${f.id === pickedFriend ? ' sel' : ''}" data-id="${esc(f.id)}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
+                `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" title="Click for their card · double-click to message"><span class="mn-name">${tagged(f)}${lv}</span><small>${line}</small></div>` +
                 `${today}${f.unread ? `<i class="cnt hot">${f.unread}</i>` : ''}<button class="mn-btn" type="button" data-act="profile" title="Profile: level and hours">◎</button>` +
                 '<button class="mn-btn" type="button" data-act="chat" title="Message (right-click for more)">✉</button></div>';
             })
@@ -749,6 +751,7 @@ window.Cloud = (() => {
         : `<div class="mn-empty">no friends yet · send them your tag: <b>${esc(S.hackerName || '')}${tagText(S.tag)}</b></div>`,
     );
     lightFires(fq('.mn-friends'));
+    friendCard();
     setHTML(
       fq('.mn-in'),
       s.incoming.length
@@ -769,16 +772,18 @@ window.Cloud = (() => {
     );
   }
 
+  // A click on a friend shows their card on the right; a double click opens the chat (openOnDouble).
   async function listAction(e) {
-    const el = e.target.closest('[data-act]');
-    const row = el && el.closest('.mn-row');
+    const row = e.target.closest('.mn-row');
     if (!row) return;
     const id = row.dataset.id;
+    const el = e.target.closest('[data-act]');
+    if (!el) return row.closest('.mn-friends') && pickFriend(id);
     switch (el.dataset.act) {
       case 'chat':
         return Social.openChat(id);
       case 'profile':
-        return Social.friend(id) && friendProfile(Social.friend(id));
+        return pickFriend(id);
       case 'accept':
         el.disabled = true;
         return done(await Social.accept(id));
@@ -816,7 +821,7 @@ window.Cloud = (() => {
       if (!b) return;
       menu.remove();
       if (b.dataset.ctx === 'chat') return Social.openChat(f.id);
-      if (b.dataset.ctx === 'profile') return friendProfile(f);
+      if (b.dataset.ctx === 'profile') return pickFriend(f.id);
       if (b.dataset.ctx === 'copy') {
         try {
           await navigator.clipboard.writeText(Social.handle(f));
@@ -892,28 +897,32 @@ window.Cloud = (() => {
     );
   }
 
-  // A friend's card: their rank and level, and their active time unless they keep it to themselves.
-  function friendProfile(f) {
-    fq('.mn-confirm')?.remove();
+  // The friend picked in the list (a click; the first one until then), their card on the right as the leaderboard's:
+  // their rank and level, and their active time unless they keep it to themselves.
+  let pickedFriend = null;
+  function pickFriend(id) {
+    if (!Social.friend(id)) return;
+    pickedFriend = id;
+    views.friends.querySelectorAll('.mn-friends .mn-row').forEach((r) => r.classList.toggle('sel', r.dataset.id === id));
+    friendCard();
+  }
+
+  function friendCard() {
+    const f = pickedFriend && Social.friend(pickedFriend);
+    if (!f) return setHTML(fq('.fr-host'), '<div class="mn-empty">your friends\' cards show here</div>');
     const x = f.xp || { level: 1, today: null, days: null, week: null, total: null };
     const r = Xp.rank(x.level);
-    const card = document.createElement('div');
-    card.className = 'mn-confirm';
-    card.innerHTML =
-      `<div class="mn-ask pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(x.level, 'pf-band')}` +
-      `<div class="pf-rank"><small>${Social.dot(f.presence)} ${esc(Social.PRESENCE[f.presence || 'offline'].label)}</small>${tagged(f)}` +
-      `<span>Level ${x.level} · ${esc(r.name)}</span></div></div>` +
-      (x.total === null
-        ? '<p>keeps their active time to themselves</p>'
-        : `<div class="pf-stats">${stat('LAST 24H', x.last24 == null ? '—' : Xp.dur(x.last24))}${stat('THIS WEEK', `${x.week}/3 days`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
-          (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color, x.daysEnd)}` : '')) +
-      '<div class="mn-ask-btns"><button type="button" class="mn-btn" data-ans="close">close</button><button type="button" class="mn-btn go" data-ans="chat">✉ message</button></div></div>';
-    card.onclick = (e) => {
-      const b = e.target.closest('[data-ans]');
-      if (e.target === card || (b && b.dataset.ans === 'close')) return card.remove();
-      if (b && b.dataset.ans === 'chat') Social.openChat(f.id);
-    };
-    views.friends.appendChild(card);
+    setHTML(
+      fq('.fr-host'),
+      `<div class="pf-card" style="--rc:${r.color}"><div class="pf-head">${Xp.headband(x.level, 'pf-band')}` +
+        `<div class="pf-rank"><small>${Social.dot(f.presence)} ${esc(Social.PRESENCE[f.presence || 'offline'].label)}</small>${tagged(f)}` +
+        `<span>Level ${x.level} · ${esc(r.name)}</span></div></div>` +
+        (x.total === null
+          ? '<p class="pf-note">keeps their active time to themselves</p>'
+          : `<div class="pf-stats">${stat('LAST 24H', x.last24 == null ? '—' : Xp.dur(x.last24))}${stat('THIS WEEK', `${x.week}/3 days`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
+            (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color, x.daysEnd)}` : '')) +
+        '<div class="mn-ask-btns"><button type="button" class="mn-btn go" data-ans="chat">✉ message</button></div></div>',
+    );
   }
 
   function renderActivity() {
@@ -1269,9 +1278,18 @@ window.Cloud = (() => {
     '<section class="panel cv-friends"><header><span class="tag">friends</span><span class="meta"></span></header><div class="body">' +
     '<label class="hk-field mn-add"><span class="hk-prompt">+</span><input class="mn-handle-in" maxlength="21" spellcheck="false" autocomplete="off" placeholder="add a friend · name#0427"><button class="mn-send" type="button" disabled>send request</button></label>' +
     '<p class="hk-status mn-add-status"></p><div class="mn-list mn-friends"></div></div></section>' +
+    '<div class="cv-col"><section class="panel cv-friend"><header><span class="tag">friend</span><span class="meta">double-click a friend to message them</span></header><div class="body fr-host"></div></section>' +
     '<section class="panel cv-requests"><header><span class="tag">requests</span><span class="meta"></span></header><div class="body">' +
-    '<div class="hk-h">INCOMING</div><div class="mn-list mn-in"></div><div class="hk-h">SENT</div><div class="mn-list mn-out"></div></div></section>';
+    '<div class="hk-h">INCOMING</div><div class="mn-list mn-in"></div><div class="hk-h">SENT</div><div class="mn-list mn-out"></div></div></section></div>';
   views.friends.addEventListener('click', listAction);
+  // A double click on a friend (not on their buttons) opens the chat.
+  views.friends.addEventListener('dblclick', (e) => {
+    const row = e.target.closest('.mn-friends .mn-row');
+    if (row && !e.target.closest('button')) Social.openChat(row.dataset.id);
+  });
+  fq('.fr-host').addEventListener('click', (e) => {
+    if (e.target.closest('[data-ans=chat]') && pickedFriend) Social.openChat(pickedFriend);
+  });
   views.friends.addEventListener('contextmenu', friendMenu);
   views.friends.addEventListener('mousedown', (e) => {
     if (!e.target.closest('.mn-ctx')) fq('.mn-ctx')?.remove();

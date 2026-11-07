@@ -133,6 +133,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Friends: a click on a friend shows their card on the right, as the leaderboard's (level, hours, the last 7 days), and a double click opens the chat; the requests sit under the card
 - Orbit map (reported 2026-11-07): the map could go blank after the friends list or the leaderboard, until ⌘R. Each burning row drew its flames with a WebGL context of its own, new at every render, and past WebKit's 16 a page the one that drew longest ago went for good: the map's, while the dashboard was out of sight. The flames now share one context
 - Mirrors (Mac; reported 2026-11-07, a chat the staging build ran, opened in the installed app): End Session on a mirror ends the chat in the app it runs in too (asking first) instead of only closing the window, the chat coming back on the dashboard; closing the window still only closes it. And a mirror fits the chat to its window as it's resized or comes to the front, no more empty space on the right and at the bottom: the window in use sets the size
 - Roadmap (Mac): the activity bar's rocket asks what to build next, as a messaging app's poll: 3 votes, a tap votes and a tap takes it back; with your 3 in, the results show in the same rows (a bar and a share, the top 4 marked) and stay while you move your votes until the round closes. Under the poll, what the votes made: coming next and shipped, and voters hear when their feature ships. Needs the API's roadmap (016_roadmap.sql) deployed first: until then the rocket stays hidden

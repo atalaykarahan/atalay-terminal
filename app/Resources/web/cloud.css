@@ -314,7 +314,13 @@
 .rt-user { color: var(--violet); font-weight: 600; }
 .rt-link:hover, .rt-user:hover { text-decoration: underline; text-underline-offset: 2px; border-bottom-color: transparent; }
 #friends-view .cv-friends { flex: 1.3; }
-#friends-view .cv-requests { flex: 1; }
+/* the right column: the picked friend's card, the requests under it */
+#friends-view .cv-col { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+#friends-view .cv-friend { flex: 1; }
+#friends-view .cv-requests { flex: 0 1 auto; max-height: 45%; }
+#friends-view .mn-friends .mn-row { cursor: pointer; -webkit-user-select: none; user-select: none; }
+/* the picked one: a bar on its left and a tint, as backgrounds, so a burning row keeps its glow (a box-shadow) */
+#friends-view .mn-friends .mn-row.sel { background: linear-gradient(var(--accent), var(--accent)) left / 3px 100% no-repeat, rgba(var(--glow), 0.1); }
 #board-view .cv-list { flex: 1.3; }
 #board-view .cv-card { flex: 1; }
 #board-view .lb-row { cursor: pointer; }
