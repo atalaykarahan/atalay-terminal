@@ -133,6 +133,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Power save (Mac): a switch at the map's top right, off by default, on battery too: full quality (60 fps at 2×). On, the map in front draws 30 fps at 1.5× and its camera tour doesn't start by itself; hovered, the switch says so in numbers. It comes on by itself below 20% on battery and in Low Power Mode (Settings · POWER can turn that off); turned off by hand then, it stays off until the Mac charges. Windows saves power on battery as before, for now
 - Friends: a click on a friend shows their card on the right, as the leaderboard's (level, hours, the last 7 days), and a double click opens the chat; the requests sit under the card
 - Orbit map (reported 2026-11-07): the map could go blank after the friends list or the leaderboard, until ⌘R. Each burning row drew its flames with a WebGL context of its own, new at every render, and past WebKit's 16 a page the one that drew longest ago went for good: the map's, while the dashboard was out of sight. The flames now share one context
 - Mirrors (Mac; reported 2026-11-07, a chat the staging build ran, opened in the installed app): End Session on a mirror ends the chat in the app it runs in too (asking first) instead of only closing the window, the chat coming back on the dashboard; closing the window still only closes it. And a mirror fits the chat to its window as it's resized or comes to the front, no more empty space on the right and at the bottom: the window in use sets the size

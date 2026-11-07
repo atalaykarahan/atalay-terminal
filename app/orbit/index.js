@@ -105,8 +105,9 @@ composer.addPass(new OutputPass());
 
 // Frame rate and resolution by where the map is. In front: 60 fps at full Retina resolution, since below either the
 // thin lines and names of the moving session hexagons flicker in the glow. Behind a chat window (or another app) the
-// map is in the corner of your eye, so it draws fewer and smaller frames. On battery or in Low Power Mode (power(),
-// from the app) it never goes past `saver`, in front either, and the cinematic camera doesn't start on its own.
+// map is in the corner of your eye, so it draws fewer and smaller frames. In power save (power(), from the app: the
+// switch on the map, a low battery or Low Power Mode on the Mac; on battery on Windows) it never goes past `saver`, in
+// front either, and the cinematic camera doesn't start on its own.
 // Dragging the view, or the camera flying somewhere, gets the front rate anywhere.
 const QUALITY = {
   front: { fps: 60, dpr: 2 },
@@ -1202,7 +1203,7 @@ function stepCinematic(dt, now) {
     return;
   }
   if (now > cine.until || (cine.alarm && !subjectPos(cine))) {
-    // The alarm's shot is over: home, unless you're away and the idle camera goes on (not on battery).
+    // The alarm's shot is over: home, unless you're away and the idle camera goes on (not in power save).
     if (cine.alarm && (now - lastInput < CINE.IDLE_MS || ACT.saver)) {
       cine = null;
       resetView();
@@ -1883,7 +1884,7 @@ function activity(visible, focused) {
   applyQuality();
   wake();
 }
-// The Mac runs on battery or in Low Power Mode (true), or neither: see QUALITY. An idle camera tour going on ends.
+// Power save on (true) or off, from the app: see QUALITY. An idle camera tour going on ends.
 function power(saver) {
   ACT.saver = !!saver;
   if (ACT.saver && cine && !cine.alarm) {
@@ -1900,5 +1901,6 @@ function focusRunaway(pid) {
   if (b) followBox(b);
 }
 setCinematic(cineOn);
-window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
+// QUALITY too: the power save switch's tooltip (app.js) gives its numbers.
+window.Orbit = { quality: QUALITY, state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);

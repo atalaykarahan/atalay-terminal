@@ -339,6 +339,9 @@ window.Cloud = (() => {
             ${ARCHIVE() ? `<div class="hk-h">CHATS</div>
             <div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
               <button type="button" class="arc-btn arc-open">manage</button></div>` : ''}
+            ${window.__powerSave ? `<div class="hk-h">POWER</div>
+            <div class="hk-row"><span>power save on by itself at low battery<small>below ${window.__powerSave.threshold}% on battery, and in Low Power Mode, the map draws fewer and smaller frames · the switch on the map turns it off again</small></span>
+              <button type="button" class="hk-sw pwr-auto" role="switch" aria-checked="true" title="Power save on by itself at low battery"><i></i></button></div>` : ''}
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
@@ -365,6 +368,8 @@ window.Cloud = (() => {
 
     q('.hk-sw.act').onclick = toggleActivity;
     q('.hk-sw.brd').onclick = toggleBoard;
+    const pwr = q('.hk-sw.pwr-auto');
+    if (pwr) pwr.onclick = () => window.webkit.messageHandlers.radar.postMessage({ type: 'powerSaveAuto', on: !window.__powerSave?.auto });
     q('.mn-copy').onclick = () => copyHandle();
     q('.mn-status').onclick = (e) => {
       e.stopPropagation();
@@ -381,6 +386,7 @@ window.Cloud = (() => {
     renderInfo();
     renderProfile();
     renderActivity();
+    renderPower();
     renderSocial();
     // Whatever changed while you weren't looking (a missed live event, another device) shows when the menu opens.
     Social.load();
@@ -935,6 +941,15 @@ window.Cloud = (() => {
     }
   }
 
+  // Settings · POWER: power save on by itself at low battery, as the Mac app keeps it (app.js setPowerSave).
+  function renderPower() {
+    const sw = modal === 'menu' && q('.hk-sw.pwr-auto');
+    const s = window.__powerSave;
+    if (!sw || !s) return;
+    sw.classList.toggle('on', s.auto);
+    sw.setAttribute('aria-checked', String(s.auto));
+  }
+
   async function toggleBoard() {
     if (!S.xp) return;
     const show = S.xp.board === false;
@@ -1419,5 +1434,5 @@ window.Cloud = (() => {
   refresh();
   Social.loadNotes();
 
-  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView };
+  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView, renderPower };
 })();

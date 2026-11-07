@@ -283,7 +283,7 @@ body::after {
 .legend { position: absolute; left: 8px; bottom: 6px; display: flex; gap: 12px; color: var(--dim); font-size: 0.86em; pointer-events: none; }
 .legend i { display: inline-block; width: 7px; height: 7px; margin-right: 4px; }
 .legend .hint { color: var(--dim2); }
-#tip {
+#tip, #pwr-tip {
   position: absolute;
   z-index: 5;
   display: none;
@@ -296,9 +296,16 @@ body::after {
   box-shadow: 0 0 24px rgba(var(--accent-rgb), 0.3);
   pointer-events: none;
 }
-#tip .h { color: var(--hi); font-weight: 700; }
-#tip .r { margin-top: 3px; color: var(--txt); }
-#tip .d { margin-top: 3px; color: var(--dim); }
+#tip .h, #pwr-tip .h { color: var(--hi); font-weight: 700; }
+#tip .r, #pwr-tip .r { margin-top: 3px; color: var(--txt); }
+#tip .d, #pwr-tip .d { margin-top: 3px; color: var(--dim); }
+/* what power save changes, under its switch (app.js powerTip) */
+#pwr-tip { top: 23px; right: 8px; width: 340px; }
+#pwr-tip.show { display: block; }
+#pwr-tip .h i { color: var(--amber); font-style: normal; font-weight: 400; }
+#pwr-tip .r span { display: inline-block; width: 92px; color: var(--dim); }
+#pwr-tip .r b { color: var(--accent-soft); }
+#pwr-tip .d.gap { margin-top: 8px; }
 
 /* ---------- right column ---------- */
 #right { grid-row: 2; grid-column: 4; display: grid; grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr) auto; gap: 8px; min-height: 0; }

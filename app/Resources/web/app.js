@@ -136,12 +136,51 @@ function setVisibility(visible, focused) {
   document.documentElement.classList.toggle('behind', visible && !focused);
   map('activity', visible, focused);
 }
+// Power save (the Mac app decides and keeps it, PowerSaver.swift): the switch at the map's top right, on when the map
+// draws fewer and smaller frames, with why when it came on by itself (a low battery, Low Power Mode). Not shown until
+// the app says (the Windows app doesn't yet).
+function setPowerSave(s) {
+  window.__powerSave = s;
+  const b = $('pwr');
+  b.hidden = false;
+  b.classList.toggle('on', s.on);
+  b.setAttribute('aria-checked', String(s.on));
+  setText(b.querySelector('em'), s.automatic ? (s.lowPower ? 'auto · low power mode' : `auto · ${s.battery}%`) : '');
+  if ($('pwr-tip').classList.contains('show')) powerTip();
+  window.Cloud?.renderPower?.();
+}
+// Hovered, the switch says what power save changes, in the map's own numbers (QUALITY in orbit/index.js).
+function powerTip() {
+  const s = window.__powerSave, Q = window.Orbit?.quality;
+  if (!s || !Q) return;
+  const full = Math.min(Q.front.dpr, devicePixelRatio || 1), saved = Math.min(Q.saver.dpr, full);
+  const row = (what, off, on) => `<div class="r"><span>${what}</span>${off} → <b>${on}</b></div>`;
+  const why = s.automatic ? (s.lowPower ? 'on by itself · Low Power Mode' : `on by itself · battery ${s.battery}%`) : '';
+  setHTML(
+    $('pwr-tip'),
+    `<div class="h">power save · ${s.on ? 'on' : 'off'}${why ? ` <i>${why}</i>` : ''}</div>` +
+      '<div class="d">on, the map in front draws:</div>' +
+      row('frame rate', `${Q.front.fps} fps`, `${Q.saver.fps} fps`) +
+      (saved < full ? row('resolution', `${full}×`, `${saved}× · ${Math.round(100 * (1 - (saved / full) ** 2))}% fewer pixels`) : '') +
+      row('camera tour', 'when you\'re away', 'never') +
+      `<div class="d gap">the same either way: ${Q.behind.fps} fps at ${Q.behind.dpr}× behind another window, ${Q.front.fps} fps while you drag or the camera flies, nothing drawn while the dashboard is hidden</div>` +
+      `<div class="d">${s.auto ? `on by itself below ${s.threshold}% on battery and in Low Power Mode` : 'never on by itself'} · Settings · POWER</div>` +
+      `<div class="d">click to turn it ${s.on ? 'off' : 'on'}</div>`,
+  );
+}
+$('pwr').addEventListener('click', () => native({ type: 'powerSave', on: !window.__powerSave?.on }));
+for (const [ev, show] of [['mouseenter', true], ['focus', true], ['mouseleave', false], ['blur', false]]) {
+  $('pwr').addEventListener(ev, () => {
+    if (show) powerTip();
+    $('pwr-tip').classList.toggle('show', show);
+  });
+}
 function setActiveSession(sid) {
   ACTIVE_SID = sid || null;
   if (STATE) renderTop();
 }
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
 }
 

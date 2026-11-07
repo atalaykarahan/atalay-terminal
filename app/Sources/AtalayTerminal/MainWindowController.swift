@@ -71,7 +71,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         runaways.start()
         observeVisibility()
-        PowerSaver.shared.onChange = { [weak self] _ in self?.pushPower() }
+        PowerSaver.shared.onChange = { [weak self] in self?.pushPower() }
         PowerSaver.shared.start()
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: ThemeStore.changed, object: nil)
         let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
@@ -204,12 +204,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             engine.requestInit()
             lastVisibility = ""
             dashboardVisibilityChanged()
-            pushPower()
+            pushPower(force: true)
             pushCloud()
             terminalsJSON = ""
             pushTerminals()
             radar.push("runaways", runaways.json)
             pushActiveSession(force: true)
+        // Power save: the switch on the map, and Settings' "on by itself at low battery".
+        case "powerSave": PowerSaver.shared.choose(msg["on"] as? Bool == true)
+        case "powerSaveAuto": PowerSaver.shared.setAuto(msg["on"] as? Bool == true)
         case "open": if let sid = msg["sid"] as? String { openSession(sid) }
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
@@ -538,9 +541,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         radar.webView.evaluateJavaScript("window.__radar && window.__radar.visibility && window.__radar.visibility(\(visible), \(focused)); true", completionHandler: nil)
     }
 
-    /// On battery or in Low Power Mode the map draws fewer and smaller frames (PowerSaver).
-    private func pushPower() {
-        radar.push("power", PowerSaver.shared.on ? "true" : "false")
+    /// In power save the map draws fewer and smaller frames (PowerSaver); the switch on the map and Settings show it.
+    /// The map hears only when power save comes on or goes off: it sets its quality anew each time.
+    private var mapSaves: Bool?
+    private func pushPower(force: Bool = false) {
+        let saver = PowerSaver.shared
+        if force || mapSaves != saver.on {
+            mapSaves = saver.on
+            radar.push("power", saver.on ? "true" : "false")
+        }
+        radar.push("powerSave", saver.json)
     }
 
     // MARK: chats
