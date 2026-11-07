@@ -7,6 +7,8 @@ body { display: flex; flex-direction: column; overflow: hidden; background: var(
 #title { overflow: hidden; color: var(--hi, #fff8f0); white-space: nowrap; text-overflow: ellipsis; }
 #status { color: var(--st, var(--dim, #8f7a66)); font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
 #where { flex: 1; overflow: hidden; color: var(--dim, #8f7a66); white-space: nowrap; text-overflow: ellipsis; }
+#copied { padding: 2px 7px; border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.45); border-radius: 3px; background: rgba(0, 0, 0, 0.55); color: var(--accent, #f88008); font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; white-space: nowrap; }
+#copied[hidden] { display: none; }
 #hud button { height: 22px; padding: 0 10px; border: 1px solid rgba(var(--accent-rgb, 248, 128, 8), 0.45); border-radius: 4px; background: transparent; color: var(--accent-soft, #ffb057); font: inherit; cursor: pointer; }
 #hud button:hover { border-color: var(--accent, #f88008); color: var(--hi, #fff8f0); }
 #hud #end:hover { border-color: var(--red, #ff4d4d); color: var(--red, #ff4d4d); }

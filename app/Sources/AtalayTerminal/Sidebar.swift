@@ -6,6 +6,7 @@ final class SidebarModel: ObservableObject {
     @Published var items: [ChatItem] = []
     @Published var briefs: [String: SessionBrief] = [:]
     @Published var openInTabs: Set<String> = []
+    @Published var activeSessionId: String?
     @Published var query = ""
     @Published var expanded: Set<String> = []
     /// Starred chats, in their own section at the top; archived ones out of the list altogether (Settings lists them, as
@@ -317,7 +318,8 @@ struct SidebarView: View {
                        onRename: { name in
                            if let name { model.rename(item.id, to: name) } else { model.renaming = nil }
                        },
-                       brief: model.briefs[item.id], inTab: model.openInTabs.contains(item.id), favorite: favorite,
+                       brief: model.briefs[item.id], inTab: model.openInTabs.contains(item.id),
+                       isActive: model.activeSessionId == item.id, favorite: favorite,
                        archived: archived,
                        onStar: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleFavorite(item) } },
                        onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleArchived(item) } })
@@ -437,6 +439,7 @@ private struct ChatRow: View {
     let onRename: (String?) -> Void
     let brief: SessionBrief?
     let inTab: Bool
+    let isActive: Bool
     let favorite: Bool
     let archived: Bool
     let onStar: () -> Void
@@ -469,8 +472,8 @@ private struct ChatRow: View {
                         .background(RoundedRectangle(cornerRadius: 3).stroke(Theme.cAccent, lineWidth: 1))
                 } else {
                     Text(title)
-                        .font(.mono(11))
-                        .foregroundColor(live ? Theme.cHi : Theme.cText)
+                        .font(.mono(11, isActive ? .semibold : .regular))
+                        .foregroundColor(isActive || live ? Theme.cHi : Theme.cText)
                         .lineLimit(1)
                 }
                 Text(meta(live: live, status: status))
@@ -505,8 +508,16 @@ private struct ChatRow: View {
         .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(inTab ? Theme.cAccent.opacity(0.10) : (hover ? Theme.cAccent.opacity(0.06) : .clear))
+                .fill(isActive ? Theme.cAccent.opacity(0.18) : (inTab ? Theme.cAccent.opacity(0.10) : (hover ? Theme.cAccent.opacity(0.06) : .clear)))
         )
+        .overlay(alignment: .leading) {
+            if isActive {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Theme.cAccent)
+                    .frame(width: 2.5)
+                    .padding(.vertical, 4)
+            }
+        }
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
@@ -516,7 +527,9 @@ private struct ChatRow: View {
     private func meta(live: Bool, status: String?) -> String {
         var bits = [relative(item.mtime)]
         if item.size > 0 { bits.append(fmtBytes(item.size)) }
-        if inTab {
+        if isActive {
+            bits.append("active window")
+        } else if inTab {
             bits.append("in a window")
         } else if live {
             bits.append(brief?.host == "term" ? "in another terminal" : "live")

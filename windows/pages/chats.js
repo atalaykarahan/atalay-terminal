@@ -21,6 +21,7 @@
   $('bulkClear').innerHTML = ICON.x;
 
   let data = { rows: [], saved: 0, live: 0, folders: {} };
+  let activeId = null;
   let query = '';
   const expanded = new Set();
   const picked = new Set();
@@ -42,7 +43,9 @@
   function meta(r) {
     const bits = [relative(r.mtime)];
     if (r.size > 0) bits.push(fmtBytes(r.size));
-    if (r.open) bits.push('in a window');
+    const isActive = r.active || r.id === activeId;
+    if (isActive) bits.push('active window');
+    else if (r.open) bits.push('in a window');
     else if (r.status) bits.push(r.host === 'term' ? 'in another terminal' : 'live');
     if (r.status === 'waiting') bits.push('NEEDS YOU');
     else if (r.status === 'idle') bits.push('your turn');
@@ -51,7 +54,8 @@
 
   function row(r) {
     const st = r.status || 'ended';
-    return `<div class="row${r.open ? ' open' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
+    const isActive = r.active || r.id === activeId;
+    return `<div class="row${r.open ? ' open' : ''}${isActive ? ' active is-active' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
       `<span class="dot s-${esc(st)}${r.status ? '' : ' hollow'}"></span>` +
       (r.id === renaming
         ? `<span class="txt"><input class="ren" value="${esc(r.title || r.lastPrompt)}" spellcheck="false" maxlength="120">`
@@ -231,9 +235,16 @@
   window.__chats = {
     update(d) {
       data = d && Array.isArray(d.rows) ? d : data;
+      if (d && 'active' in d) activeId = d.active || null;
       // A folder that left the list (archived) isn't picked any more.
       const keys = new Set(data.rows.map((r) => r.key));
       for (const k of picked) if (!keys.has(k)) picked.delete(k);
+      render();
+    },
+    active(id) {
+      const next = id || null;
+      if (next === activeId) return;
+      activeId = next;
       render();
     },
     // Sliding open, it comes in from nothing; sliding shut, it fades out.

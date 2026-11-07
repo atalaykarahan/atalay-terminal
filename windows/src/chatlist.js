@@ -70,6 +70,7 @@ function createChatList({ settings }) {
   let items = []; // the engine's history: { id, cwd, mtime, size, title, lastPrompt }
   let live = []; // engine.live()
   let open = new Set(); // sessions with a window of the app
+  let activeId = null; // session of the focused chat window
   let liveKey = '', openKey = '', version = 0;
 
   // Every chat, newest first, with the live sessions that have no saved title yet (they head the list, "now").
@@ -142,6 +143,12 @@ function createChatList({ settings }) {
       openKey = key;
       return true;
     },
+    setActive(id) {
+      const next = id || null;
+      if (next === activeId) return false;
+      activeId = next;
+      return true;
+    },
     version: () => version,
 
     toggleFavorite(id) {
@@ -199,14 +206,14 @@ function createChatList({ settings }) {
         const fav = favorites.has(i.id);
         rows.push({
           id: i.id, cwd: i.cwd, key, mtime: i.mtime, size: i.size, title: titles.get(i.id) || i.title, lastPrompt: i.lastPrompt, fav,
-          status: b ? b.status : null, host: b ? b.host : null, open: open.has(i.id),
+          status: b ? b.status : null, host: b ? b.host : null, open: open.has(i.id), active: activeId === i.id,
         });
         if (!fav && !shown.has(key)) shown.set(key, i.cwd);
       }
       const names = labels([...shown.values()]);
       const where = {};
       for (const [key, cwd] of shown) where[key] = { label: names.get(cwd) || projectLabel(cwd), path: tildify(cwd) };
-      return { rows, saved: items.length, live: live.length, folders: where };
+      return { rows, saved: items.length, live: live.length, folders: where, active: activeId };
     },
 
     /** For Settings (cloud.js's archived chats): the archived chats by folder, each folder's newest first. */
