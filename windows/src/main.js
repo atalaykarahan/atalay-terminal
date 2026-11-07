@@ -321,7 +321,12 @@ function pushActiveSession(force = false) {
   const active = activeTerminalId
     ? engine.live().filter((s) => s.tab === activeTerminalId).sort((a, b) => rank(a) - rank(b))[0]
     : null;
-  const sid = active ? active.sessionId : null;
+  const c = activeTerminalId ? chats.get(activeTerminalId) : null;
+  const sid = (active && active.sessionId) || (c && c.sessionId) || null;
+  const chatSid = (active && !active.ai && active.sessionId) || (c && c.sessionId) || sid;
+  if (chatlist.setActive(chatSid) || force) {
+    run(chatsView, `window.__chats && __chats.active(${JSON.stringify(chatSid)})`);
+  }
   if (!force && sid === lastActiveSession) return;
   lastActiveSession = sid;
   toDash(`activeSession(${JSON.stringify(sid)})`);
@@ -537,6 +542,7 @@ function handleChats(msg) {
   switch (msg.type) {
     case 'ready':
       pushChats(true);
+      pushActiveSession(true);
       return true;
     case 'open':
       return openSession(String(msg.id || ''), false);
@@ -796,6 +802,7 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     pinToDash(win);
     win.show();
     win.focus();
+    touchTerminal(id);
     pushWinOpen();
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -820,11 +827,19 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     c.steppedAside = false;
     win.setParentWindow(null);
     win.hide();
+    if (activeTerminalId === id) {
+      activeTerminalId = null;
+      pushActiveSession();
+    }
     pushWinOpen();
   });
   win.on('closed', () => {
     if (chats.get(id)?.win === win) {
       chats.delete(id);
+      if (activeTerminalId === id) {
+        activeTerminalId = null;
+        pushActiveSession();
+      }
       pushWinOpen();
     }
   });

@@ -50,6 +50,46 @@
   term.onData((data) => atl.send('term:input', data));
   // The AI tool running in this window, as the app tells it (term:info), for the keys it needs.
   let tool = null;
+  // Copy-on-select, as on the Mac: dragging or double-clicking a selection copies it to the clipboard on mouse release,
+  // shows the "COPIED N CHARS" badge in the HUD, and keeps the selection highlighted.
+  let mouseDown = false, pendingCopy = false, copyTimer = 0;
+  const copiedEl = document.getElementById('copied');
+  const showCopied = (n) => {
+    if (!(n > 0)) return;
+    copiedEl.textContent = `COPIED ${n} CHAR${n === 1 ? '' : 'S'}`;
+    copiedEl.hidden = false;
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => (copiedEl.hidden = true), 2200);
+  };
+  const copySelection = () => {
+    if (!term.hasSelection()) return false;
+    const text = term.getSelection();
+    if (!text) return false;
+    atl.send('term:copy', text);
+    showCopied(text.length);
+    return true;
+  };
+  document.getElementById('term').addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      mouseDown = true;
+      pendingCopy = false;
+    }
+  }, true);
+  term.onSelectionChange(() => {
+    if (!term.hasSelection()) {
+      pendingCopy = false;
+      return;
+    }
+    if (mouseDown) pendingCopy = true;
+  });
+  addEventListener('mouseup', () => {
+    if (!mouseDown) return;
+    mouseDown = false;
+    if (pendingCopy && term.hasSelection()) {
+      pendingCopy = false;
+      copySelection();
+    }
+  });
   // Ctrl+C copies when something is selected (else it interrupts), Ctrl+V pastes: Windows Terminal's keys. The copy
   // goes through the app, as the page's clipboard API refuses a window without focus. Ctrl+V only keeps xterm.js from
   // sending ^V: the browser's own paste follows and xterm.js takes it (pasting here as well put everything in twice).
@@ -58,7 +98,8 @@
     const k = e.key.toLowerCase();
     if (k === 'c' && term.hasSelection()) {
       e.preventDefault();
-      atl.send('term:copy', term.getSelection());
+      copySelection();
+      // Cleared, as in Windows Terminal: the next Ctrl+C interrupts again.
       term.clearSelection();
       return false;
     }
