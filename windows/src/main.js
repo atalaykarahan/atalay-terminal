@@ -682,6 +682,18 @@ function handleRadar(msg) {
     // the way meanwhile, as on the Mac.
     case 'modal':
       return stepAside(msg.open === true);
+    // Two chats began (or stopped) writing the same file (files.heat): the corner's notice, as a chat that needs you.
+    case 'clash': {
+      const key = typeof msg.key === 'string' ? msg.key : '';
+      if (!key) return true;
+      const str = (v) => (typeof v === 'string' ? v : '');
+      const notice = { key, file: str(msg.file), path: str(msg.path), chats: Array.isArray(msg.chats) ? msg.chats.map(String) : [] };
+      toNotices(`clash && __messages.clash(${JSON.stringify(notice)})`);
+      return true;
+    }
+    case 'clashOver':
+      if (typeof msg.key === 'string') toNotices(`clashOver && __messages.clashOver(${JSON.stringify(msg.key)})`);
+      return true;
     case 'log':
       console.log('dashboard page:', msg.msg);
       return true;
@@ -1388,6 +1400,11 @@ function handleMessages(win, body) {
       return runaways.end(body.pid, body.started);
     case 'openWait':
       return openWait(body.sid);
+    // The "same file" notice: the dashboard in front, on its panels (files.heat names the file).
+    case 'openClash':
+      showDashboard();
+      toDash('openView("dash")');
+      return true;
     case 'openChat':
       return openFriendChat(body.id);
     case 'showing': {

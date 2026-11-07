@@ -3191,16 +3191,23 @@ class RadarEngine {
     const last5 = (a) => a.slice(-5).reduce((x, y) => x + y, 0) / 5;
     const cost15 = costSpark.slice(-15).reduce((x, y) => x + y, 0);
 
+    // A collision: two chats wrote the file in the last 20 minutes. A chat and its own subagents are one chat (each of
+    // them was an editor of its own, so a chat's subagent writing its file was taken for another chat), and `clash`
+    // names the chats, for their cards' ⚠, as on the Mac.
     const files = [...G.files.values()]
-      .map((F) => ({ F, collision: [...F.editors.values()].filter((e) => now - e.t < 20 * MIN).length > 1 }))
+      .map((F) => {
+        const chats = [...new Set([...F.editors.values()].filter((e) => now - e.t < 20 * MIN).map((e) => e.s))].sort();
+        return { F, clash: chats.length > 1 ? chats : [] };
+      })
       .sort((a, b) => {
-        if (a.collision !== b.collision) return a.collision ? -1 : 1;
+        const ca = a.clash.length > 0, cb = b.clash.length > 0;
+        if (ca !== cb) return ca ? -1 : 1;
         const wa = a.F.w * 3 + a.F.r, wb = b.F.w * 3 + b.F.r;
         return wa !== wb ? wb - wa : b.F.last - a.F.last;
       })
       .slice(0, 14)
-      .map(({ F, collision }) => ({
-        p: tildify(F.p), short: shortPath(F.p), r: F.r, w: F.w, last: F.last, collision,
+      .map(({ F, clash }) => ({
+        p: tildify(F.p), short: shortPath(F.p), r: F.r, w: F.w, last: F.last, collision: clash.length > 0, clash,
         editors: [...F.editors.values()].map((e) => ({ s: e.s, a: e.a ?? null })),
       }));
 
