@@ -21,6 +21,7 @@ const { createAIColors } = require('./aicolors');
 const { createTerminals, which } = require('./terminals');
 const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
+const { createPowerSaver } = require('./power');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
@@ -285,10 +286,15 @@ function loadClientKey() {
 }
 
 const overlay = createOverlay({ dataDir: app.getPath('userData'), claudeDir: path.join(os.homedir(), '.claude') });
+// Power save (the Mac's PowerSaver): the map's switch, and on by itself at low battery or in Windows' Energy Saver.
+const power = createPowerSaver({ settings, onBattery: () => powerMonitor.isOnBatteryPower(), onChange: () => pushPower() });
+
 // Processes left burning a core where nobody sees them: the dashboard sounds the alarm (DANGER).
 const runaways = createRunaways({
   // Each reading: the AI tools running besides Claude (Codex, Antigravity…), sessions on the orbit.
   onRead: () => engine.setOthers(runaways.ais()),
+  // And the battery's charge and Energy Saver, which Electron doesn't tell.
+  onPower: (r) => power.read(r),
   onChange: (json) => {
     toDash(`runaways(${json})`);
     // The alarm, in the middle of the screen (the notices panel can play its sound).
@@ -353,6 +359,17 @@ function cloudState() {
   return { ...cloud.json(), ...updates.state() };
 }
 const pushCloud = () => toDash(`cloud(${JSON.stringify(cloudState())})`);
+
+// In power save the map draws fewer and smaller frames (power.js); the switch on the map and Settings show it. The map
+// hears only when power save comes on or goes off: it sets its quality anew each time.
+let mapSaves = null;
+function pushPower(force = false) {
+  if (force || mapSaves !== power.on()) {
+    mapSaves = power.on();
+    toDash(`power(${mapSaves})`);
+  }
+  toDash(`powerSave(${power.json()})`);
+}
 
 // Signing in with GitHub happens in the browser (Settings → Account, account.js): only GitHub's sign-in page opens.
 const SIGN_IN = 'https://github.com/login/oauth/authorize?';
@@ -741,8 +758,13 @@ function handleRadar(msg) {
       pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
       pushActiveSession(true);
-      toDash(`power(${powerMonitor.isOnBatteryPower()})`);
+      pushPower(true);
       return true;
+    // Power save: the switch on the map, and Settings' "on by itself at low battery".
+    case 'powerSave':
+      return power.choose(msg.on === true), true;
+    case 'powerSaveAuto':
+      return power.setAuto(msg.on === true), true;
     case 'open':
       return openSession(msg.sid, false);
     case 'fork':
@@ -1880,9 +1902,9 @@ app.whenReady().then(() => {
   savers.autoStart();
   if (!PROBE) aiColors.autoStart();
   powerMonitor.on('resume', () => cloud.kick());
-  // On battery the dashboard's map draws fewer and smaller frames, as on the Mac (PowerSaver.swift).
-  powerMonitor.on('on-battery', () => toDash('power(true)'));
-  powerMonitor.on('on-ac', () => toDash('power(false)'));
+  // Power save comes on by itself on a low battery (power.js), and goes off again on the adapter.
+  powerMonitor.on('on-battery', () => power.update());
+  powerMonitor.on('on-ac', () => power.update());
   // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
   // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.
   terminals.restore().then((found) => {

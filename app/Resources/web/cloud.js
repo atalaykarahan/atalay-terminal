@@ -345,7 +345,7 @@ window.Cloud = (() => {
             <div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
               <button type="button" class="arc-btn arc-open">manage</button></div>` : ''}
             ${window.__powerSave ? `<div class="hk-h">POWER</div>
-            <div class="hk-row"><span>power save on by itself at low battery<small>below ${window.__powerSave.threshold}% on battery, and in Low Power Mode, the map draws fewer and smaller frames · the switch on the map turns it off again</small></span>
+            <div class="hk-row"><span>power save on by itself at low battery<small>below ${window.__powerSave.threshold}% on battery, and in ${window.__powerSave.saver || 'Low Power Mode'}, the map draws fewer and smaller frames · the switch on the map turns it off again</small></span>
               <button type="button" class="hk-sw pwr-auto" role="switch" aria-checked="true" title="Power save on by itself at low battery"><i></i></button></div>` : ''}
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>

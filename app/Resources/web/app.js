@@ -136,16 +136,18 @@ function setVisibility(visible, focused) {
   document.documentElement.classList.toggle('behind', visible && !focused);
   map('activity', visible, focused);
 }
-// Power save (the Mac app decides and keeps it, PowerSaver.swift): the switch at the map's top right, on when the map
-// draws fewer and smaller frames, with why when it came on by itself (a low battery, Low Power Mode). Not shown until
-// the app says (the Windows app doesn't yet).
+// Power save (the app decides and keeps it: PowerSaver.swift, the Windows app's power.js): the switch at the map's top
+// right, on when the map draws fewer and smaller frames, with why when it came on by itself (a low battery, the
+// system's own saver: the Mac's Low Power Mode, or `saver`, what the app calls it, Windows' Energy Saver). Not shown
+// until the app says.
+const saverName = (s) => s.saver || 'Low Power Mode';
 function setPowerSave(s) {
   window.__powerSave = s;
   const b = $('pwr');
   b.hidden = false;
   b.classList.toggle('on', s.on);
   b.setAttribute('aria-checked', String(s.on));
-  setText(b.querySelector('em'), s.automatic ? (s.lowPower ? 'auto · low power mode' : `auto · ${s.battery}%`) : '');
+  setText(b.querySelector('em'), s.automatic ? (s.lowPower ? `auto · ${saverName(s).toLowerCase()}` : `auto · ${s.battery}%`) : '');
   if ($('pwr-tip').classList.contains('show')) powerTip();
   window.Cloud?.renderPower?.();
 }
@@ -155,7 +157,7 @@ function powerTip() {
   if (!s || !Q) return;
   const full = Math.min(Q.front.dpr, devicePixelRatio || 1), saved = Math.min(Q.saver.dpr, full);
   const row = (what, off, on) => `<div class="r"><span>${what}</span>${off} → <b>${on}</b></div>`;
-  const why = s.automatic ? (s.lowPower ? 'on by itself · Low Power Mode' : `on by itself · battery ${s.battery}%`) : '';
+  const why = s.automatic ? (s.lowPower ? `on by itself · ${saverName(s)}` : `on by itself · battery ${s.battery}%`) : '';
   setHTML(
     $('pwr-tip'),
     `<div class="h">power save · ${s.on ? 'on' : 'off'}${why ? ` <i>${why}</i>` : ''}</div>` +
@@ -164,7 +166,7 @@ function powerTip() {
       (saved < full ? row('resolution', `${full}×`, `${saved}× · ${Math.round(100 * (1 - (saved / full) ** 2))}% fewer pixels`) : '') +
       row('camera tour', 'when you\'re away', 'never') +
       `<div class="d gap">the same either way: ${Q.behind.fps} fps at ${Q.behind.dpr}× behind another window, ${Q.front.fps} fps while you drag or the camera flies, nothing drawn while the dashboard is hidden</div>` +
-      `<div class="d">${s.auto ? `on by itself below ${s.threshold}% on battery and in Low Power Mode` : 'never on by itself'} · Settings · POWER</div>` +
+      `<div class="d">${s.auto ? `on by itself below ${s.threshold}% on battery and in ${saverName(s)}` : 'never on by itself'} · Settings · POWER</div>` +
       `<div class="d">click to turn it ${s.on ? 'off' : 'on'}</div>`,
   );
 }

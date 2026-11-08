@@ -69,7 +69,7 @@ const SHELL_RE = new RegExp(SHELLS, 'i');
 const TERMINAL_RE = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|WindowsTerminal|wezterm-gui|alacritty|mintty|ConEmuC?(64)?|tabby|hyper|warp)$/i;
 
 // The folder a process is in: its current directory, read from its process parameters (x64 layout; a 32-bit process, or
-// one this user can't read, has none).
+// one this user can't read, has none). And the battery's charge and battery saver (AtlPower), for power save.
 const CWD_READER = `
 using System;
 using System.Runtime.InteropServices;
@@ -99,9 +99,22 @@ public static class AtlCwd {
       return dir.Length > 3 ? dir.TrimEnd('\\\\') : dir;
     } catch { return ""; } finally { CloseHandle(h); }
   }
+}
+public static class AtlPower {
+  [StructLayout(LayoutKind.Sequential)] struct SPS { public byte AC; public byte Flag; public byte Percent; public byte Saver; public int Life; public int Full; }
+  [DllImport("kernel32.dll")] static extern bool GetSystemPowerStatus(out SPS s);
+  // The battery's charge (%), -1 without one; and battery saver (Energy Saver on Windows 11), 1 when on.
+  public static string Of() {
+    SPS s;
+    if (!GetSystemPowerStatus(out s)) return "0\\t-1";
+    int pct = (s.Flag & 128) != 0 || s.Flag == 255 || s.Percent > 100 ? -1 : s.Percent;
+    return (s.Saver == 1 ? "1" : "0") + "\\t" + pct;
+  }
 }`;
 
-function createRunaways({ onChange, onRead }) {
+// `onPower({ saver, charge })`: with every reading on Windows, the battery's charge (%, null without one) and whether
+// the system's saver is on, for power save (power.js).
+function createRunaways({ onChange, onRead, onPower }) {
   const LINE = 50, SUSTAIN = 120_000, EVERY = 5000;
   const last = new Map(); // pid -> { started, cpu (ms of CPU in all), at }
   const over = new Map(); // pid -> since when it has been over the line
@@ -173,6 +186,7 @@ function createRunaways({ onChange, onRead }) {
       '$ErrorActionPreference = "SilentlyContinue"',
       '$me = (Get-Process -Id $PID).SessionId',
       `try { Add-Type -TypeDefinition @'\n${CWD_READER}\n'@ } catch {}`,
+      '$pm = $null; try { $pm = [Windows.System.Power.PowerManager,Windows.System.Power,ContentType=WindowsRuntime] } catch {}',
       'while ($true) {',
       '  $ask = [Console]::In.ReadLine()',
       '  if ($ask -eq $null) { break }',
@@ -193,6 +207,11 @@ function createRunaways({ onChange, onRead }) {
       '    $cpu = [long](([double]$p.KernelModeTime + [double]$p.UserModeTime) / 10000)',
       '    [void]$sb.Append("$id`t$pp`t$([int]$orphan)`t$t`t$cpu`t$($p.Name)`t$cwd`t$($c -replace "[`t`r`n]", " ")`n")',
       '  }',
+      // The battery's charge and Windows' saver, for power save (power.js): Electron tells neither. The saver as the
+      // classic call reports it, or as Windows 11's PowerManager does.
+      '  $pw = "0`t-1"; try { $pw = [AtlPower]::Of() } catch {}',
+      '  try { if ($pm -and [string]$pm::EnergySaverStatus -eq "On") { $pw = "1" + $pw.Substring(1) } } catch {}',
+      '  [void]$sb.Append("power`t$pw`n")',
       '  [void]$sb.Append("end`n")',
       '  [Console]::Out.Write($sb.ToString())',
       '  [Console]::Out.Flush()',
@@ -208,6 +227,11 @@ function createRunaways({ onChange, onRead }) {
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).replace(/\r$/, '');
         buf = buf.slice(i + 1);
+        if (line.startsWith('power\t')) {
+          const [, saver, pct] = line.split('\t');
+          if (onPower) onPower({ saver: saver === '1', charge: Number(pct) >= 0 ? Number(pct) : null });
+          continue;
+        }
         if (line !== 'end') {
           rows.push(line);
           continue;
