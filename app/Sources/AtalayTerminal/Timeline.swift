@@ -4,8 +4,11 @@ import Foundation
 /// launch, kept for the last 24 hours in the app's own folder. Written as the state comes (MainWindowController.apply,
 /// main thread), read only when the page asks; nothing is read at launch.
 enum Timeline {
+    /// Each build its own, as the ledger's (Ledger.swift): a staging or development run beside the installed app mustn't
+    /// cut the file back while the other appends, nor put its launch line in the other's record.
     private static let url = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        ?? URL(fileURLWithPath: HOME + "/Library/Application Support")).appendingPathComponent("atalay-terminal/timeline.jsonl")
+        ?? URL(fileURLWithPath: HOME + "/Library/Application Support")).appendingPathComponent("atalay-terminal")
+        .appendingPathComponent(Detached.prefix == "atl-" ? "timeline.jsonl" : "timeline-\(Detached.prefix.dropLast()).jsonl")
     private static let queue = DispatchQueue(label: "atalay.timeline", qos: .utility)
     private static let keep = 24 * 3_600_000.0
     /// Main thread: each session's status as last written, and whether this launch's line is.
