@@ -1,11 +1,11 @@
 /* MUR47 (themes.json): what its colours alone can't give. Every rule below applies only while MUR47 is the theme
-   (its tokens set --theme-id: mur47 on :root), so the other themes look as they did; the orbit map is left as it is.
+   (its tokens set --theme-id: mur47 on :root), so the other themes look as they did; the orbit map takes its colours but none of these rules.
    Fonts: Share Tech Mono and Black Ops One (SIL Open Font License, fonts/OFL-*.txt). */
 
 @font-face { font-family: "Share Tech Mono"; src: url("fonts/ShareTechMono-Regular.ttf") format("truetype"); font-display: swap; }
 @font-face { font-family: "Black Ops One"; src: url("fonts/BlackOpsOne-Regular.ttf") format("truetype"); font-display: swap; }
 
-/* the orbit map keeps its own look */
+/* the orbit map keeps its own look, in MUR47's colours */
 #mapwrap { --theme-id: none; }
 
 @container style(--theme-id: mur47) {

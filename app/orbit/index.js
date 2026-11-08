@@ -18,6 +18,7 @@ import { buildCore } from './core.js';
 import { buildBlueBox, buildRoadster, buildStation, CAR_LENGTH, carStudio } from './models.js';
 import { buildBackdrop } from './space.js';
 import { glowTexture } from './textures.js';
+import { readTheme, rgba } from './theme.js';
 import { clamp, damp, easeInOut, easeOut, el, lerp, setText, TAU } from './util.js';
 
 const R = window.RADAR;
@@ -62,23 +63,47 @@ labels.sortObjects = false; // skips rewriting every label's z-index on every fr
 labels.domElement.className = 'labels';
 host.appendChild(labels.domElement);
 
+// The theme's colours (theme.js): the space, the warm lights, the dust and stars, the core, and the effects and the
+// minimap that were the default theme's orange. paintTheme() and the 'themechange' listener below keep them current.
+let THEME = readTheme();
+
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x030201);
+scene.background = new THREE.Color();
 const camera = new THREE.PerspectiveCamera(40, 1, 2, 12000);
 
-scene.add(new THREE.AmbientLight(0x8a7766, 0.75));
-scene.add(new THREE.PointLight(0xffa04a, 4.2, 0, 0));
+const ambient = new THREE.AmbientLight(0xffffff, 0.75);
+const sunLight = new THREE.PointLight(0xffffff, 4.2, 0, 0);
+scene.add(ambient, sunLight);
 const rimLight = new THREE.DirectionalLight(0x7f9fff, 1.2);
 rimLight.position.set(-400, 500, -600);
 scene.add(rimLight);
-const keyLight = new THREE.DirectionalLight(0xffe2c0, 0.55);
+const keyLight = new THREE.DirectionalLight(0xffffff, 0.55);
 keyLight.position.set(300, 600, 500);
 scene.add(keyLight);
 
-const backdrop = buildBackdrop(glowTex);
+const backdrop = buildBackdrop(glowTex, THEME);
 scene.add(backdrop.group);
-const core = buildCore(R, glowTex, K.CORE_R);
+const core = buildCore(R, glowTex, K.CORE_R, THEME);
 scene.add(core.group);
+function paintTheme() {
+  scene.background.copy(THEME.bg);
+  ambient.color.copy(THEME.tint(0x8a7766));
+  sunLight.color.copy(THEME.tint(0xffa04a));
+  keyLight.color.copy(THEME.tint(0xffe2c0));
+}
+paintTheme();
+// A theme picked (or previewed) in Settings: Themes.swift's window.__theme swaps the page's tokens, then says so.
+window.addEventListener('themechange', () => {
+  const t = readTheme();
+  if (t.key === THEME.key) return;
+  THEME = t;
+  paintTheme();
+  backdrop.paint(THEME);
+  core.paint(THEME);
+  refreshCore();
+  lastMinimap = 0;
+  poke();
+});
 const glow = new GlowPoints(8000, glowTex);
 const lines = new LineBatch(40000);
 scene.add(lines.lines, glow.points);
@@ -640,7 +665,7 @@ function syncSessions(st, now) {
       n = new Session(s, now, booted ? 0 : delay);
       delay += 160;
       NODES.set(s.id, n);
-      if (booted) ripple(sunNode, '#f88008', 70, 1200, 0, true);
+      if (booted) ripple(sunNode, THEME.accent, 70, 1200, 0, true);
     }
     n.setSession(s, now);
     seen.add(s.id);
@@ -1335,13 +1360,13 @@ function onEvent(ev) {
     }
     case 'prompt':
       if (!node) break;
-      ripple(node, '#fff0e0', 110, 1700);
-      ripple(node, '#f88008', 80, 1400, 200);
-      sparks(node.pos, '#fff0e0', 18);
+      ripple(node, THEME.tint('#fff0e0'), 110, 1700);
+      ripple(node, THEME.accent, 80, 1400, 200);
+      sparks(node.pos, THEME.tint('#fff0e0'), 18);
       floatText(node.owner, `› ${R.clipT(ev.l, 70)}`, '#ffffff', 5600, true);
       break;
     case 'say':
-      if (node) floatText(node.owner, `“${R.clipT(ev.l, 60)}”`, '#d9c3a8', 3800);
+      if (node) floatText(node.owner, `“${R.clipT(ev.l, 60)}”`, rgba(THEME.txt2), 3800);
       break;
     case 'think':
       if (node) ripple(node, '#9d6bff', 34, 900);
@@ -1349,7 +1374,7 @@ function onEvent(ev) {
     case 'usage':
       if (!node || now - node.owner.lastUsageFx < 700) break;
       node.owner.lastUsageFx = now;
-      floatText(node.owner, `+${R.fmtTok(ev.out)} out · ${R.fmtUsd(ev.c)}`, '#ffb057', 2200);
+      floatText(node.owner, `+${R.fmtTok(ev.out)} out · ${R.fmtUsd(ev.c)}`, rgba(THEME.soft), 2200);
       break;
     case 'sys':
       if (!node) break;
@@ -1698,7 +1723,7 @@ function drawMinimap() {
       x.fill();
     }
   }
-  x.fillStyle = '#f88008';
+  x.fillStyle = rgba(THEME.accent);
   x.beginPath();
   x.arc(cx, cy, 3.2, 0, TAU);
   x.fill();
@@ -1709,7 +1734,7 @@ function drawMinimap() {
     x.arc(cx + n.pos.x * S, cy + n.pos.z * S, n.mode === 'drag' ? 3.4 : 2.4, 0, TAU);
     x.fill();
   }
-  x.strokeStyle = 'rgba(255,176,87,0.85)';
+  x.strokeStyle = rgba(THEME.soft, 0.85);
   x.beginPath();
   [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([nx, ny], i) => {
     groundPoint(nx, ny, _corner);

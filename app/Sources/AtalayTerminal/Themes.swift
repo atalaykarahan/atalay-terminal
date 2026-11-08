@@ -22,8 +22,8 @@ struct ThemeSpec: Decodable {
 
 /// The theme the app shows and its colours as named tokens: the CSS variables of web/style.css, plus the terminals'
 /// own. They reach the web pages as a style sheet written before each page loads (and replaced when the theme changes),
-/// the terminals and the native views through `ThemeStore.changed`. The orbit map keeps the default theme's colours:
-/// the sheet sets them again on #mapwrap.
+/// the terminals and the native views through `ThemeStore.changed`. The orbit map takes the theme too (its accent and
+/// background, orbit/theme.js); its tool, status and session colours stay its own.
 final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
     static let changed = Notification.Name("ThemeStore.changed")
@@ -161,16 +161,10 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    /// The style sheet: every token on the page's root (above style.css's defaults), and the default theme's again on
-    /// the orbit map: the tokens made from others are made there again from the default ones, its text colour is set
-    /// again rather than inherited, and the page's background (style.css body), which shows through it, is painted
-    /// under it.
+    /// The style sheet: every token on the page's root (above style.css's defaults), the orbit map's too.
     var css: String {
         let decl = { (t: [String: String]) in t.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value);" }.joined() }
-        return ":root:root{\(decl(tokens))}#mapwrap#mapwrap{\(decl(tokens(of: themes[0])))"
-            + "--panel:rgba(var(--panel-rgb),var(--glass-a));--line:rgba(var(--accent-rgb),0.32);--line-soft:rgba(var(--accent-rgb),0.13);"
-            + "color:var(--txt);background:linear-gradient(rgba(var(--bg-rgb),0.6),rgba(var(--bg-rgb),0.6)),"
-            + "radial-gradient(ellipse at 50% 40%,var(--bloom) 0%,var(--bg) 70%) fixed}"
+        return ":root:root{\(decl(tokens))}"
             // A neon theme's text glows in its own colour, as SynthWave '84's "Neon Dreams" does in VS Code.
             + (current.glow == true ? "body{text-shadow:0 0 1px rgba(255,255,255,0.3),0 0 5px currentColor,0 0 12px rgba(var(--accent-rgb),0.5)}" : "")
             // A font picked in Settings is the text font too, where the monospace leaves names to a sans (style.css --font-sans).

@@ -1,7 +1,8 @@
 :root {
   /* The theme: these are the default theme's colours; the app writes the chosen theme's over them before the page
      loads and again when it changes (Themes.swift). A *-rgb token is the same colour as "r, g, b", for
-     rgba(var(--x-rgb), alpha). The orbit map keeps the default ones whatever the theme. */
+     rgba(var(--x-rgb), alpha). The orbit map takes them too on the Mac (orbit/theme.js); on Windows it keeps the
+     default ones whatever the theme. */
   --bg: #0a0705;
   --bg-rgb: 10, 7, 5;
   --deep-rgb: 5, 3, 2;

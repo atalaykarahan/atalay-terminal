@@ -1597,7 +1597,7 @@ window.Cloud = (() => {
     if (shown !== 'themes') return;
     if (!list || !list.themes) return setHTML(el, `<section class="panel cv-themes"><header><span class="tag">themes</span></header><div class="mn-empty">themes didn't load</div></section>`);
     el.innerHTML =
-      `<section class="panel cv-themes"><header><span class="tag">themes</span><span class="meta">${list.themes.length} themes · point to try · click to keep · the orbit map keeps its colours</span></header>` +
+      `<section class="panel cv-themes"><header><span class="tag">themes</span><span class="meta">${list.themes.length} themes · point to try · click to keep${MACHINE === 'PC' ? ' · the orbit map keeps its colours' : ''}</span></header>` +
       `<div class="body th-grid">${list.themes.map((t) => themeCard(t, list.chosen)).join('')}</div></section>`;
     const cards = [...el.querySelectorAll('.th-card')];
     let timer = 0;
