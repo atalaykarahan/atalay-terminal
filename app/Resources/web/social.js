@@ -204,8 +204,9 @@ window.Social = (() => {
     read: (id) => api('POST', 'v1/messages/read', { with: id }),
     // Whether friends see your active time (today, this week, in total); your level shows either way.
     setActivity: (show) => api('PATCH', 'v1/me/activity', { show }),
-    // Everyone with XP, by this week since Monday ('week') or ever ('all'); and whether you're listed there.
-    leaderboard: (by) => api('GET', `v1/leaderboard?by=${by === 'all' ? 'all' : 'week'}`),
+    // Everyone with XP, by this week since Monday ('week'), ever ('all') or this week among your friends ('friends');
+    // and whether you're listed there.
+    leaderboard: (by) => api('GET', `v1/leaderboard?by=${['all', 'friends'].includes(by) ? by : 'week'}`),
     setBoard: (show) => api('PATCH', 'v1/me/leaderboard', { show }),
     // Settings → Feedback: straight to the developer, with who sent it and when.
     feedback: (body) => api('POST', 'v1/feedback', { body }),

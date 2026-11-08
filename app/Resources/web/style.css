@@ -64,6 +64,11 @@
   --a0: #562f18; --a1: #ff4d4d; --a2: #c5e35a; --a3: #ffd23f; --a4: #c16100; --a5: #e0849c; --a6: #ff7345; --a7: #ffb27a;
   --a8: #7d6553; --a9: #ff5c8a; --a10: #ddf08f; --a11: #ffe28a; --a12: #f88008; --a13: #ffa8c4; --a14: #ff9b73; --a15: #fff3e6;
   --font: "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  /* Names and words where the monospace reads slowly (the leaderboard, friends): the system's sans, or the font
+     picked in Settings (Themes.swift sets it too). */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  /* Numbers on the scoreboards (the leaderboard, friends): a monospace whatever font is picked, figures of one width. */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
   --fs: clamp(10px, 0.68vw, 13px);
 }
 

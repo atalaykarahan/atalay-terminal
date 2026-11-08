@@ -37,12 +37,69 @@ window.Badges = (() => {
     return `${Math.min(v, next)} / ${next}${p.unit ? ` ${hours ? 'h' : p.unit}` : ''}`;
   };
 
-  /** A displayed badge beside a name: small, its name and tier on hover. */
-  function small(b, size = 18) {
+  /** A displayed badge beside a name, its card on hover (`owner`: whose it is, an account id, or none for yours). */
+  function small(b, size = 18, owner) {
     if (!b) return '';
     const t = Art.tierName(b.id, b.tier);
-    return `<span class="bdg-mini" title="${esc(Art.name(b.id))}${t ? ` · ${esc(t)}` : ''}">${Art.svg(b.id, b.tier, size)}</span>`;
+    // An empty title keeps a row's own tooltip off the badge, where its card shows instead.
+    return `<span class="bdg-mini" title="" aria-label="${esc(Art.name(b.id))}${t ? ` · ${esc(t)}` : ''}" data-bid="${esc(b.id)}" data-bt="${b.tier}"${owner ? ` data-owner="${esc(owner)}"` : ''}>${Art.svg(b.id, b.tier, size)}</span>`;
   }
+
+  // ---------- a badge beside a name, on hover: its card, big ----------
+  // The badge large in its metal, its name in its colour, its tier and the steps to the top one, what it's for, how many
+  // players have it and when its owner got it: from your inventory for yours, else from the owner's (GET v1/badges/:id,
+  // which shows anyone their displayed one), what's known drawn at once and the rest when it comes.
+  let card = null, cardFor = null;
+  function hoverCard(el) {
+    const id = el.dataset.bid, tier = +el.dataset.bt, owner = el.dataset.owner || null;
+    cardFor = el;
+    const theirs = owner ? friends.get(owner)?.data : null;
+    const known = (theirs && !theirs.error && theirs.badges?.find((x) => x.id === id)) || (!owner && mine?.badges.find((x) => x.id === id)) || null;
+    const general = mine?.badges.find((x) => x.id === id) || null; // what it's for and how rare: the same for everyone
+    drawCard(el, { id, tier, tiers: known?.tiers ?? general?.tiers ?? 1, how: known?.how ?? general?.how ?? '', rare: known?.rare ?? general?.rare ?? null, earnedAt: known?.earnedAt ?? null });
+    if (owner && !known) {
+      api('GET', `v1/badges/${owner}`).then((d) => {
+        friends.set(owner, { at: Date.now(), data: d });
+        const b = d && !d.error && d.badges?.find((x) => x.id === id);
+        if (b && cardFor === el && el.isConnected) drawCard(el, { ...b, tier });
+      });
+    }
+  }
+  function drawCard(el, b) {
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'bdg-hover';
+      document.body.appendChild(card);
+    }
+    const tierText = Art.tierName(b.id, b.tier, b.tiers);
+    const steps = b.tiers > 1 && !b.id.startsWith('service-')
+      ? `<span class="steps">${Array.from({ length: b.tiers }, (_, i) => `<i class="${i < b.tier ? 'on' : ''}"></i>`).join('')}</span>` : '';
+    card.style.setProperty('--q', Art.glow(b.id, b.tier)[0]);
+    card.innerHTML =
+      `<div class="bh-top"><div class="bh-art">${Art.svg(b.id, b.tier, 96)}</div><div class="bh-name"><b>${esc(Art.name(b.id))}</b>` +
+      `<span class="q">${esc(tierText || 'Earned')}${b.tiers > 1 && !b.id.startsWith('service-') ? ` · tier ${b.tier} of ${b.tiers}` : ''}</span>${steps}</div></div>` +
+      (b.how ? `<p>${esc(b.how)}</p>` : '') +
+      (b.rare != null ? `<small class="tp-rare${b.rare <= 9 ? ' rare' : ''}">${b.rare <= 9 ? 'Rare · ' : ''}${b.rare}% of players have it</small>` : '') +
+      (b.earnedAt ? `<small>Earned ${esc(new Date(b.earnedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }))}</small>` : '');
+    const r = el.getBoundingClientRect();
+    card.classList.add('on');
+    const w = card.offsetWidth, h = card.offsetHeight;
+    const left = r.right + 12 + w < innerWidth ? r.right + 12 : Math.max(8, r.left - 12 - w);
+    card.style.left = `${Math.round(left)}px`;
+    card.style.top = `${Math.round(Math.max(8, Math.min(innerHeight - h - 8, r.top + r.height / 2 - h / 2)))}px`;
+  }
+  document.addEventListener('mouseover', (e) => {
+    const el = e.target.closest?.('.bdg-mini[data-bid]');
+    if (el && el !== cardFor) hoverCard(el);
+    else if (!el && cardFor) {
+      cardFor = null;
+      card?.classList.remove('on');
+    }
+  });
+  document.addEventListener('scroll', () => {
+    cardFor = null;
+    card?.classList.remove('on');
+  }, { capture: true, passive: true });
 
   function tile(b, own) {
     const p = b.progress;
