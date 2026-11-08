@@ -94,11 +94,14 @@ elsewhere and no `url()`. Anything else plays the app's own sound.
 - Recorded (`sounds/`): `badge-impact`, `badge-shine` (a badge's reveal) and `badge-equip` (a badge put on display).
   The reveal starts each one so that its moment falls when the badge shows: put yours at the same point in the file
   (1.62 s, 1.07 s and 0.36 s in).
+- The theme's alone, with the dashboard's moments: `streak` (a streak milestone), `streak-break`, `back` and
+  `theme-kept`. The app has no sound for these, so they play only when the theme gives a file.
 
 Do not disturb (for `Sfx`) and the dashboard's sound button (for its pings) still decide whether a sound plays at all.
 
 ```json
-"ui": { "--theme-id": "my-theme", "--sfx-message": "\"themes/my-pack/sfx/message.wav\"", "--sfx-send": "none" }
+"ui": { "--theme-id": "my-theme", "--sfx-message": "\"themes/my-pack/sfx/message.wav\"", "--sfx-send": "none",
+        "--sfx-streak": "\"themes/my-pack/sfx/streak.wav\"" }
 ```
 
 ## Terminal cursor

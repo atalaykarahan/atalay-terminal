@@ -369,6 +369,8 @@ window.Sfx = (() => {
   // A sound that is another's unless the theme gives it one of its own (hooks.js): two chats writing the same file sound
   // as a chat that needs you.
   const SAME = { clash: 'wait' };
+  // Moments the app marks without a sound of its own (hooks.js): only a theme's file plays for them.
+  const THEMED = ['streak', 'streak-break', 'back', 'theme-kept'];
 
   let warned = false;
   function warnIfSilent() {
@@ -413,11 +415,11 @@ window.Sfx = (() => {
       } catch {}
     },
     play(name) {
-      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom'].includes(name);
+      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom', 'theme-kept'].includes(name);
       const base = SOUNDS[name] ? name : SAME[name];
-      if (!base || (window.Social && window.Social.dnd() && !yours)) return;
-      // The theme's own sound, or its silence, instead of the app's.
-      if (Hooks.sound(name) || (base !== name && Hooks.sound(base))) return;
+      if ((!base && !THEMED.includes(name)) || (window.Social && window.Social.dnd() && !yours)) return;
+      // The theme's own sound, or its silence, instead of the app's (a theme-only one has nothing else).
+      if (Hooks.sound(name) || !base || (base !== name && Hooks.sound(base))) return;
       try {
         audio(LENGTH[base] || 2500);
         SOUNDS[base]();

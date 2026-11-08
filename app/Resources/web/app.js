@@ -293,14 +293,23 @@ let streak = 0;
 function setStreak({ n, mark = 0, broke = 0 }) {
   streak = n;
   Hooks.set('streak', n);
-  if (mark) Hooks.pulse('streak-milestone', { value: mark }, { ms: 3000 });
-  if (broke) Hooks.pulse('streak-break', { value: broke });
+  if (mark) {
+    Hooks.pulse('streak-milestone', { value: mark }, { ms: 3000 });
+    window.Sfx?.play('streak');
+  }
+  if (broke) {
+    Hooks.pulse('streak-break', { value: broke });
+    window.Sfx?.play('streak-break');
+  }
 }
 let idleFor = '';
 function setIdle(seconds) {
   const { level, back } = Hooks.logic.idleStep(idleFor, seconds);
   idleFor = level;
-  if (back) Hooks.pulse('back', { value: back });
+  if (back) {
+    Hooks.pulse('back', { value: back });
+    window.Sfx?.play('back');
+  }
   Hooks.set('idle', level || null);
 }
 
