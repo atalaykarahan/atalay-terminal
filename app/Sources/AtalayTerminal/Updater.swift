@@ -11,6 +11,26 @@ enum Updater {
     /// A newer build, checked and unpacked next to the running app (hidden), waiting to replace it.
     struct Staged { let build: Int; let version: String; let url: URL }
 
+    /// Where `prepare` puts it: beside the app, hidden.
+    static var stagedURL: URL {
+        let current = Bundle.main.bundleURL
+        return current.deletingLastPathComponent().appendingPathComponent(".\(current.lastPathComponent).update")
+    }
+
+    /// A build an earlier run staged and never restarted into (that restart hung, as in 0.19.0 and 0.19.1, or the app was
+    /// force-quit or crashed): only that run knew of it, so every launch since downloaded it again and tried again.
+    /// Newer than this build and the same app: the one to go in. Anything else waiting there is stale, and goes.
+    static func leftover() -> Staged? {
+        let url = stagedURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let build = { (b: Bundle?) in Int(b?.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0 }
+        if let staged = Bundle(url: url), staged.bundleIdentifier == Bundle.main.bundleIdentifier, build(staged) > build(.main) {
+            return Staged(build: build(staged), version: staged.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", url: url)
+        }
+        try? FileManager.default.removeItem(at: url)
+        return nil
+    }
+
     enum Failure: Error {
         case noKey, download(Int), badSignature, badBundle, cancelled
         /// The folder holding the app can't be written to (or macOS privacy settings refused it).
@@ -48,8 +68,7 @@ enum Updater {
         // Put the new bundle next to the running one first, while this app is still open: the swap after quitting is
         // then two renames in one folder, and a folder the app can't write to (or a macOS privacy prompt for it, as
         // in ~/Documents) shows up now instead of after the app is gone.
-        let current = Bundle.main.bundleURL
-        let staged = current.deletingLastPathComponent().appendingPathComponent(".\(current.lastPathComponent).update")
+        let staged = stagedURL
         try? fm.removeItem(at: staged)
         do { try fm.moveItem(at: app, to: staged) } catch { throw Failure.notWritable }
         try? fm.removeItem(at: work)
