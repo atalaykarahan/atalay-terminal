@@ -206,14 +206,16 @@ window.Account = (() => {
     say2('finish signing in in your browser · this page follows');
     clearInterval(waiting);
     const until = Date.now() + 10 * 60_000;
+    // Done once this computer is signed in, or once GitHub joined the account it's already signed in to (add GitHub).
     const was = A && A.signedIn;
+    const had = A && A.github;
     waiting = setInterval(async () => {
       if (Date.now() > until) {
         clearInterval(waiting);
         return say2('');
       }
       await load();
-      if ((A && A.signedIn !== was) || (A && A.pending)) {
+      if ((A && (A.signedIn !== was || A.github !== had)) || (A && A.pending)) {
         clearInterval(waiting);
         signedIn();
       }
