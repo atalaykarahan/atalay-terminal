@@ -68,7 +68,7 @@
      picked in Settings (Themes.swift sets it too). */
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   /* Numbers on the scoreboards (the leaderboard, friends): a monospace whatever font is picked, figures of one width. */
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
   --fs: clamp(10px, 0.68vw, 13px);
 }
 
