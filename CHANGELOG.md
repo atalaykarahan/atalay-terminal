@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.19.2
+
+- Updates: restarting into a new version no longer hangs the app on "restarting" (0.19.0 and 0.19.1 waited forever there; on those, quit with ⌘Q once and this version goes in)
+
 ## 0.19.1
 
 - Security fixes, found and fixed by @EmirCobanOfficial on GitHub (EmirMac#7124 in the app): live events reach the pages only as data, a page can no longer sign this computer out, and on Windows a Markdown link never runs a script and a network share's path is never looked up
