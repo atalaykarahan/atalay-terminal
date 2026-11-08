@@ -9,6 +9,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test",
     "staging": "node scripts/staging.js",
     "rebuild": "electron-rebuild -f -w node-pty",
     "dist": "node scripts/fetch-rtk.js && electron-builder --win --publish never",
@@ -52,6 +53,10 @@
       {
         "from": "../app/Resources/caveman",
         "to": "caveman"
+      },
+      {
+        "from": "../app/Resources/agent-rules",
+        "to": "agent-rules"
       },
       {
         "from": "vendor/rtk",

@@ -104,14 +104,22 @@ const themes = createThemes({
   },
 });
 
-// The token savers (rtk, caveman), shipped next to the dashboard's files; run from the sources, rtk is the one
-// scripts/fetch-rtk.js put in vendor/ and caveman the Mac app's.
+// The token savers (rtk, caveman, agent rules), shipped next to the dashboard's files; run from the sources, rtk is the one
+// scripts/fetch-rtk.js put in vendor/ and caveman and the agent rules the Mac app's.
 const savers = createSavers({
   settings,
   ownDir: path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'atalay-terminal'),
   bundled: app.isPackaged
-    ? { rtk: path.join(process.resourcesPath, 'bin', 'rtk.exe'), caveman: path.join(process.resourcesPath, 'caveman') }
-    : { rtk: path.join(__dirname, '..', 'vendor', 'rtk', 'rtk.exe'), caveman: path.join(__dirname, '..', '..', 'app', 'Resources', 'caveman') },
+    ? {
+        rtk: path.join(process.resourcesPath, 'bin', 'rtk.exe'),
+        caveman: path.join(process.resourcesPath, 'caveman'),
+        agentRules: path.join(process.resourcesPath, 'agent-rules'),
+      }
+    : {
+        rtk: path.join(__dirname, '..', 'vendor', 'rtk', 'rtk.exe'),
+        caveman: path.join(__dirname, '..', '..', 'app', 'Resources', 'caveman'),
+        agentRules: path.join(__dirname, '..', '..', 'app', 'Resources', 'agent-rules'),
+      },
   claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
   codexDir: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
   home: os.homedir(),

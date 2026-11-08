@@ -74,7 +74,7 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/themes.js` | the themes: every colour token from a palette, into each page; Settings' interface font and text size | Themes.swift |
 | `src/aicolors.js` | the AI tools in the theme's colours: Claude Code, Codex and Antigravity on their themes that use the terminal's 16 colours, each one's own given back when it's turned off | AIColors.swift |
 | `src/runaways.js` | the process list: what burns a core where nobody sees it (DANGER), what closed terminals left running (amber cars), what runs in the app's terminals (their cars), the AI tools besides Claude running in a terminal (Codex, Gemini…: planets) | Runaways, MainWindowController, RadarEngine |
-| `src/savers.js` | the token savers, rtk and caveman, on for Claude Code, Codex and Antigravity (`scripts/fetch-rtk.js` gets rtk for the build) | TokenSavers |
+| `src/savers.js` | the token savers, rtk and caveman, on for Claude Code, Codex and Antigravity (`scripts/fetch-rtk.js` gets rtk for the build), and the agent token rules, off until turned on (`npm test` runs `src/savers.test.js`) | TokenSavers |
 | `src/limits.js` | Claude's 5-hour and weekly limits for the top bar: a script of the app's as Claude Code's status line, a status line of the user's own run through it | Limits |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
 | `src/chatlist.js`, `pages/chats.*` | the chats list beside the dashboard (a view of its own in the dashboard window): every saved chat by project, each folder a card with the app's terminals in it, folders opened from the list, favourites, the archive (Settings lists it) | Sidebar.swift |

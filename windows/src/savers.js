@@ -9,6 +9,9 @@
 //   the start of every session and a one-line reminder with every prompt (two hooks in Claude Code's settings that print
 //   the app's copies), the rules in Codex's AGENTS.md, and a plugin in Antigravity. Off: the hooks, the rules and the
 //   plugin go.
+// - agent rules (the app's own, app/Resources/agent-rules) keep multi-agent work to few, short model calls: caveman's way
+//   (a SessionStart hook that prints the app's copy, a block in Codex's AGENTS.md, a plugin in Antigravity), but off until
+//   the user turns them on.
 // One the user set up themselves (their own rtk hook, the caveman plugin or the hooks its installer wires) takes the app's
 // place and switches the same way: off takes it out of the tools' settings and keeps it, on puts it back as it was. The
 // app keeps it current too: an rtk older than the app's is replaced by it where it lies (rtk has no updater; one a
@@ -20,14 +23,15 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const KINDS = ['rtk', 'caveman'];
+const KINDS = ['rtk', 'caveman', 'agentRules'];
 // On or off as the user left it before the switches could take the user's own (missing: not decided yet).
 const KEY = { rtk: 'tokenSavers', caveman: 'tokenSaverCaveman' };
 // Now: what the user decided for each, and what of their own the app took out when they turned it off.
 const STATE_KEY = 'tokenSaversState';
 
 /**
- * `ownDir`: the app's folder for them; `bundled`: { rtk, caveman }, what the app ships (rtk.exe, the caveman folder);
+ * `ownDir`: the app's folder for them; `bundled`: { rtk, caveman, agentRules }, what the app ships (rtk.exe, the caveman
+ * and agent-rules folders);
  * `claudeDir`, `codexDir` and `home`: where Claude Code, Codex and Antigravity keep their settings, which rtk reads too.
  * `which(name)`: a program on PATH, for an rtk of the user's own.
  */
@@ -64,18 +68,31 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
   const cmdWord = (s) => s.replace(/([\s^&()<>|,;=!'])/g, '^$1');
   // What marks the app's caveman hooks and Codex notes, so they come out again and nothing else does.
   const MARK = 'atalay-terminal/caveman/';
-  const hasMark = (cmd) => typeof cmd === 'string' && cmd.replace(/\\/g, '/').includes(MARK);
+  const marked = (cmd, mark) => typeof cmd === 'string' && cmd.replace(/\\/g, '/').includes(mark);
+  const hasMark = (cmd) => marked(cmd, MARK);
   const CODEX_START = '<!-- atalay-terminal: caveman -->', CODEX_END = '<!-- /atalay-terminal: caveman -->';
+  const ourRules = path.join(ownDir, 'agent-rules');
+  const RULES_MARK = 'atalay-terminal/agent-rules/';
+  const RULES_START = '<!-- atalay-terminal: agent-rules -->', RULES_END = '<!-- /atalay-terminal: agent-rules -->';
+  const AGY_RULES = 'atalay-agent-rules', agyRules = path.join(agyPlugins, AGY_RULES);
+  const codexNotes = () => {
+    try {
+      return fs.readFileSync(path.join(codexDir, 'AGENTS.md'), 'utf8');
+    } catch {
+      return '';
+    }
+  };
 
   const decisionsFile = path.join(ownDir, 'token-savers.json');
-  const shipped = (kind) => usable && (kind === 'rtk' ? exists(bundled.rtk) : exists(bundled.caveman && path.join(bundled.caveman, 'rules.md')));
+  const shipped = (kind) => usable && (kind === 'rtk' ? exists(bundled.rtk) : exists(bundled[kind] && path.join(bundled[kind], 'rules.md')));
   const record = (kind) => ({ ...((readJSON(decisionsFile) || {})[kind] || (settings.get(STATE_KEY) || {})[kind] || {}) });
   const saveRecord = (kind, rec) => {
     const all = { ...(settings.get(STATE_KEY) || {}), ...(readJSON(decisionsFile) || {}), [kind]: rec };
     writeJSON(decisionsFile, all);
     settings.set(STATE_KEY, all);
   };
-  const decided = (kind) => (typeof record(kind).on === 'boolean' ? record(kind).on : settings.get(KEY[kind]));
+  // Agent rules have no earlier key: off until the user turns them on.
+  const decided = (kind) => (typeof record(kind).on === 'boolean' ? record(kind).on : KEY[kind] ? settings.get(KEY[kind]) : false);
   const available = (kind) => shipped(kind) || !!theirs(kind) || !!record(kind).kept;
 
   // ---------- JSON settings files ----------
@@ -179,6 +196,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
       const other = [...hooksOf(codexHooks), ...hooksOf(agyRtkHooks, 'rtk-rewrite')].find((x) => isRtkHook(x.hook));
       return other ? words(other.hook.command)[0] || 'rtk' : null;
     }
+    if (kind === 'agentRules') return null;
     const plugins = (readJSON(settingsFile) || {}).enabledPlugins || {};
     const plugin = Object.keys(plugins).find((k) => k.startsWith('caveman@') && plugins[k] === true);
     if (plugin) return plugin;
@@ -203,6 +221,9 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
         (!theirs('rtk') && agyPluginEnabled('rtk'))
       );
     }
+    if (kind === 'agentRules') {
+      return hooksOf(settingsFile).some((x) => marked(x.hook.command, RULES_MARK)) || codexNotes().includes(RULES_START) || exists(agyRules);
+    }
     let codexOn = false;
     try {
       codexOn = fs.readFileSync(path.join(codexDir, 'AGENTS.md'), 'utf8').includes(CODEX_START);
@@ -217,7 +238,13 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
 
   /** Whether the app's copy and every installed tool's hook/plugin are current (a tool installed later gets it too). */
   function synced(kind) {
-    if (!hooksOf(settingsFile).some((x) => (kind === 'rtk' ? x.hook.command.includes(GUARD_MARK) : hasMark(x.hook.command)))) return false;
+    const mark = { caveman: MARK, agentRules: RULES_MARK }[kind];
+    if (!hooksOf(settingsFile).some((x) => (kind === 'rtk' ? x.hook.command.includes(GUARD_MARK) : marked(x.hook.command, mark)))) return false;
+    if (kind === 'agentRules') {
+      if (!sameFile(path.join(bundled.agentRules, 'rules.md'), path.join(ourRules, 'rules.md'))) return false;
+      if (codex() && !codexNotes().includes(RULES_START)) return false;
+      return !agy() || (exists(path.join(agyRules, 'plugin.json')) && agyPluginEnabled(AGY_RULES));
+    }
     if (kind === 'rtk') {
       if (exists(bundled.rtk) && !sameFile(bundled.rtk, ourRtk)) return false;
       if (exists(bundled.rtk) && (!exists(localRtk) || ourLocalRtk()) && !sameFile(bundled.rtk, localRtk)) return false;
@@ -582,17 +609,17 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
   // Git Bash reads a Windows path with forward slashes as it is; single quotes keep spaces and the like in one word.
   const shellQuote = (s) => `'${s.replace(/\\/g, '/').replace(/'/g, `'\\''`)}'`;
 
-  function addHook(hooks, event, command) {
-    removeHook(hooks, event);
+  function addHook(hooks, event, command, mark = MARK) {
+    removeHook(hooks, event, mark);
     hooks[event] = [...(Array.isArray(hooks[event]) ? hooks[event] : []), { hooks: [{ type: 'command', command, timeout: 5 }] }];
   }
-  /** Takes the app's caveman hook out of an event, and the entry with it when nothing else is left in it. */
-  function removeHook(hooks, event) {
+  /** Takes the app's caveman (or `mark`'s) hook out of an event, and the entry with it when nothing else is left in it. */
+  function removeHook(hooks, event, mark = MARK) {
     if (!Array.isArray(hooks[event])) return;
     const list = hooks[event]
       .map((entry) => {
         if (!entry || !Array.isArray(entry.hooks)) return entry;
-        const kept = entry.hooks.filter((h) => !(h && hasMark(h.command)));
+        const kept = entry.hooks.filter((h) => !(h && marked(h.command, mark)));
         return kept.length ? { ...entry, hooks: kept } : null;
       })
       .filter(Boolean);
@@ -600,18 +627,19 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
     else delete hooks[event];
   }
 
-  /** Codex's AGENTS.md without the app's caveman notes, then `change` (which may put them back). */
-  function editCodexNotes(change) {
+  /** Codex's AGENTS.md without the app's caveman notes (or those between `start` and `end`), then `change` (which may put
+   *  them back). */
+  function editCodexNotes(change, start = CODEX_START, end = CODEX_END) {
     const file = path.join(codexDir, 'AGENTS.md');
     let old = '';
     try {
       old = fs.readFileSync(file, 'utf8');
     } catch {}
     let text = old;
-    const a = text.indexOf(CODEX_START), b = a >= 0 ? text.indexOf(CODEX_END, a) : -1;
+    const a = text.indexOf(start), b = a >= 0 ? text.indexOf(end, a) : -1;
     if (a >= 0 && b >= 0) {
       // The notes go with the line break put before them and the one after.
-      let lo = a, hi = b + CODEX_END.length;
+      let lo = a, hi = b + end.length;
       if (lo > 0 && text[lo - 1] === '\n') lo--;
       if (lo > 0 && text[lo - 1] === '\r') lo--;
       if (text[hi] === '\r') hi++;
@@ -684,6 +712,33 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
     fs.rmSync(ourCaveman, { recursive: true, force: true });
   }
 
+  // ---------- agent rules ----------
+  function installAgentRules() {
+    if (!exists(bundled.agentRules)) return;
+    fs.mkdirSync(ourRules, { recursive: true });
+    const rules = path.join(ourRules, 'rules.md');
+    fs.copyFileSync(path.join(bundled.agentRules, 'rules.md'), rules);
+    editSettings((hooks) => addHook(hooks, 'SessionStart', `cat ${shellQuote(rules)}`, RULES_MARK));
+    const block = `${RULES_START}\n${fs.readFileSync(rules, 'utf8').trim()}\n${RULES_END}\n`;
+    if (codex()) editCodexNotes((notes) => `${notes}\n${block}`, RULES_START, RULES_END);
+    if (agy()) {
+      // As the app's caveman plugin, rules only: no skill, no reminder.
+      fs.mkdirSync(path.join(agyRules, 'rules'), { recursive: true });
+      writeJSON(path.join(agyRules, 'plugin.json'), { name: AGY_RULES, version: '1.0.0', description: "Atalay's Terminal's agent token rules." });
+      fs.writeFileSync(path.join(agyRules, 'rules', 'AGENTS.md'), block);
+      setAgyPlugin(AGY_RULES, true);
+    }
+  }
+
+  function uninstallAgentRules() {
+    editSettings((hooks) => removeHook(hooks, 'SessionStart', RULES_MARK));
+    editCodexNotes((notes) => notes, RULES_START, RULES_END);
+    fs.rmSync(agyRules, { recursive: true, force: true });
+    fs.rmSync(ourRules, { recursive: true, force: true });
+  }
+  const INSTALL = { rtk: installRtk, caveman: installCaveman, agentRules: installAgentRules };
+  const UNINSTALL = { rtk: uninstallRtk, caveman: uninstallCaveman, agentRules: uninstallAgentRules };
+
   // ---------- the switches ----------
   // One at a time: two quick clicks would otherwise write the same settings at once.
   let queue = Promise.resolve();
@@ -705,7 +760,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
         }
         const own = theirs(kind);
         if (own) await keepCurrent(kind, own);
-        else if (!synced(kind)) await (kind === 'rtk' ? installRtk() : installCaveman());
+        else if (!synced(kind)) await INSTALL[kind]();
       } else if (theirs(kind)) {
         rec.kept = takeOut(kind);
         if (installed(kind)) removeOurs(kind);
@@ -715,7 +770,7 @@ function createSavers({ settings, ownDir, bundled, claudeDir, codexDir, home = o
         } else if (kind === 'caveman' && !ourAgyCaveman() && setAgyPlugin('caveman', false)) {
           rec.kept = { agyPlugin: 'caveman' };
         }
-        await (kind === 'rtk' ? uninstallRtk() : uninstallCaveman());
+        await UNINSTALL[kind]();
       }
     } catch (e) {
       console.error(`savers: ${kind} ${on ? 'on' : 'off'}:`, e.message);
