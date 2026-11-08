@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('webkit', { messageHandlers: handlers });
 // The pages name the computer and the command key by it ("this PC", Ctrl+).
 contextBridge.exposeInMainWorld('__platform', process.platform);
 if (boot.look) contextBridge.exposeInMainWorld('__terminalLook', boot.look);
+// A terminal window's text size (main.js's termFontSize), before it draws its first line.
+if (boot.termFont) contextBridge.exposeInMainWorld('__termFont', boot.termFont);
 if (boot.role) contextBridge.exposeInMainWorld('__MESSAGES_ROLE__', boot.role);
 if (boot.friend) contextBridge.exposeInMainWorld('__MESSAGES_FRIEND__', boot.friend);
 

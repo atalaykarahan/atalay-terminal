@@ -449,6 +449,51 @@ function createCloud(opts = {}) {
     set({ updateRightAway: on });
   }
 
+  // ---------- the account (Settings → ACCOUNT, account.js) ----------
+
+  // Why a call failed, as the page shows it: the API's code, or "offline" when it couldn't be reached.
+  const why = (e) => (e && e.status ? e.code || 'failed' : 'offline');
+
+  // This PC leaves the account and goes on as a guest, under the same name with a new tag; the account stays on the
+  // server, to sign in to again. The new token comes straight here, never to a page. Null when done, else why not.
+  async function signOut() {
+    const token = readToken();
+    if (!token) return 'signed_out';
+    let a;
+    try {
+      a = await call('POST', 'v1/account/signout', {}, token);
+      if (typeof a.token !== 'string' || typeof a.hackerName !== 'string' || !Number.isInteger(a.tag)) throw new Error('unexpected answer');
+    } catch (e) {
+      return why(e);
+    }
+    saveToken(a.token);
+    set({ hackerName: a.hackerName, tag: a.tag });
+    await heartbeat(a.token);
+    // The API closed the live line it had with the old token: a new one now, with the new token's ticket.
+    delay = 2;
+    detach();
+    open();
+    return null;
+  }
+
+  // Everything of the account is deleted on the server, on all its computers; this PC starts over as on its first
+  // launch (the page asks for a name again).
+  async function deleteAccount() {
+    const token = readToken();
+    if (!token) return 'signed_out';
+    try {
+      await call('DELETE', 'v1/account', undefined, token);
+    } catch (e) {
+      return why(e);
+    }
+    saveToken(null);
+    setPending(null);
+    save({ xp: null });
+    set({ registered: false, hackerName: null, tag: null, xp: null });
+    await identify();
+    return null;
+  }
+
   // ---------- friends and messages ----------
 
   // A one-use ticket for the live socket (it can't carry the token in a header from every client).
@@ -725,6 +770,15 @@ function createCloud(opts = {}) {
       case 'openChat':
         // The chat panel is main.js's to open.
         return { openChat: typeof b.id === 'string' ? b.id : '' };
+      // The account changed (signed in, merged): its name and XP now, not at the next minute's heartbeat.
+      case 'refresh':
+        await beat();
+        return json();
+      // Signing out on this PC, and deleting the account: the token changes here, the page gets the new state.
+      case 'signOut':
+        return { error: await signOut(), state: json() };
+      case 'deleteAccount':
+        return { error: await deleteAccount(), state: json() };
       default:
         throw new Error('unknown message');
     }

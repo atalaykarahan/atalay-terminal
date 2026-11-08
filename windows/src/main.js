@@ -339,6 +339,48 @@ function cloudState() {
 }
 const pushCloud = () => toDash(`cloud(${JSON.stringify(cloudState())})`);
 
+// Signing in with GitHub happens in the browser (Settings → Account, account.js): only GitHub's sign-in page opens.
+const SIGN_IN = 'https://github.com/login/oauth/authorize?';
+function openSignIn(url) {
+  if (typeof url !== 'string' || !url.startsWith(SIGN_IN)) return false;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.origin !== 'https://github.com' || u.pathname !== '/login/oauth/authorize') return false;
+  shell.openExternal(u.href).catch(() => {});
+  return true;
+}
+
+// The terminals' text size, the same in all of them and kept, as the Mac's: View's bigger and smaller text change it
+// with a terminal in front (zoom), and Settings sync (account.js) reads it or sets one from the user's other computers.
+// Never picked: xterm.js's 14 px, and it doesn't count as chosen (the account's comes in instead).
+const TERM_FONT = 14;
+const termFontSize = () => {
+  const n = Number(settings.get('terminalFontSize'));
+  return n >= 9 && n <= 24 ? n : TERM_FONT;
+};
+function setTermFont(size) {
+  const n = Math.min(24, Math.max(9, Math.round(Number(size) || TERM_FONT)));
+  settings.set('terminalFontSize', n);
+  for (const c of chats.values()) send(c.win, 'term:font', n);
+}
+function terminalFont(size) {
+  if (typeof size === 'number' && Number.isFinite(size)) setTermFont(size);
+  const n = Number(settings.get('terminalFontSize'));
+  return { size: termFontSize(), chosen: n >= 9 && n <= 24 };
+}
+// View's Zoom In, Zoom Out and Actual Size: in a terminal window its text size (all the terminals', as ⌘+ and ⌘− on the
+// Mac); in any other page that page's zoom, as the menu's own roles did.
+function zoom(step) {
+  const wc = webContents.getFocusedWebContents();
+  if (!wc || wc.isDestroyed()) return;
+  if ([...chats.values()].some((c) => pageOf(c.win) === wc)) return setTermFont(step ? termFontSize() + step : TERM_FONT);
+  wc.setZoomLevel(step ? wc.getZoomLevel() + step * 0.5 : 0);
+}
+
 // ---------- windows ----------
 function webPrefs() {
   return { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false };
@@ -824,7 +866,7 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     ...(PROBE ? { x: -32000, y: -32000, frame: false } : {}),
     webPreferences: webPrefs(),
   });
-  bootFor(win.webContents);
+  bootFor(win.webContents, { termFont: termFontSize() });
   const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
   chats.set(id, c);
   win.on('focus', () => touchTerminal(id));
@@ -1680,6 +1722,13 @@ ipcMain.handle('atl:post', async (e, name, body) => {
         if (body.type === 'updateRightAway') return updates.setRightAway(body.on), cloudState();
         if (body.type === 'openChat') return openFriendChat(body.id);
         if (body.type === 'state') return cloudState();
+        if (body.type === 'openSignIn') return openSignIn(body.url);
+        if (body.type === 'terminalFont') return terminalFont(body.size);
+        if (body.type === 'refresh') return await cloud.handle(body), cloudState();
+        if (body.type === 'signOut' || body.type === 'deleteAccount') {
+          const r = await cloud.handle(body);
+          return { error: r.error, state: cloudState() };
+        }
         return await cloud.handle(body);
       case 'chats':
         return await handleChats(body);
@@ -1744,7 +1793,10 @@ function buildMenu() {
         // The page that has the keys: the dashboard window's two are views, which the role doesn't reach.
         { label: 'Toggle Developer Tools', accelerator: 'CmdOrCtrl+Shift+I', click: (_i, _w, wc) => wc && wc.toggleDevTools() },
         { type: 'separator' },
-        { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { type: 'separator' }, { role: 'togglefullscreen' },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => zoom(1) },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoom(-1) },
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoom(0) },
+        { type: 'separator' }, { role: 'togglefullscreen' },
       ],
     },
     {

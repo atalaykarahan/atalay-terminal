@@ -5,9 +5,8 @@
 // joins that account once its user picks which name to keep: XP and hours add up, friends and messages come together,
 // the other name is freed. From then on the settings follow the account from computer to computer, the way VS Code's
 // Settings Sync does it: on the first sync a setting changed on one side only goes to the other, one never changed
-// here takes the account's, and one that differs is asked once. The Mac app only for now (Windows once it's approved).
+// here takes the account's, and one that differs is asked once. The Mac and Windows apps alike.
 window.Account = (() => {
-  if (window.__platform === 'win32') return null;
   const h = window.webkit && window.webkit.messageHandlers;
   if (!h || !h.cloud) return null;
   const cloud = (msg) => h.cloud.postMessage(msg).catch(() => null);
@@ -223,6 +222,8 @@ window.Account = (() => {
 
   function signedIn() {
     if (!A) return;
+    // The activity bar's icon too (an e-mail code's sign-in brings no live event that would load it again).
+    paintIcon();
     form.mode = '';
     if (A.pending) return say2('');
     say2('');
@@ -485,6 +486,7 @@ window.Account = (() => {
       if (!r || r.error) return say(errText(r?.error));
       A = r.account;
       render();
+      paintIcon();
       say(`one account now: ${A.name}${tagText(A.tag)}`);
       refreshCloud();
       window.Social?.load();

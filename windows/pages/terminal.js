@@ -16,7 +16,7 @@
   };
   const term = new Terminal({
     fontFamily: '"MesloLGS NF", "CaskaydiaCove Nerd Font", "Cascadia Mono", Consolas, monospace',
-    fontSize: 14, lineHeight: 1.1, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
+    fontSize: window.__termFont || 14, lineHeight: 1.1, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
     // Text never fades into its background (Claude's diffs paint lines green and red), as the Mac app's terminals do.
     minimumContrastRatio: 4.5, theme: palette(),
   });
@@ -46,6 +46,12 @@
   });
   document.addEventListener('visibilitychange', () => !document.hidden && refit());
   addEventListener('themechange', () => (term.options.theme = palette()));
+  // The terminals' text size changed (View's zoom with a terminal in front, or Settings sync): the grid follows.
+  atl.on('term:font', (n) => {
+    if (!(n >= 9 && n <= 24) || term.options.fontSize === n) return;
+    term.options.fontSize = n;
+    refit();
+  });
   term.onResize(({ cols, rows }) => atl.send('term:resize', { cols, rows }));
   term.onData((data) => atl.send('term:input', data));
   // The AI tool running in this window, as the app tells it (term:info), for the keys it needs.
