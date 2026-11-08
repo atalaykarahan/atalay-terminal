@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var monitors: [Any] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A build an earlier run staged but never restarted into goes in first: nothing runs yet, so nothing can stop
+        // the quit, and the new build comes up in its place (the swap's script opens it).
+        if let staged = Updater.leftover() { try? Updater.apply(staged, relaunch: true) }
         NSApp.appearance = NSAppearance(named: .darkAqua)
         Mur47.registerFonts()
         buildMenu()
