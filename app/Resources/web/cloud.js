@@ -1490,6 +1490,7 @@ window.Cloud = (() => {
       if (b.dataset.ans === 'theme' && t) {
         await theme('choose', { id: t.id }).catch(() => {});
         list.chosen = t.id;
+        Hooks.pulse('theme-kept', { value: t.id }, { ms: 1500 });
         toast(`your theme is ${t.name} now`);
         boardCard(u);
       }
@@ -1613,7 +1614,9 @@ window.Cloud = (() => {
     const keep = (card) => {
       list.chosen = card.dataset.id;
       clearTimeout(timer);
-      theme('choose', { id: list.chosen });
+      // Kept, not only pointed at (themechange comes with every preview, and not at all for the one already showing): a
+      // theme can play its intro now.
+      theme('choose', { id: list.chosen }).then(() => Hooks.pulse('theme-kept', { value: card.dataset.id }, { ms: 1500 }));
       cards.forEach((c) => {
         c.classList.toggle('on', c === card);
         c.querySelector('.th-name em').textContent = c === card ? 'ACTIVE' : '';

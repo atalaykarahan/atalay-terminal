@@ -18,6 +18,8 @@ final class ChatTerminalView: LocalProcessTerminalView {
     /// A file ⌘-clicked: Source Control's editor opens it (FileEditor.swift), at the line the path names; false when
     /// that's not a file the editor shows.
     var onOpenFile: ((URL, Int?, Int?) -> Bool)?
+    /// The cursor's shape is the theme's (TerminalFactory.paint).
+    var themedCursor = false
 
     /// A click or a drag goes to Claude when its full-screen view is in front and follows the mouse, as in iTerm2: Claude
     /// selects across its whole history, the selection staying on the text as it scrolls (when the drag reaches the
@@ -414,6 +416,32 @@ enum TerminalFactory {
         tv.installColors(Theme.ansi.map {
             SwiftTerm.Color(red8: UInt16(($0 >> 16) & 0xFF), green8: UInt16(($0 >> 8) & 0xFF), blue8: UInt16($0 & 0xFF))
         })
+        // The cursor: the theme's when it asks for one, and back to the user's iTerm2 one after such a theme. Otherwise
+        // left as it is (a program may have set its own).
+        let usual = ITermLook.current?.cursorStyle ?? TerminalOptions.default.cursorStyle
+        if let style = cursor(ThemeStore.shared.tokens, else: usual) {
+            tv.setCursorStyle(style)
+            tv.themedCursor = true
+        } else if tv.themedCursor {
+            tv.setCursorStyle(usual)
+            tv.themedCursor = false
+        }
+    }
+
+    /// The cursor a theme asks for: `--cursor-style` (block, bar or underline) and `--cursor-blink` (1 or 0), what it
+    /// leaves out as in `base`. Nil when it asks for neither.
+    static func cursor(_ tokens: [String: String], else base: CursorStyle) -> CursorStyle? {
+        let token = { (k: String) in tokens[k]?.trimmingCharacters(in: .whitespaces) }
+        let shape = token("--cursor-style").flatMap { ["block", "bar", "underline"].contains($0) ? $0 : nil }
+        let blink = token("--cursor-blink").flatMap { ["1": true, "0": false][$0] }
+        guard shape != nil || blink != nil else { return nil }
+        let was = [.blinkBar, .steadyBar].contains(base) ? "bar" : [.blinkUnderline, .steadyUnderline].contains(base) ? "underline" : "block"
+        let on = blink ?? [.blinkBlock, .blinkBar, .blinkUnderline].contains(base)
+        switch shape ?? was {
+        case "bar": return on ? .blinkBar : .steadyBar
+        case "underline": return on ? .blinkUnderline : .steadyUnderline
+        default: return on ? .blinkBlock : .steadyBlock
+        }
     }
 
     private static func styled(chatId: String, fontSize: CGFloat, delegate: LocalProcessTerminalViewDelegate) -> ChatTerminalView {
