@@ -9,8 +9,6 @@
 // what the votes made: coming next, and shipped (its voters hear when it ships). The rocket's badge counts the votes you
 // haven't cast. Votes are the device's, as everything in the app: no account. The API: src/roadmap.ts.
 window.Roadmap = (() => {
-  // The Windows app doesn't reach the Roadmap yet.
-  if (window.__platform === 'win32') return null;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const api = (method, path, body) =>
     window.webkit.messageHandlers.cloud.postMessage({ type: 'social', method, path, body }).catch(() => ({ error: 'offline' }));

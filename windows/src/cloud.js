@@ -24,12 +24,28 @@ const API = 'https://terminal-api.atalaykarahan.com';
 const PING = 'undici:websocket:ping';
 const THEME = /^[a-z0-9-]{1,40}$/;
 
-// Only the friends, messages, notifications and feedback endpoints; the pages never reach anything else with the token.
+// Only the friends, messages, notifications, feedback, Roadmap, account, sign-in, settings-sync and badges endpoints,
+// as the Mac's CloudBridge allows them; the pages never reach anything else with the token.
 const SOCIAL_ROUTES = ['v1/me/status', 'v1/me/activity', 'v1/me/leaderboard', 'v1/feedback'];
-const SOCIAL_TREES = ['v1/social', 'v1/friends', 'v1/messages', 'v1/leaderboard', 'v1/notifications'];
+const SOCIAL_TREES = [
+  'v1/social', 'v1/friends', 'v1/messages', 'v1/leaderboard', 'v1/notifications',
+  'v1/roadmap', 'v1/account', 'v1/auth', 'v1/settings', 'v1/badges',
+];
+const under = (p, t) => p === t || p.startsWith(t + '/') || p.startsWith(t + '?');
+// Signing out answers with this PC's new token: only signOut() here calls it, so the token stays in the main process
+// and never reaches a page. Checked as the API reads the path (decoded, any case, slashes squeezed).
+const PRIVATE = ['v1/account/signout'];
+const isPrivate = (p) => {
+  let d;
+  try {
+    d = decodeURIComponent(p).toLowerCase().replace(/\/{2,}/g, '/');
+  } catch {
+    return true;
+  }
+  return PRIVATE.some((t) => under(d, t));
+};
 const allowed = (p) =>
-  !p.includes('..') &&
-  (SOCIAL_ROUTES.includes(p) || SOCIAL_TREES.some((t) => p === t || p.startsWith(t + '/') || p.startsWith(t + '?')));
+  !p.includes('..') && !isPrivate(p) && (SOCIAL_ROUTES.includes(p) || SOCIAL_TREES.some((t) => under(p, t)));
 
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
