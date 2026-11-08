@@ -16,13 +16,13 @@ const os = require('os');
 
 const WIN = process.platform === 'win32';
 const HOME_NORM = (os.homedir() || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-const POSIX_EXCLUDED = /(\.xpc\/|\.appex\/|^\/System\/|^\/usr\/libexec\/|^\/usr\/sbin\/|^\/Library\/Apple\/|(?:^|\/)com\.apple\.)/;
+const POSIX_EXCLUDED = /(\.xpc\/|\.appex\/|^\/System\/|^\/usr\/libexec\/|^\/usr\/sbin\/|^\/Library\/Apple\/|^\/Library\/Application Support\/Apple\/|(?:^|\/)com\.apple\.)/;
 
 function isExcludedPosix(cmd, name) {
-  const c = String(cmd || ''), n = String(name || '');
+  const c = String(cmd || '').trim(), n = String(name || '');
   if (POSIX_EXCLUDED.test(c) || n.startsWith('com.apple.')) return true;
   if (c.includes('/Python.app/Contents/MacOS/Python')) return false;
-  return c.includes('.app/');
+  return c.includes('.app/Contents/') || c.split(/\s+/)[0].includes('.app/');
 }
 
 function normDir(d) {
@@ -131,20 +131,26 @@ function createRunaways({ onChange, onRead, onPower }) {
   function allLiveSessions() {
     const out = [...liveSessions];
     for (const p of table.values()) {
-      if ((/^claude$/i.test(p.name) || aiTool(p)) && p.cwd) out.push({ cwd: p.cwd, started: p.started, busy: true });
+      if ((/^claude$/i.test(p.name) || aiTool(p)) && p.cwd && !out.some((s) => normDir(s.cwd) === normDir(p.cwd))) {
+        out.push({ cwd: p.cwd, started: p.started, busy: true });
+      }
     }
     return out;
   }
 
+  function matchingSessions(p) {
+    if (!p.cwd) return [];
+    return allLiveSessions().filter((s) => s.cwd && p.started >= (s.started || 0) - 5000 && inFolder(p.cwd, s.cwd));
+  }
+
   function ownerSession(p) {
-    if (!p.cwd) return null;
-    return allLiveSessions().find((s) => s.cwd && p.started >= (s.started || 0) - 5000 && inFolder(p.cwd, s.cwd)) || null;
+    return matchingSessions(p)[0] || null;
   }
 
   function isLiveWork(p, now) {
-    const owner = ownerSession(p);
-    if (!owner) return false;
-    return owner.busy !== false || (busyUntil.get(p.pid) || 0) > now || now - p.started < 15_000;
+    const matches = matchingSessions(p);
+    if (!matches.length) return false;
+    return matches.some((s) => s.busy !== false) || (busyUntil.get(p.pid) || 0) > now || now - p.started < 15_000;
   }
 
   // Runaways among one reading's candidates: [{ pid, name, cmd, started (ms since 1970), cpu (ms of CPU in all) }].
@@ -157,8 +163,9 @@ function createRunaways({ onChange, onRead, onPower }) {
       if (!prev || prev.started !== p.started || at <= prev.at || p.cpu < prev.cpu) continue;
       // Measure the whole process tree when available (e.g. `npm run dev` waiting on a frozen `node` child).
       const pct = typeof p.treePct === 'number' ? p.treePct : ((p.cpu - prev.cpu) / (at - prev.at)) * 100;
-      if (pct >= 1) busyUntil.set(p.pid, now + 15_000);
-      if (isLiveWork(p, now) || pct < LINE) {
+      const liveWork = isLiveWork(p, now);
+      if (pct >= 1 && matchingSessions(p).some((s) => s.busy !== false)) busyUntil.set(p.pid, now + 15_000);
+      if (liveWork || pct < LINE) {
         over.delete(p.pid);
         continue;
       }
@@ -346,6 +353,8 @@ function createRunaways({ onChange, onRead, onPower }) {
           byParent.get(ppid).push(pid);
         }
       }
+      table = all;
+      kids = byParent;
       const list = [];
       for (const p of all.values()) {
         if (p.ppid !== 1 || p.tty !== '??' || /^claude$/i.test(p.name) || aiTool(p)) continue;
@@ -376,26 +385,29 @@ function createRunaways({ onChange, onRead, onPower }) {
     end(pid, started) {
       const p = last.get(Number(pid));
       if (!p || Math.abs(p.started - Number(started)) > 1000) return false;
+      const all = tree(Number(pid));
+      // At once, deepest first: ending the root first left its children running without it until a later pass.
       if (WIN) {
-        const all = tree(Number(pid));
-        execFile('taskkill.exe', ['/PID', String(pid), '/T'], { windowsHide: true }, () => {});
-        try {
-          process.kill(pid);
-        } catch {}
-        setTimeout(() => fresh().then(() => kill(all)), 2000);
+        kill(all);
         return true;
       }
-      try {
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        return false;
+      const targets = all.length ? all.map((t) => t.pid) : [Number(pid)];
+      let any = false;
+      for (const tPid of targets) {
+        try {
+          process.kill(tPid, 'SIGTERM');
+          any = true;
+        } catch {}
       }
+      if (!any) return false;
       setTimeout(() => {
         const q = last.get(Number(pid));
         if (q && q.started === p.started) {
-          try {
-            process.kill(pid, 'SIGKILL');
-          } catch {}
+          for (const tPid of targets) {
+            try {
+              process.kill(tPid, 'SIGKILL');
+            } catch {}
+          }
         }
       }, 2000);
       return true;

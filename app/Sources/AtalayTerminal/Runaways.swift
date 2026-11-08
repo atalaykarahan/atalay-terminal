@@ -36,7 +36,7 @@ final class Runaways {
     private(set) var left: [Left] = []
 
     private static let line = 50.0
-    static var sustain: Double = 120
+    private static let sustain: Double = 120
     private static let every: TimeInterval = 5
 
     var onChange: ((String) -> Void)?
@@ -90,7 +90,7 @@ final class Runaways {
         }
     }
 
-    func sample() {
+    private func sample() {
         let me = getuid(), now = ProcessInfo.processInfo.systemUptime, wall = Date().timeIntervalSince1970 * 1000
         let pids = Proc.all(), alive = Set(pids)
         var infos: [Int32: Proc.Info] = [:]
@@ -105,7 +105,8 @@ final class Runaways {
         // a live session started in its project folder isn't mistaken for a leftover from a closed terminal.
         var sessions = liveSessions
         for (pid, info) in infos where info.tty != nil {
-            if Proc.isClaude(pid) || Proc.otherAI(pid) != nil, let cwd = Proc.cwd(pid), !cwd.isEmpty {
+            if Proc.isClaude(pid) || Proc.otherAI(pid) != nil, let cwd = Proc.cwd(pid), !cwd.isEmpty,
+               !sessions.contains(where: { $0.cwd == cwd }) {
                 sessions.append(LiveSession(cwd: cwd, started: Double(info.started / 1000), busy: true))
             }
         }
@@ -114,11 +115,11 @@ final class Runaways {
         for pid in pids where pid > 1 {
             // Only yours, hanging off launchd, without a terminal.
             guard let p = infos[pid], p.ppid == 1, p.tty == nil else { continue }
-            let sid = getsid(pid)
-            let pgid = getpgid(pid)
-            // If its session leader or process group leader is still alive, its terminal / screen session hasn't closed.
-            if sid > 1, sid != pid, alive.contains(sid) { continue }
-            if pgid > 1, pgid != pid, alive.contains(pgid), infos[pgid]?.tty != nil { continue }
+            let sid = getsid(pid), pgid = getpgid(pid)
+            // Its session leader, or its group's leader on a terminal, still alive: its terminal (or screen) is open, so
+            // it isn't a leftover. It can still be a runaway (checked first, below), as before.
+            let terminalOpen = (sid > 1 && sid != pid && alive.contains(sid))
+                || (pgid > 1 && pgid != pid && alive.contains(pgid) && infos[pgid]?.tty != nil)
             guard let path = Proc.path(pid), !Self.isExcluded(path: path, name: Proc.name(pid)),
                   !Proc.isClaude(pid), Proc.otherAI(pid) == nil,
                   Detached.sessionName(hosting: pid, anyBuild: true) == nil else { continue }
@@ -146,17 +147,17 @@ final class Runaways {
             roots.insert(pid)
             let startedMs = Double(p.started / 1000)
             let procCwd = Proc.cwd(pid)
-            let ownerSession = procCwd.flatMap { cwd in
-                sessions.first(where: { startedMs >= $0.started - 5_000 && Self.inFolder(cwd, of: $0.cwd) })
-            }
+            let matchingSessions = procCwd.map { cwd in
+                sessions.filter { startedMs >= $0.started - 5_000 && Self.inFolder(cwd, of: $0.cwd) }
+            } ?? []
             // A job started by a live AI session that is currently working is doing the user's work, not a runaway.
-            if ownerSession?.busy == true {
+            if matchingSessions.contains(where: \.busy) {
                 over[pid] = nil
                 continue
             }
             if runaway(pid, p, path: path, cpu: treeCpu, cpuTime: treeCpuTime, valid: hadPrev, wall: wall, into: &items) { continue }
             // While the AI session that started this process in its folder is still open, it isn't a closed terminal's leftover.
-            guard ownerSession == nil, sid > 1, sid != pid, !alive.contains(sid) else { continue }
+            guard matchingSessions.isEmpty, sid > 1, sid != pid, !terminalOpen else { continue }
             behind.append(Left(pid: pid, started: startedMs, args: Proc.arguments(pid) ?? [path], cwd: procCwd ?? HOME))
         }
         left = behind.sorted { $0.started < $1.started }
