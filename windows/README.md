@@ -95,10 +95,10 @@ chats run in the app, through node-pty, and end with it.
 
 - Closing the dashboard keeps the app going while a chat or terminal runs (starting the app again brings it back, as
   the Dock does on the Mac); with none, it quits.
-- No tabs or split panes: every terminal is a window of its own. Closing one (Ctrl+W, its ×) keeps it running as a car
+- No tabs or split panes: every terminal is a window of its own. Closing one (Esc, Ctrl+W, its ×) keeps it running as a car
   on the orbit, as a closed tab does on the Mac; a click opens it again, End Session ends it and all it runs.
 - No four-finger click (Mac trackpads only): Ctrl and the middle mouse button (or Ctrl+K) open the shortcut wheel,
-  Ctrl+N a new file in Source Control's editor, Ctrl+Shift+N a new terminal and Ctrl+W closes the window, in the
+  Ctrl+N a new file in Source Control's editor, Ctrl+Shift+N a new terminal and Esc or Ctrl+W closes the window, in the
   terminal windows too (where they'd otherwise go to the shell); Ctrl++ and Ctrl+- there are the terminals' text size,
   as ⌘+ and ⌘− on the Mac. While Antigravity runs in one, its Ctrl+K is Antigravity's, which approves its subagents'
   steps with it.

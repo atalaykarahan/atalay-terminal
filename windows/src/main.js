@@ -1225,6 +1225,10 @@ ipcMain.on('term:end', (e) => {
   const found = chatOf(e);
   if (found) endTerminal(found[0]);
 });
+ipcMain.on('term:close', (e) => {
+  const found = chatOf(e);
+  if (found && found[1].win && !found[1].win.isDestroyed()) found[1].win.close();
+});
 ipcMain.on('term:copy', (e, text) => {
   if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);
 });

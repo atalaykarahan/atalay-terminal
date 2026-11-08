@@ -167,7 +167,16 @@
   // goes through the app, as the page's clipboard API refuses a window without focus. Ctrl+V only keeps xterm.js from
   // sending ^V: the browser's own paste follows and xterm.js takes it (pasting here as well put everything in twice).
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type !== 'keydown' || !e.ctrlKey || e.altKey) return true;
+    if (e.type !== 'keydown') return true;
+    // Escape closes the window (what runs in it goes on in the background, like Ctrl+W) instead of reaching the shell,
+    // where it would cancel a running task or prompt.
+    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      atl.send('term:close');
+      return false;
+    }
+    if (!e.ctrlKey || e.altKey) return true;
     const k = e.key.toLowerCase();
     if (k === 'c' && term.hasSelection()) {
       e.preventDefault();
@@ -200,6 +209,12 @@
     atl.send('term:dashboard');
   };
   document.getElementById('end').onclick = () => atl.send('term:end');
+  addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+      e.preventDefault();
+      atl.send('term:close');
+    }
+  });
   term.focus();
   atl.send('term:ready', size());
 })();
