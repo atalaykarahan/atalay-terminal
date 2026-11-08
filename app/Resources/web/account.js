@@ -58,6 +58,8 @@ window.Account = (() => {
     A = r;
     render();
     paintIcon();
+    // profile.js's Settings → PROFILE follows the account (its picture, its links, whether the server takes them).
+    window.dispatchEvent(new CustomEvent('account'));
     if (A.pending && (!was || !was.pending || was.pending.id !== A.pending.id)) mergeDialog();
     if (A.signedIn) Sync.start(A);
     else Sync.stop();
