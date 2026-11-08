@@ -83,8 +83,26 @@ enum Detached {
         ["-c", rcPath, "-U"] + (fit ? ["-A"] : []) + ["-x", name]
     }
 
+    /// How many screens show the session now (its attached clients, `screen … -x name`): two while the other build of
+    /// the app mirrors it.
+    static func displays(_ name: String) -> Int {
+        Proc.all().filter { pid in
+            guard Proc.name(pid) == "screen", let args = Proc.arguments(pid), let i = args.firstIndex(of: "-x") else { return false }
+            return args.indices.contains(i + 1) && args[i + 1] == name
+        }.count
+    }
+
+    /// The app another build's session belongs to, by its name, for saying where a mirrored chat runs.
+    static func owner(_ name: String) -> String {
+        if name.hasPrefix("atls-") { return "Atalay's Terminal Staging" }
+        if name.hasPrefix("atld-") { return "a development run of Atalay's Terminal" }
+        return "Atalay's Terminal"
+    }
+
     /// Makes the session take its display's size. A window that attached while hidden (without `-A`, so
-    /// the session kept its size) calls this once it is shown.
+    /// the session kept its size) calls this once it is shown. With two displays (a mirror) this fits the session to
+    /// the one that attached last, whichever window asks: there the window types the command into its own display
+    /// (ChatWindowController.fitSession).
     static func fit(_ name: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: screen)

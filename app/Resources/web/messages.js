@@ -21,7 +21,9 @@ window.Messages = (() => {
   const who = (p) => {
     if (!p) return '';
     const xp = p.xp || Social.friend(p.id)?.xp;
-    return `${Social.dot(p.presence)}<span>${esc(Social.handle(p))}</span>${xp ? Xp.badge(xp.level) : ''}`;
+    // A nickname you gave them shows instead of their name, as on Steam; their own name#tag on hover.
+    const nick = p.id && Social.nick(p.id);
+    return `${Social.dot(p.presence)}<span${nick ? ` title="${esc(Social.handle(p))}"` : ''}>${esc(nick || Social.handle(p))}</span>${xp ? Xp.badge(xp.level) : ''}`;
   };
   const PEEK_MS = 12_000;
   const STRIP_MS = 6000; // a strip (the daily bonus, a friend online) goes sooner
@@ -59,6 +61,8 @@ window.Messages = (() => {
   let alertOn = null;
   const queue = []; // notices waiting for the one on screen (an update, the daily bonus)
   const waits = new Map(); // chats that need you (below), session id -> { sid, title, folder, what }, the newest last
+  const clashes = new Map(); // files two chats are writing (below), path -> { key, file, path, chats }, the newest last
+  const clashShut = new Set(); // collisions put away with ×: they don't pop up again until they're over
 
   function sizeNotes() {
     if (ROLE !== 'notices') return;
@@ -95,12 +99,12 @@ window.Messages = (() => {
       p.heard = true;
       Sfx.play('xp');
     }
-    // A chat that needs you has no time: it goes when the chat moves on (waitOver) or is put away.
-    if (p.kind !== 'wait') peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
+    // A chat that needs you, or two writing the same file, has no time: it goes when that's over or it's put away.
+    if (p.kind !== 'wait' && p.kind !== 'clash') peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
   }
 
-  // What comes after a notice: a chat that needs you first, then the queue.
-  const nextPeek = () => (waits.size ? showWait() : queue.length && showPeek(queue.shift()));
+  // What comes after a notice: a chat that needs you first, then two chats writing the same file, then the queue.
+  const nextPeek = () => (waits.size ? showWait() : clashes.size ? showClash() : queue.length && showPeek(queue.shift()));
 
   function hidePeek() {
     clearTimeout(peekTimer);
@@ -182,6 +186,17 @@ window.Messages = (() => {
         `<button class="mb-x" data-act="close" title="Close">×</button></div>` +
         `<div class="mb-text">${esc(w.what)}</div></div>`
       );
+    } else if (p.kind === 'clash') {
+      // Two chats writing the same file (files.heat's collision): which file, which chats, how many more. A click shows
+      // the dashboard.
+      const c = p.item;
+      return (
+        `<div class="mb peek wait clash in" data-act="clash" title="Show it on the dashboard"><div class="mb-border"></div>` +
+        `<div class="mb-head"><span class="mb-tag">⚠ SAME FILE</span><span class="mb-who"><span>${esc(c.file)}</span>` +
+        `<small>${esc((c.chats || []).join(' and '))} are both writing it${p.more ? ` · ${p.more} more` : ''}</small></span>` +
+        `<button class="mb-x" data-act="close" title="Close">×</button></div>` +
+        `<div class="mb-text">${esc(c.path)}</div></div>`
+      );
     } else {
       body =
         head('NEW FRIEND', p.friend, null) +
@@ -207,7 +222,15 @@ window.Messages = (() => {
       if (act === 'close') {
         // Put away: the chats waiting now don't pop up again (another question in one of them does).
         if (peek.kind === 'wait') waits.clear();
+        // The same for the collisions now: one pops up again only once it was over and began again.
+        if (peek.kind === 'clash') shutClashes();
         return hidePeek();
+      }
+      if (act === 'clash') {
+        shutClashes();
+        hidePeek();
+        // Swift brings the dashboard to the front, on its panels (files.heat names the file).
+        return post({ type: 'openClash' });
       }
       if (act === 'wait') {
         const sid = peek.item.sid;
@@ -288,7 +311,8 @@ window.Messages = (() => {
     if (peek && peek.kind !== 'wait') {
       // A reply being written stays; this comes right after it (hidePeek).
       if (replying()) return;
-      queue.unshift(peek);
+      // A collision's notice comes back from its own list (nextPeek), as it stands then.
+      if (peek.kind !== 'clash') queue.unshift(peek);
     }
     const all = [...waits.values()];
     showPeek({ kind: 'wait', item: all[all.length - 1], more: all.length - 1 });
@@ -306,6 +330,41 @@ window.Messages = (() => {
     if (!NOTICES || !waits.delete(sid) || !peek || peek.kind !== 'wait') return;
     if (waits.size) showWait();
     else hidePeek();
+  }
+
+  // ======================= two chats writing the same file =======================
+  // files.heat's collision (the dashboard page tells Swift, Swift tells this page): it pops up as a chat that needs you
+  // does, after those, and stays until the collision is over or it's put away. Not held back on do-not-disturb either.
+  function showClash() {
+    if (!clashes.size || takeover || alertOn) return;
+    // A chat that needs you goes first; this comes after it (nextPeek).
+    if (peek && peek.kind === 'wait') return;
+    if (peek && peek.kind !== 'clash') {
+      if (replying()) return;
+      queue.unshift(peek);
+    }
+    const all = [...clashes.values()];
+    showPeek({ kind: 'clash', item: all[all.length - 1], more: all.length - 1 });
+  }
+
+  function addClash(c) {
+    if (!NOTICES || !c || !c.key || clashShut.has(c.key)) return;
+    clashes.delete(c.key);
+    clashes.set(c.key, c);
+    Sfx.play('wait');
+    showClash();
+  }
+
+  function clashOver(key) {
+    clashShut.delete(key);
+    if (!NOTICES || !clashes.delete(key) || !peek || peek.kind !== 'clash') return;
+    if (clashes.size) showClash();
+    else hidePeek();
+  }
+
+  function shutClashes() {
+    for (const k of clashes.keys()) clashShut.add(k);
+    clashes.clear();
   }
 
   // ======================= your progress =======================
@@ -333,6 +392,7 @@ window.Messages = (() => {
   // In front: the app tells (focus).
   let focused = false;
   let pending = null; // the level-up waiting to play: the highest level, the one before, whether a rank changed
+  let badgesWaiting = null; // new badges waiting for their reveal: { badges: [{ id, tier }], quiet, seen }, the highest tier each
   let takeover = null; // the one on screen
 
   function progress(ev) {
@@ -398,11 +458,16 @@ window.Messages = (() => {
     }, FIRE_MS);
   }
 
+  // A level-up first, then the badges it may have brought.
   function play() {
-    if (!pending || takeover || fire || !focused || Social.dnd()) return;
-    const c = pending;
-    pending = null;
-    takeover = showTakeover(c);
+    if ((!pending && !badgesWaiting) || takeover || fire || !focused || Social.dnd()) return;
+    if (pending) {
+      const c = pending;
+      pending = null;
+      takeover = showTakeover(c);
+    } else {
+      revealNext(false);
+    }
     // Only now, with the takeover set, does the panel ask for the whole screen (in the app).
     sizeNotes();
   }
@@ -418,8 +483,12 @@ window.Messages = (() => {
 
   // A key or a click once the lock is over: out now instead of waiting.
   function skip() {
-    if (takeover && takeover.free) takeover.out();
+    if (!takeover) return;
+    if (takeover.skip) return takeover.skip();
+    if (takeover.free) takeover.out();
   }
+  // How long keys wait at a badge's reveal (and after a key brought its burst forward) before they count again.
+  const KEY_GUARD = 250;
 
   const GLYPHS = '!<>-_\\/[]{}=+*^?#$%&@01ABCDEFXZ';
   // The glitch and the confetti in the app's warm colours (orange, light orange, amber, red, white).
@@ -522,10 +591,226 @@ window.Messages = (() => {
     unlockKeys();
     takeover = null;
     sizeNotes();
-    // Another level-up waiting plays first; notices (a chat that needs you, the daily bonus) come after the last one.
-    if (!peek && !pending) nextPeek();
-    setTimeout(play, 600);
+    // Another level-up or badge waiting plays first; notices (a chat that needs you, the daily bonus) come after the last.
+    if (!peek && !pending && !badgesWaiting) nextPeek();
+    setTimeout(play, badgesWaiting ? 250 : 600);
     setTimeout(ignite, 700);
+  }
+
+  // The next badge waiting, one at a time, each with its own reveal (a key or a click after it lands brings the next),
+  // the grandest last; the count (3 of 9) runs across the ones that came together. `cont`: straight on from the one
+  // before, the screen staying dark.
+  function revealNext(cont) {
+    const c = badgesWaiting;
+    const order = [...c.badges].sort((a, b) => badgeScore(a) - badgeScore(b));
+    const seen = (c.seen || 0) + 1;
+    badgesWaiting = order.length > 1 ? { badges: order.slice(1), quiet: c.quiet, seen } : null;
+    takeover = showReveal({ badge: order[0], quiet: c.quiet, n: seen, of: seen + order.length - 1, cont });
+  }
+
+  // How grand a badge is, for the order of several (the grandest revealed last): a Service Medal, then gold and up, a
+  // hidden one or Founder, then the tier.
+  const badgeScore = (b) => (b.id.startsWith('service-') ? 20 : 0) + (window.BadgeArt.grand(b.id, b.tier) ? 10 : 0) + b.tier;
+
+  // A new badge, as CS:GO reveals an item: the screen darkens while the impact's sound builds, light is pulled in to the
+  // middle and only the badge's shadow shows there, the screen's edges glowing in its colour and a HUD's corners closing
+  // in; on the sound's burst the badge itself appears with a flash, a shockwave and a burst of sparks in its own colours,
+  // under turning rays, a shine crossing it; its name and tier rise under it. A gold one and up (a medal, a hidden one)
+  // gets more of everything. Several that came together (a sign-in counting what was done before) come one by one,
+  // `c.n` of `c.of`.
+  function showReveal(c) {
+    const Art = window.BadgeArt;
+    const main = c.badge;
+    const grand = Art.grand(main.id, main.tier);
+    const [rc, rs] = Art.glow(main.id, main.tier);
+    const tier = Art.tierName(main.id, main.tier);
+    const kicker = (main.id.startsWith('service-') ? 'MEDAL EARNED' : main.tier > 1 ? 'BADGE UPGRADED' : 'BADGE UNLOCKED') +
+      (c.of > 1 ? ` · ${c.n} OF ${c.of}` : '');
+    // The moment the badge shows: the impact's burst.
+    const IMPACT = Sfx.hit('badge-impact');
+    const readMs = IMPACT + (grand ? 6000 : 5000);
+    const timers = [];
+    const at = (ms, f) => timers.push(setTimeout(f, ms));
+    const el = document.createElement('div');
+    el.id = 'takeover';
+    el.className = `tk rv${grand ? ' grand' : ''}${c.cont ? ' cont' : ''}`;
+    el.style.setProperty('--rc', rc);
+    el.style.setProperty('--rs', rs);
+    el.style.setProperty('--build', `${IMPACT}ms`);
+    el.innerHTML =
+      '<div class="rv-veil"></div><div class="rv-edge"></div><div class="rv-frame"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>' +
+      '<canvas class="rv-sparks"></canvas><div class="rv-flash"></div>' +
+      '<div class="rv-center"><div class="rv-stage"><div class="rv-rays"></div><div class="rv-rays b"></div><div class="rv-glow"></div>' +
+      `<div class="rv-ring"></div><div class="rv-ring b"></div><div class="rv-art">${Art.svg(main.id, main.tier, 320)}${Art.gleam(main.id, main.tier, 'rv-shine')}</div></div>` +
+      `<div class="rv-kicker">${esc(kicker)}</div><div class="rv-name">${esc(Art.name(main.id))}</div>` +
+      (tier ? `<div class="rv-tier">${esc(tier)}</div>` : '') +
+      (c.quiet ? '<div class="rv-note">from what you\'ve done so far · right click one in your profile to display it</div>' : '') +
+      `</div><div class="tk-hint">${c.n < c.of ? 'press any key for the next one' : 'press any key to continue'}</div>`;
+    // Straight on from the one before: under it, already dark, while it fades away on top.
+    const prev = c.cont && takeover && takeover.el.isConnected ? takeover.el : null;
+    if (prev) document.body.insertBefore(el, prev);
+    else document.body.appendChild(el);
+    const t = { el, timers, free: false, stop: () => {} };
+    // Keys only wait a moment (one pressed for the badge before can't skip this one); from then on a key or a click
+    // before the burst jumps to it, and one after it brings the next.
+    lockKeys(KEY_GUARD);
+    const SOUNDS = [['badge-impact', 1], ['badge-shine', 0.8]];
+    // The sounds, each started so that its moment falls on IMPACT.
+    for (const [name, vol] of SOUNDS) {
+      Sfx.preload(name);
+      at(Math.max(0, IMPACT - Sfx.hit(name)), () => Sfx.sample(name, vol));
+    }
+    const light = sparks(el.querySelector('.rv-sparks'), el.querySelector('.rv-art'), rc, rs, grand, IMPACT);
+    t.stop = light.stop;
+
+    let leaving = false;
+    t.out = () => {
+      if (leaving) return;
+      leaving = true;
+      timers.forEach(clearTimeout);
+      el.classList.add('out');
+      // Another badge waiting: it starts at once under this one, the screen never going back to the dashboard.
+      if (badgesWaiting && focused && !Social.dnd()) {
+        revealNext(true);
+        return setTimeout(() => {
+          t.stop();
+          el.remove();
+        }, 450);
+      }
+      at(450, () => endTakeover(t));
+    };
+    // The burst: the badge shows, the flash and the shake; the text after. `fast`: a key brought it forward, so the
+    // sounds jump to their moments, the sparks burst now and the text is there at once.
+    let landed = false;
+    const land = (fast) => {
+      if (landed) return;
+      landed = true;
+      el.classList.add('hit');
+      const lines = ['.rv-kicker', '.rv-name', '.rv-tier', '.rv-note'];
+      if (fast) {
+        timers.forEach(clearTimeout);
+        timers.length = 0;
+        el.classList.add('fast');
+        for (const [name, vol] of SOUNDS) Sfx.sample(name, vol, Sfx.hit(name) / 1000);
+        light.hit();
+        lines.forEach((q) => el.querySelector(q)?.classList.add('on'));
+      } else {
+        lines.forEach((q, i) => at([220, 340, 460, 700][i], () => el.querySelector(q)?.classList.add('on')));
+      }
+      at(readMs - IMPACT, t.out);
+      at(fast ? KEY_GUARD : 250, () => {
+        t.free = true;
+        el.classList.add('free');
+      });
+    };
+    at(IMPACT, () => land(false));
+    t.skip = () => (landed ? t.free && t.out() : land(true));
+    el.addEventListener('mousedown', () => skip());
+    return t;
+  }
+
+  // The reveal's light: sparks pulled in from all around to the middle until `impact` ms, then a burst out from it
+  // (a second one for a grand badge), then embers rising around the badge until the reveal ends (stop).
+  function sparks(canvas, art, rc, rs, grand, impactAt) {
+    let impact = impactAt; // brought forward by hit()
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const g = canvas.getContext('2d');
+    const colors = [`rgb(${rc})`, `rgb(${rs})`, `rgb(${rs})`, '#ffffff'];
+    const bits = [];
+    const start = performance.now();
+    let last = start, raf = 0, burst = 0, inward = 0, ember = 0;
+    // Its middle on screen, and its radius as laid out (not as scaled while it falls).
+    const centre = () => {
+      const r = art.getBoundingClientRect();
+      return [(r.left + r.width / 2) * dpr, (r.top + r.height / 2) * dpr, (art.offsetWidth / 2) * dpr];
+    };
+    const spawnBurst = (n, power) => {
+      const [x, y, r] = centre();
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const v = (3 + Math.random() * 13) * power * dpr;
+        bits.push({ x: x + Math.cos(a) * r * 0.5, y: y + Math.sin(a) * r * 0.5, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 0.94 + Math.random() * 0.03,
+          grav: 0.12 * dpr, life: 0, max: 50 + Math.random() * 70, size: (1 + Math.random() * 2.4) * dpr, c: colors[(Math.random() * colors.length) | 0], streak: true });
+      }
+    };
+    const frame = (now) => {
+      if (canvas.width !== Math.round(innerWidth * dpr) || canvas.height !== Math.round(innerHeight * dpr)) {
+        canvas.width = Math.round(innerWidth * dpr);
+        canvas.height = Math.round(innerHeight * dpr);
+      }
+      const dt = Math.min(3, (now - last) / 16.7);
+      last = now;
+      const age = now - start;
+      const [cx, cy, cr] = centre();
+      // Pulled in: from a ring around the middle, faster as they near it.
+      if (age < impact - 60 && age > impact * 0.15) {
+        inward += dt * (grand ? 4 : 2.6) * (0.3 + 1.4 * (age / impact));
+        for (; inward >= 1; inward--) {
+          const a = Math.random() * Math.PI * 2;
+          const d = (0.35 + Math.random() * 0.35) * Math.min(canvas.width, canvas.height);
+          bits.push({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d, tx: cx, ty: cy, pull: 0, life: 0, max: 60, size: (1 + Math.random() * 1.6) * dpr, c: colors[(Math.random() * colors.length) | 0], streak: true });
+        }
+      }
+      if (burst === 0 && age >= impact) burst = 1, spawnBurst(grand ? 260 : 150, 1);
+      if (grand && burst === 1 && age >= impact + 260) burst = 2, spawnBurst(140, 0.7);
+      // Embers: slow, from around the badge, upwards, twinkling.
+      if (age >= impact) {
+        ember += dt * (grand ? 0.9 : 0.5);
+        for (; ember >= 1; ember--) {
+          const a = Math.random() * Math.PI * 2;
+          const d = cr * (0.6 + Math.random() * 0.9);
+          bits.push({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d, vx: (Math.random() - 0.5) * 0.5 * dpr, vy: -(0.4 + Math.random() * 1.1) * dpr, drag: 1, grav: 0,
+            life: 0, max: 90 + Math.random() * 90, size: (0.8 + Math.random() * 1.8) * dpr, c: colors[(Math.random() * colors.length) | 0], twinkle: Math.random() * 6.28 });
+        }
+      }
+      g.clearRect(0, 0, canvas.width, canvas.height);
+      g.globalCompositeOperation = 'lighter';
+      for (let i = bits.length - 1; i >= 0; i--) {
+        const b = bits[i];
+        b.life += dt;
+        const px = b.x, py = b.y;
+        if (b.tx !== undefined) {
+          b.pull += 0.012 * dt;
+          b.x += (b.tx - b.x) * Math.min(1, b.pull * b.pull * 3 * dt);
+          b.y += (b.ty - b.y) * Math.min(1, b.pull * b.pull * 3 * dt);
+          if (Math.hypot(b.tx - b.x, b.ty - b.y) < cr * 0.3 || age >= impact) {
+            bits.splice(i, 1);
+            continue;
+          }
+        } else {
+          b.vx *= b.drag ** dt;
+          b.vy = b.vy * b.drag ** dt + b.grav * dt;
+          b.x += b.vx * dt;
+          b.y += b.vy * dt;
+          if (b.life >= b.max) {
+            bits.splice(i, 1);
+            continue;
+          }
+        }
+        const fade = b.tx !== undefined ? Math.min(1, b.life / 10) : 1 - b.life / b.max;
+        const tw = b.twinkle !== undefined ? 0.5 + 0.5 * Math.sin(b.twinkle + b.life * 0.25) : 1;
+        g.globalAlpha = Math.max(0, fade * tw);
+        if (b.streak) {
+          g.strokeStyle = b.c;
+          g.lineWidth = b.size;
+          g.lineCap = 'round';
+          g.beginPath();
+          g.moveTo(px, py);
+          g.lineTo(b.x + (b.x - px) * 0.6, b.y + (b.y - py) * 0.6);
+          g.stroke();
+        } else {
+          g.fillStyle = b.c;
+          g.beginPath();
+          g.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return { stop: () => cancelAnimationFrame(raf), hit: () => (impact = Math.min(impact, performance.now() - start)) };
   }
 
   // Confetti raining from the top of the screen, in the rank's colour and the app's: a few waves, then it falls out
@@ -623,6 +908,15 @@ window.Messages = (() => {
         return;
       case 'xp':
         return progress(ev);
+      case 'badge': {
+        // Its reveal waits for the app in front and do not disturb's end, as a level-up; what comes meanwhile joins it.
+        if (!ev.badges || !ev.badges.length) return;
+        const all = new Map((badgesWaiting ? badgesWaiting.badges : []).map((b) => [b.id, b]));
+        for (const b of ev.badges) if (!all.has(b.id) || all.get(b.id).tier < b.tier) all.set(b.id, b);
+        badgesWaiting = { badges: [...all.values()], quiet: (!badgesWaiting || badgesWaiting.quiet) && !!ev.quiet, seen: badgesWaiting?.seen || 0 };
+        play();
+        return;
+      }
       case 'status':
         // Do not disturb ended: a level-up or the flames it held play now.
         if (ev.status !== 'dnd') play(), ignite();
@@ -719,7 +1013,7 @@ window.Messages = (() => {
     if (!isOpen) return;
     const f = Social.friend(current);
     const c = conv(current);
-    if (f) c.name = Social.handle(f);
+    if (f) c.name = Social.label(f);
     q('.mb-who').innerHTML = f ? who(f) : `<span>${esc(c.name)}</span>`;
     q('.mb-time').textContent = f ? Social.PRESENCE[f.presence || 'offline'].label : '';
     // Removed from friends: the conversation stays on screen, but nothing more goes out.
@@ -826,6 +1120,10 @@ window.Messages = (() => {
 
   function chatEvent(ev) {
     switch (ev.type) {
+      // A nickname set or taken off: the open chat's title follows.
+      case 'nickname':
+        if (ev.id === current) paint();
+        break;
       case 'message': {
         const c = convs.get(ev.with);
         if (c && c.loaded && !c.list.some((m) => m.id === ev.message.id)) {
@@ -1028,6 +1326,8 @@ window.Messages = (() => {
     runaways: (list) => setRunaways(list),
     wait: (w) => addWait(w),
     waitOver: (sid) => waitOver(sid),
+    clash: (c) => addClash(c),
+    clashOver: (key) => clashOver(key),
   };
   Social.load();
   post({ type: 'ready' });

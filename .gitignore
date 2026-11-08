@@ -4,6 +4,7 @@
 # Users' raw feedback stays on this Mac (the repo is public); CHANGELOG has the feature notes.
 /feedback/
 /app/orbit/node_modules/
+/app/editor/node_modules/
 # The Windows app: its packages, its builds, and the key its API calls are signed with (made at build time)
 /windows/node_modules/
 /windows/dist/

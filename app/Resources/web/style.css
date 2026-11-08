@@ -64,6 +64,11 @@
   --a0: #562f18; --a1: #ff4d4d; --a2: #c5e35a; --a3: #ffd23f; --a4: #c16100; --a5: #e0849c; --a6: #ff7345; --a7: #ffb27a;
   --a8: #7d6553; --a9: #ff5c8a; --a10: #ddf08f; --a11: #ffe28a; --a12: #f88008; --a13: #ffa8c4; --a14: #ff9b73; --a15: #fff3e6;
   --font: "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  /* Names and words where the monospace reads slowly (the leaderboard, friends): the system's sans, or the font
+     picked in Settings (Themes.swift sets it too). */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  /* Numbers on the scoreboards (the leaderboard, friends): a monospace whatever font is picked, figures of one width. */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
   --fs: clamp(10px, 0.68vw, 13px);
 }
 
@@ -283,7 +288,7 @@ body::after {
 .legend { position: absolute; left: 8px; bottom: 6px; display: flex; gap: 12px; color: var(--dim); font-size: 0.86em; pointer-events: none; }
 .legend i { display: inline-block; width: 7px; height: 7px; margin-right: 4px; }
 .legend .hint { color: var(--dim2); }
-#tip {
+#tip, #pwr-tip {
   position: absolute;
   z-index: 5;
   display: none;
@@ -296,9 +301,16 @@ body::after {
   box-shadow: 0 0 24px rgba(var(--accent-rgb), 0.3);
   pointer-events: none;
 }
-#tip .h { color: var(--hi); font-weight: 700; }
-#tip .r { margin-top: 3px; color: var(--txt); }
-#tip .d { margin-top: 3px; color: var(--dim); }
+#tip .h, #pwr-tip .h { color: var(--hi); font-weight: 700; }
+#tip .r, #pwr-tip .r { margin-top: 3px; color: var(--txt); }
+#tip .d, #pwr-tip .d { margin-top: 3px; color: var(--dim); }
+/* what power save changes, under its switch (app.js powerTip) */
+#pwr-tip { top: 23px; right: 8px; width: 340px; }
+#pwr-tip.show { display: block; }
+#pwr-tip .h i { color: var(--amber); font-style: normal; font-weight: 400; }
+#pwr-tip .r span { display: inline-block; width: 92px; color: var(--dim); }
+#pwr-tip .r b { color: var(--accent-soft); }
+#pwr-tip .d.gap { margin-top: 8px; }
 
 /* ---------- right column ---------- */
 #right { grid-row: 2; grid-column: 4; display: grid; grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr) auto; gap: 8px; min-height: 0; }
@@ -323,6 +335,11 @@ body::after {
 .fh .n i { display: inline-block; width: 5px; height: 5px; margin-left: 2px; }
 .fh.collide { padding: 2px 4px; background: rgba(var(--red-rgb), 0.14); animation: blink 1s steps(2) 3; }
 .fh.collide .nm::before { content: "⚠ "; color: var(--red); }
+/* Two chats writing the same file: files.heat's strip turns red while it lasts, and each chat's card says so. */
+#p-files.clash { border-color: rgba(var(--red-rgb), 0.7); }
+#p-files.clash > header .tag { background: var(--red); }
+#p-files.clash > header .meta { color: var(--red); font-weight: 700; }
+.flag.clash { color: #fff; background: var(--red); animation: none; }
 
 .mixbar { display: flex; height: 9px; overflow: hidden; background: rgba(255, 255, 255, 0.05); }
 .mixbar i { display: block; height: 100%; transition: width 0.8s ease; }
@@ -369,6 +386,18 @@ body::after {
 .spend-rows .sr b { color: var(--txt); }
 .spend-rows .sr .c { color: var(--accent-soft); text-align: right; }
 .spend-kv { display: flex; flex-wrap: wrap; gap: 0 12px; margin-top: 4px; color: var(--dim); font-size: 0.9em; }
+.spend-tabs { display: flex; align-items: center; gap: 1px; padding-right: 4px; }
+.spend-tabs button { height: 15px; padding: 0 5px; border: 0; background: none; color: inherit; font: inherit; line-height: 15px; opacity: 0.6; cursor: pointer; }
+.spend-tabs button:hover { opacity: 1; }
+.spend-tabs button.on { background: rgba(var(--accent-rgb), 0.25); color: var(--hi); opacity: 1; }
+#spend.hist .chart { height: 40px; }
+.spend-rows .sr > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.spend-rows .sr .sw { display: inline-block; width: 7px; height: 7px; margin-right: 5px; }
+.spend-models { display: flex; flex-wrap: wrap; gap: 0 10px; margin-top: 4px; padding-top: 3px; border-top: 1px dashed var(--line-soft); color: var(--dim); font-size: 0.9em; }
+.spend-models:empty { display: none; }
+.spend-models b { color: var(--txt); }
+.spend-models i { color: var(--dim); font-style: normal; }
+.spend-models .lbl { color: var(--accent-soft); }
 .spend-kv b { color: var(--txt); }
 .spend-kv .g { color: var(--green); }
 

@@ -64,6 +64,8 @@ final class RadarEngine {
     /// Fresh account-wide Codex limits, read from Codex app-server rather than inferred from a rollout file.
     private var codexUsage: [String: Any]?
     private var codexUsagePending = false, codexWasRunning = false
+    /// Spend by day and project past today (the spend panel's history); read on the engine's queue only.
+    private lazy var ledger = Ledger()
 
     init() {
         claudeDir = CLAUDE_DIR
@@ -150,6 +152,8 @@ final class RadarEngine {
         every(60) { self.refreshCodexUsage() }
         every(60) { self.maybeNewDay() }
         every(1) { self.publishState() }
+        scheduleLedger()
+        every(3600) { self.readLedger() }
     }
 
     private func every(_ seconds: Double, _ block: @escaping () -> Void) {
@@ -225,8 +229,11 @@ final class RadarEngine {
     private func maybeNewDay() {
         let d = dayStart()
         guard d != day0 else { return }
+        // The day that ended stays in the spend panel's history as counted, until its transcripts are read.
+        ledger.holdProvisional(G.byProject, at: day0)
         day0 = d
         G = Globals()
+        scheduleLedger()
         seenMsg.removeAll()
         recOwner.removeAll()
         for S in sessions.values { S.resetCounters() }
@@ -234,6 +241,38 @@ final class RadarEngine {
         otherSeen.removeAll()
         otherCalls.removeAll()
         for O in others.values { O.resetCounters() }
+    }
+
+    // MARK: spend ledger
+
+    /// Reads the ledger's days soon: ten minutes into the day, so the last replies of the day before are on disk.
+    private func scheduleLedger() {
+        let wait = max(0, (day0 + 10 * Self.MIN - nowMs()) / 1000) + 1
+        queue.asyncAfter(deadline: .now() + wait) { self.readLedger() }
+    }
+
+    /// The days before today the ledger doesn't have yet, read from the transcripts at background priority (the first time
+    /// all of them, a few seconds' work), then frozen.
+    private func readLedger() {
+        guard nowMs() - day0 >= 10 * Self.MIN, let span = ledger.beginReading(before: day0) else { return }
+        let projects = self.projects
+        DispatchQueue.global(qos: .background).async {
+            let t0 = Date()
+            let days = Ledger.scan(projects: projects, from: span.from, to: span.to)
+            self.queue.async {
+                self.ledger.freeze(days, through: span.to)
+                NSLog("atalay-terminal: spend ledger read %d days in %.1fs", days.count, Date().timeIntervalSince(t0))
+            }
+        }
+    }
+
+    /// For the dashboard's spend panel (SpendBridge): the last 7 or 30 days, 12 weeks or 12 months by project, today live.
+    /// Called back on the main thread.
+    func spendHistory(_ range: String, completion: @escaping ([String: Any]) -> Void) {
+        queue.async {
+            let out = self.ledger.summary(range: range, day0: self.day0, today: self.G.byProject)
+            DispatchQueue.main.async { completion(out) }
+        }
     }
 
     // MARK: lookup helpers
@@ -408,6 +447,8 @@ final class RadarEngine {
                 bm.cost += c
                 bm.calls += 1
                 G.byModel[mk] = bm
+                // A subagent's spend is its chat's project's.
+                G.byProject[S.cwd, default: [:]][mk, default: Ledger.Agg()].add(cost: c, i, o, r, w)
                 let mb = minute(ts)
                 mb.tok += i + o + r + w
                 mb.cost += c
@@ -644,7 +685,7 @@ final class RadarEngine {
     }
 
     /// Binary search for the byte offset where records reach `since`, so huge transcripts load fast.
-    private func seekTime(_ path: String, _ size: UInt64, _ since: Double) -> UInt64 {
+    static func seekTime(_ path: String, _ size: UInt64, _ since: Double) -> UInt64 {
         guard let fh = FileHandle(forReadingAtPath: path) else { return 0 }
         defer { try? fh.close() }
         func probe(_ pos: UInt64) -> Double? {
@@ -673,7 +714,7 @@ final class RadarEngine {
 
     /// Screenshots sit in transcripts as base64 (86% of a busy day's bytes) and nothing here reads them, so
     /// long `"data":"…"` strings are dropped before parsing instead of being decoded into Swift strings.
-    private static func withoutImages(_ line: Data) -> Data {
+    static func withoutImages(_ line: Data) -> Data {
         guard line.count > 32 << 10 else { return line }
         var out = Data()
         out.reserveCapacity(16 << 10)
@@ -707,7 +748,7 @@ final class RadarEngine {
         if !c.started {
             c.started = true
             if st.size > Self.bigFile {
-                c.off = seekTime(fp, st.size, day0 - 10 * Self.MIN)
+                c.off = Self.seekTime(fp, st.size, day0 - 10 * Self.MIN)
                 c.skipLine = c.off > 0
             }
         }
@@ -1930,18 +1971,22 @@ final class RadarEngine {
         let last5 = { (a: [Int]) -> Double in Double(a.suffix(5).reduce(0, +)) / 5 }
         let cost15 = costSpark.suffix(15).reduce(0, +)
 
+        // A collision: two chats wrote the file in the last 20 minutes. A chat and its own subagents are one chat (they
+        // were taken for two), and `clash` names the chats, for their cards' ⚠.
         let files: [[String: Any]] = G.files.values
-            .map { F -> (FileHeat, Bool) in (F, F.editors.values.filter { now - $0.t < 20 * Self.MIN }.count > 1) }
+            .map { F -> (FileHeat, [String]) in (F, Set(F.editors.values.filter { now - $0.t < 20 * Self.MIN }.map(\.s)).sorted()) }
             .sorted { a, b in
-                if a.1 != b.1 { return a.1 }
+                let ca = a.1.count > 1, cb = b.1.count > 1
+                if ca != cb { return ca }
                 let wa = a.0.w * 3 + a.0.r, wb = b.0.w * 3 + b.0.r
                 return wa != wb ? wa > wb : a.0.last > b.0.last
             }
             .prefix(14)
             .map { pair -> [String: Any] in
-                let F = pair.0
+                let F = pair.0, clash = pair.1.count > 1 ? pair.1 : []
                 let editors: [[String: Any]] = F.editors.values.map { ["s": $0.s, "a": orNull($0.a)] }
-                return ["p": tildify(F.p), "short": shortPath(F.p), "r": F.r, "w": F.w, "last": F.last, "collision": pair.1, "editors": editors]
+                return ["p": tildify(F.p), "short": shortPath(F.p), "r": F.r, "w": F.w, "last": F.last, "collision": !clash.isEmpty,
+                        "clash": clash, "editors": editors]
             }
 
         let promptTok = Double(G.tokIn + G.tokCr + G.tokCw)

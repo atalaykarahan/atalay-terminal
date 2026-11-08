@@ -67,8 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             a.addButton(withTitle: "Cancel")
             if a.runModal() != .alertFirstButtonReturn { return .terminateCancel }
         }
-        controller?.terminateAll()
-        return .terminateNow
+        // A file edited in the last second is saved first (Source Control's editor saves a second after a change).
+        guard let controller else { return .terminateNow }
+        controller.flushFiles {
+            controller.terminateAll()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     /// `--new-terminal <folder>` / `--open-session <id>` (repeatable) / `--shortcuts`: open windows or the pie right after launch.
@@ -198,6 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // window in front (Panes.swift).
         let file = submenu("Chat")
         keyed(file, "newTerminal", "New Terminal…", #selector(newTerminal), target: self)
+        // VS Code's: a new file in Source Control's editor.
+        keyed(file, "newFile", "New File", #selector(newFile), target: self)
         keyed(file, "newTab", "New Tab", #selector(newTab), target: self)
         keyed(file, "newTabNext", "New Tab Next to Current Tab", #selector(newTab), target: self)
         keyed(file, "splitVertically", "Split Vertically", #selector(splitVertically), target: self)
@@ -209,6 +216,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyed(file, "undoClose", "Undo Close", #selector(undoClose), target: self)
 
         let edit = submenu("Edit")
+        // The file editor's (a web page cuts only through the menu); a terminal has nothing to cut.
+        add(edit, "Cut", #selector(NSText.cut(_:)), "x")
         add(edit, "Copy", #selector(NSText.copy(_:)), "c")
         keyed(edit, "copyReply", "Copy Claude's Last Reply", #selector(copyReply), target: self)
         add(edit, "Paste", #selector(NSText.paste(_:)), "v")
@@ -270,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func newTerminal() { controller.overlay.showNewTerminal() }
+    @objc private func newFile() { controller.newFile() }
     @objc private func newTab() { controller.newTab() }
     @objc private func splitVertically() { controller.split(vertical: true) }
     @objc private func splitHorizontally() { controller.split(vertical: false) }

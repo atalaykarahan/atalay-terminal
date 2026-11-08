@@ -16,7 +16,9 @@ enum Shortcuts {
     }
 
     static let actions: [Action] = [
-        Action(id: "newTerminal", group: "Chats", title: "New terminal", combo: "cmd+n"),
+        // ⌘N is VS Code's new file (Source Control's editor); a terminal takes ⇧⌘N, VS Code's new window.
+        Action(id: "newTerminal", group: "Chats", title: "New terminal", combo: "shift+cmd+n"),
+        Action(id: "newFile", group: "Editor", title: "New file", combo: "cmd+n"),
         Action(id: "newTab", group: "Chats", title: "New tab", combo: "cmd+t"),
         Action(id: "newTabNext", group: "Chats", title: "New tab next to the current one", combo: "opt+cmd+t"),
         Action(id: "splitVertically", group: "Chats", title: "Split vertically", combo: "cmd+d"),

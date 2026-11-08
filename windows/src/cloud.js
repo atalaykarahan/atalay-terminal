@@ -24,12 +24,30 @@ const API = 'https://terminal-api.atalaykarahan.com';
 const PING = 'undici:websocket:ping';
 const THEME = /^[a-z0-9-]{1,40}$/;
 
-// Only the friends, messages, notifications and feedback endpoints; the pages never reach anything else with the token.
+// Only the friends, messages, notifications, feedback, Roadmap, account, sign-in, settings-sync and badges endpoints,
+// as the Mac's CloudBridge allows them; the pages never reach anything else with the token.
 const SOCIAL_ROUTES = ['v1/me/status', 'v1/me/activity', 'v1/me/leaderboard', 'v1/feedback'];
-const SOCIAL_TREES = ['v1/social', 'v1/friends', 'v1/messages', 'v1/leaderboard', 'v1/notifications'];
+const SOCIAL_TREES = [
+  'v1/social', 'v1/friends', 'v1/messages', 'v1/leaderboard', 'v1/notifications',
+  'v1/roadmap', 'v1/account', 'v1/auth', 'v1/settings', 'v1/badges',
+];
+const under = (p, t) => p === t || p.startsWith(t + '/') || p.startsWith(t + '?');
+// Signing out answers with this PC's new token: only signOut() here calls it, so the token stays in the main process
+// and never reaches a page. Checked as the API reads the path (decoded, any case, slashes squeezed).
+const PRIVATE = ['v1/account/signout'];
+const isPrivate = (p) => {
+  let d;
+  try {
+    d = decodeURIComponent(p).toLowerCase().replace(/\/{2,}/g, '/');
+  } catch {
+    return true;
+  }
+  return PRIVATE.some((t) => under(d, t));
+};
 const allowed = (p) =>
-  !p.includes('..') &&
-  (SOCIAL_ROUTES.includes(p) || SOCIAL_TREES.some((t) => p === t || p.startsWith(t + '/') || p.startsWith(t + '?')));
+  !p.includes('..') && !isPrivate(p) && (SOCIAL_ROUTES.includes(p) || SOCIAL_TREES.some((t) => under(p, t)));
+// The AI tools the API counts hours with for their badges (its badges.ts).
+const TOOLS = new Set(['claude', 'codex', 'gemini', 'antigravity']);
 
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
@@ -147,10 +165,12 @@ class Failure extends Error {
 //   sign of work in the last five: a busy Claude session, a job using the CPU, typing in a chat or terminal)
 // - idleSeconds(): seconds since the last key, mouse or touch input anywhere on the PC, for "away"
 // - theme(): the chosen theme's id; onChange(state): the page's state changed (`json()`); onSocial(text): a live event
+// - tools(): the AI tools at work since the last heartbeat (claude, codex, gemini, antigravity), for their badges
 function createCloud(opts = {}) {
   const dataDir = opts.dataDir;
   if (!dataDir) throw new Error('createCloud: dataDir is required');
   const isActive = opts.isActive || (() => false);
+  const toolsAtWork = opts.tools || (() => []);
   const idleSeconds = opts.idleSeconds || (() => 0);
   const theme = opts.theme || (() => 'atalay');
   const onChange = opts.onChange || (() => {});
@@ -304,6 +324,9 @@ function createCloud(opts = {}) {
     const body = { ...client(), active: !!ask(isActive, false), tz: -Math.round(new Date().getTimezoneOffset()) };
     const th = ask(theme, '');
     if (typeof th === 'string' && THEME.test(th)) body.theme = th;
+    // Which AI tools were at work, for their badges (hours with each).
+    const tools = ask(toolsAtWork, []);
+    body.tools = Array.isArray(tools) ? [...new Set(tools)].filter((t) => TOOLS.has(t)).sort() : [];
     let a;
     try {
       a = await call('POST', 'v1/heartbeat', body, token);
@@ -431,6 +454,51 @@ function createCloud(opts = {}) {
   function setUpdateRightAway(on) {
     save({ updateRightAway: on });
     set({ updateRightAway: on });
+  }
+
+  // ---------- the account (Settings → ACCOUNT, account.js) ----------
+
+  // Why a call failed, as the page shows it: the API's code, or "offline" when it couldn't be reached.
+  const why = (e) => (e && e.status ? e.code || 'failed' : 'offline');
+
+  // This PC leaves the account and goes on as a guest, under the same name with a new tag; the account stays on the
+  // server, to sign in to again. The new token comes straight here, never to a page. Null when done, else why not.
+  async function signOut() {
+    const token = readToken();
+    if (!token) return 'signed_out';
+    let a;
+    try {
+      a = await call('POST', 'v1/account/signout', {}, token);
+      if (typeof a.token !== 'string' || typeof a.hackerName !== 'string' || !Number.isInteger(a.tag)) throw new Error('unexpected answer');
+    } catch (e) {
+      return why(e);
+    }
+    saveToken(a.token);
+    set({ hackerName: a.hackerName, tag: a.tag });
+    await heartbeat(a.token);
+    // The API closed the live line it had with the old token: a new one now, with the new token's ticket.
+    delay = 2;
+    detach();
+    open();
+    return null;
+  }
+
+  // Everything of the account is deleted on the server, on all its computers; this PC starts over as on its first
+  // launch (the page asks for a name again).
+  async function deleteAccount() {
+    const token = readToken();
+    if (!token) return 'signed_out';
+    try {
+      await call('DELETE', 'v1/account', undefined, token);
+    } catch (e) {
+      return why(e);
+    }
+    saveToken(null);
+    setPending(null);
+    save({ xp: null });
+    set({ registered: false, hackerName: null, tag: null, xp: null });
+    await identify();
+    return null;
   }
 
   // ---------- friends and messages ----------
@@ -709,6 +777,15 @@ function createCloud(opts = {}) {
       case 'openChat':
         // The chat panel is main.js's to open.
         return { openChat: typeof b.id === 'string' ? b.id : '' };
+      // The account changed (signed in, merged): its name and XP now, not at the next minute's heartbeat.
+      case 'refresh':
+        await beat();
+        return json();
+      // Signing out on this PC, and deleting the account: the token changes here, the page gets the new state.
+      case 'signOut':
+        return { error: await signOut(), state: json() };
+      case 'deleteAccount':
+        return { error: await deleteAccount(), state: json() };
       default:
         throw new Error('unknown message');
     }

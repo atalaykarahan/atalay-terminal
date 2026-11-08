@@ -4,8 +4,9 @@
 // bright chord when a request is accepted, a soft two-note call when a friend comes online, a soft blip when a message
 // goes out, and for your own choices a happy "accepted" and a falling "declined". Your progress has its own: a coin
 // for the daily bonus, for the level-up takeover a burst of static, then a ringing "ding" for a new level or a brass
-// fanfare for a new rank, and a fire catching for five hours of work in a day. Do not disturb silences what comes in,
-// not what you do (the level-up and the flames wait for it to end and then play).
+// fanfare for a new rank, a fire catching for five hours of work in a day; a new badge's reveal plays recorded sounds
+// (sounds/, from Artlist). Do not disturb silences what comes in, not what you do (the level-up, the badges and the
+// flames wait for it to end and then play).
 window.Sfx = (() => {
   let ctx = null;
   let out = null;
@@ -375,7 +376,34 @@ window.Sfx = (() => {
     else console.warn(msg);
   }
 
+  // Recorded sounds (sounds/*.m4a), and where in each its moment is (s): the impact's burst, the shine's ring (the
+  // badge's reveal lines them up on the moment the badge shows), a badge put on display landing.
+  const SAMPLES = { 'badge-impact': 1.62, 'badge-shine': 1.07, 'badge-equip': 0.36 };
+  const loaded = new Map();
+  function sample(name) {
+    let a = loaded.get(name);
+    if (!a) {
+      a = new Audio(`sounds/${name}.m4a`);
+      a.preload = 'auto';
+      loaded.set(name, a);
+    }
+    return a;
+  }
+
   return {
+    /** Loads a recorded sound ahead, so it starts on time. */
+    preload: (name) => void sample(name).load(),
+    /** Where in the recorded sound its moment is, in ms. */
+    hit: (name) => Math.round(1000 * (SAMPLES[name] || 0)),
+    /** Plays a recorded sound from the start, or from `from` s in (yours: do not disturb doesn't silence it). */
+    sample(name, vol = 1, from = 0) {
+      const a = sample(name);
+      try {
+        a.currentTime = from;
+        a.volume = vol;
+        a.play().catch(() => {});
+      } catch {}
+    },
     play(name) {
       const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom'].includes(name);
       if (!SOUNDS[name] || (window.Social && window.Social.dnd() && !yours)) return;

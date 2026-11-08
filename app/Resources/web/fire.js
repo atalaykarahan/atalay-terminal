@@ -71,13 +71,18 @@ void main() {
   gl_FragColor = vec4(c * a, a);
 }`;
 
-  // Lights `canvas` until it leaves the page or the returned stop is called. reach: how far flames rise from the
-  // bottom, the sides and the top, in CSS px (0: that edge doesn't burn), or a function giving them each frame;
-  // scale: the size of the flames' detail (CSS px); life: ms until it has died down (0: it burns on); res: canvas
-  // pixels per CSS px.
-  function burn(canvas, { reach, scale, life = 0, res = Math.min(2, devicePixelRatio || 1) }) {
+  // Every fire on the page draws with one WebGL context, and each card's canvas gets a copy (2D). WebKit allows a page
+  // 16 WebGL contexts and, past that, takes away for good the one that drew least recently: the orbit map's when the
+  // dashboard was out of sight, which then stayed blank until a reload. A context per card did that: each render of
+  // the friends list or the leaderboard made new ones for its burning rows, and the old ones counted until collected.
+  let G = null;
+  let live = 0;
+  function shared() {
+    if (G && !G.gl.isContextLost()) return G;
+    G = null;
+    const canvas = document.createElement('canvas');
     const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false });
-    if (!gl) return () => {};
+    if (!gl) return null;
     const shader = (type, src) => {
       const s = gl.createShader(type);
       gl.shaderSource(s, src);
@@ -88,7 +93,7 @@ void main() {
     gl.attachShader(prog, shader(gl.VERTEX_SHADER, VERTEX));
     gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FRAGMENT));
     gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return () => {};
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
     gl.useProgram(prog);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -96,7 +101,18 @@ void main() {
     gl.enableVertexAttribArray(at);
     gl.vertexAttribPointer(at, 2, gl.FLOAT, false, 0, 0);
     const u = (name) => gl.getUniformLocation(prog, name);
-    const uRes = u('res'), uReach = u('reach'), uT = u('t'), uK = u('k'), uScale = u('scale');
+    G = { gl, canvas, uRes: u('res'), uReach: u('reach'), uT: u('t'), uK: u('k'), uScale: u('scale') };
+    return G;
+  }
+
+  // Lights `canvas` until it leaves the page or the returned stop is called. reach: how far flames rise from the
+  // bottom, the sides and the top, in CSS px (0: that edge doesn't burn), or a function giving them each frame;
+  // scale: the size of the flames' detail (CSS px); life: ms until it has died down (0: it burns on); res: canvas
+  // pixels per CSS px.
+  function burn(canvas, { reach, scale, life = 0, res = Math.min(2, devicePixelRatio || 1) }) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx || !shared()) return () => {};
+    live++;
     // Each fire starts somewhere else in the noise, so two cards don't burn alike.
     const seed = Math.random() * 100;
     const start = performance.now();
@@ -105,15 +121,26 @@ void main() {
       if (stopped) return;
       stopped = true;
       cancelAnimationFrame(raf);
-      const lose = gl.getExtension('WEBGL_lose_context');
-      if (lose) lose.loseContext();
+      // No fire left: the shared canvas lets go of its pixels (the screen's edges need a big one), not its context.
+      if (--live === 0 && G) G.canvas.width = G.canvas.height = 1;
     };
     const frame = (now) => {
       if (!canvas.isConnected) return stop();
+      raf = requestAnimationFrame(frame);
+      // Out of sight (its view hidden): nothing to draw.
+      if (!canvas.clientWidth || !canvas.clientHeight) return;
+      const g = shared();
+      if (!g) return stop();
+      const { gl } = g;
       const w = Math.max(1, Math.round(canvas.clientWidth * res)), h = Math.max(1, Math.round(canvas.clientHeight * res));
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
+      }
+      // The shared canvas is as big as the biggest fire; each one draws in its bottom-left corner (WebGL's origin).
+      if (g.canvas.width < w || g.canvas.height < h) {
+        g.canvas.width = Math.max(g.canvas.width, w);
+        g.canvas.height = Math.max(g.canvas.height, h);
       }
       const ms = now - start;
       // Catches in 0.6 s; with a life, dies down over its last 1.4 s.
@@ -122,14 +149,15 @@ void main() {
       gl.viewport(0, 0, w, h);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.uniform2f(uRes, w, h);
-      gl.uniform3f(uReach, r[0] * res, r[1] * res, r[2] * res);
-      gl.uniform1f(uT, seed + ms / 1000);
-      gl.uniform1f(uK, k);
-      gl.uniform1f(uScale, scale * res);
+      gl.uniform2f(g.uRes, w, h);
+      gl.uniform3f(g.uReach, r[0] * res, r[1] * res, r[2] * res);
+      gl.uniform1f(g.uT, seed + ms / 1000);
+      gl.uniform1f(g.uK, k);
+      gl.uniform1f(g.uScale, scale * res);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      if (life && ms >= life) return stop();
-      raf = requestAnimationFrame(frame);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(g.canvas, 0, g.canvas.height - h, w, h, 0, 0, w, h);
+      if (life && ms >= life) stop();
     };
     raf = requestAnimationFrame(frame);
     return stop;
