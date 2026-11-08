@@ -613,9 +613,42 @@
 .bdg-grid.small .bdg { padding: 8px 4px 6px; }
 .bdg-grid.small .bdg b { font-size: 0.86em; }
 .bdg-none { margin: 0; color: var(--dim); }
-.bdg-prestige { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid rgba(var(--amber-rgb), 0.55); border-radius: 8px; background: rgba(var(--amber-rgb), 0.08); }
-.bdg-prestige span { flex: 1; color: var(--txt2); line-height: 1.45; }
-.bdg-prestige span b { display: block; color: var(--amber); }
+/* Level 60: the year's Service Medal (badges.js medalBanner), gold whatever the theme, light running round its edge */
+.sm-banner { position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 24px; margin: 0 0 18px; padding: 18px 24px; overflow: hidden; border-radius: 8px; isolation: isolate; box-shadow: 0 0 28px rgba(255, 196, 64, 0.25); }
+.sm-banner::before { content: ""; position: absolute; inset: -200%; z-index: -2; background: conic-gradient(from 0deg, rgba(255, 196, 64, 0.35) 0 62%, #ffe08a 74%, #fff 76%, rgba(255, 196, 64, 0.35) 88%); animation: sm-spin 3.5s linear infinite; }
+.sm-banner::after { content: ""; position: absolute; inset: 2px; z-index: -1; border-radius: 6px; background: radial-gradient(circle at 9% 50%, rgba(var(--rc), 0.4), transparent 32%), linear-gradient(100deg, #2e2510, #15161b 50%, #18171c); }
+.sm-art { position: relative; display: grid; place-items: center; width: 132px; height: 132px; }
+.sm-art::before { content: ""; position: absolute; inset: -30%; border-radius: 50%; background: repeating-conic-gradient(rgba(255, 220, 140, 0.22) 0 6deg, transparent 6deg 20deg); -webkit-mask-image: radial-gradient(circle, #000 20%, transparent 68%); mask-image: radial-gradient(circle, #000 20%, transparent 68%); animation: sm-spin 18s linear infinite; }
+.sm-medal { position: relative; display: block; width: 132px; height: 132px; animation: sm-float 3.8s ease-in-out infinite; }
+.sm-medal .badge-art { display: block; filter: drop-shadow(0 0 16px rgba(var(--rc), 0.85)) drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6)); }
+/* a badge's gleam (badge-art.js gleam): a brightened copy of its picture through a stripe that crosses it */
+.gleam { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; filter: brightness(2.4) saturate(0.4); opacity: 0.85;
+  -webkit-mask-image: linear-gradient(110deg, transparent 42%, #000 50%, transparent 58%); mask-image: linear-gradient(110deg, transparent 42%, #000 50%, transparent 58%);
+  -webkit-mask-size: 300% 100%; mask-size: 300% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+.sm-shine { animation: sm-gleam-cross 3.2s ease-in-out infinite; }
+@keyframes sm-gleam-cross { 0%, 55% { -webkit-mask-position: 100% 0; mask-position: 100% 0; } 100% { -webkit-mask-position: 0 0; mask-position: 0 0; } }
+.sm-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sm-text small { color: #ffd76a; font-size: 0.78em; font-weight: 800; letter-spacing: 0.3em; }
+.sm-text b { background: linear-gradient(180deg, #fff6d6, #ffc840 55%, #d98c10); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: 2em; font-weight: 900; line-height: 1.05; letter-spacing: 0.06em; filter: drop-shadow(0 0 12px rgba(255, 196, 64, 0.45)); }
+.sm-text > span { color: #d4d7dc; line-height: 1.45; }
+.sm-pips { display: flex; align-items: center; gap: 7px; margin-top: 2px; }
+.sm-pips i { width: 11px; height: 11px; border: 1.5px solid rgba(var(--p), 0.9); background: rgba(var(--p), 0.12); transform: rotate(45deg); }
+.sm-pips i.on { background: rgb(var(--p)); box-shadow: 0 0 8px rgba(var(--p), 0.9); }
+.sm-pips i.next { animation: sm-pip 1.2s ease-in-out infinite; }
+.sm-pips em { margin-left: 8px; color: #8b929b; font-size: 0.85em; font-style: normal; }
+.sm-btn { position: relative; overflow: hidden; padding: 13px 22px; border: 0; border-radius: 6px; background: linear-gradient(180deg, #ffe08a, #ffb627 55%, #e08a0c); color: #2a1a00; font: inherit; font-weight: 900; letter-spacing: 0.14em; white-space: nowrap; cursor: pointer; box-shadow: 0 0 0 1px rgba(255, 240, 200, 0.6) inset, 0 4px 14px rgba(0, 0, 0, 0.45); animation: sm-call 1.8s ease-in-out infinite; }
+.sm-btn::after { content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent); transform: skewX(-20deg); animation: sm-gleam 2.6s ease-in-out infinite; }
+.sm-btn:hover { filter: brightness(1.1); }
+.sm-btn:disabled { filter: grayscale(0.6); cursor: default; animation: none; }
+.sm-ask { display: flex; align-items: center; gap: 10px; }
+.sm-ask span { color: #ffd76a; font-weight: 700; }
+.sm-no { padding: 12px 14px; border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px; background: transparent; color: #c9ced4; font: inherit; cursor: pointer; }
+.me-card-medal { flex: none; padding: 4px 9px; border-radius: 4px; background: linear-gradient(180deg, #ffe08a, #ffb627); color: #2a1a00; font-size: 0.78em; font-weight: 900; letter-spacing: 0.1em; animation: sm-call 1.8s ease-in-out infinite; }
+@keyframes sm-spin { to { transform: rotate(360deg); } }
+@keyframes sm-float { 50% { translate: 0 -6px; } }
+@keyframes sm-gleam { 0%, 55% { transform: skewX(-20deg) translateX(0); opacity: 0; } 60% { opacity: 1; } 100% { transform: skewX(-20deg) translateX(520%); opacity: 0; } }
+@keyframes sm-call { 50% { box-shadow: 0 0 0 1px rgba(255, 240, 200, 0.6) inset, 0 0 22px rgba(255, 196, 64, 0.75); } }
+@keyframes sm-pip { 50% { background: rgba(var(--p), 0.7); box-shadow: 0 0 10px rgba(var(--p), 0.9); } }
 .bdg-ctx { z-index: 2900; }
 .bdg-ctx button[disabled] { color: var(--dim); cursor: default; }
 

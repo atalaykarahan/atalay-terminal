@@ -5,7 +5,7 @@
 // click one to display it. The displayed one shows beside your name wherever it's shown (the top bar, friends' lists,
 // the leaderboard), as CS:GO shows its one display item; a friend's card opens their whole inventory, as looking into a
 // Steam inventory. Signed-in accounts only: a guest sees the badges grey and a way to sign in. At level 60 a button
-// resets the level for that year's Service Medal (CS:GO's prestige).
+// resets the level for that year's Service Medal (CS:GO's prestige): the medal is the year's it's taken in.
 window.Badges = (() => {
   if (window.__platform === 'win32' || !window.BadgeArt) return null;
   const h = window.webkit && window.webkit.messageHandlers;
@@ -85,11 +85,7 @@ window.Badges = (() => {
     const head = mine.signedIn
       ? `<p class="bdg-sum">${earned.length ? `<b>${earned.length}</b> ${earned.length === 1 ? 'badge' : 'badges'} · right click one to display it beside your name` : 'no badges yet · they come as you work'}</p>`
       : '<p class="bdg-sum bdg-guest"><b>Badges are for signed-in accounts.</b> Sign in (GitHub or e-mail) and what you\'ve done so far counts at once. <button type="button" class="mn-btn go" data-b="signin">sign in</button></p>';
-    const prestige = mine.prestige && mine.prestige.can
-      ? `<div class="bdg-prestige">${Art.svg(`service-${new Date().getFullYear()}`, Math.min(6, (mine.badges.find((b) => b.id === `service-${new Date().getFullYear()}`)?.tier || 0) + 1), 56)}` +
-        '<span><b>Level 60</b> Start again at level 1 for this year\'s Service Medal, as in CS:GO. Your XP total and the leaderboard keep counting.</span>' +
-        '<button type="button" class="mn-btn go" data-b="prestige">reset for the medal</button></div>'
-      : '';
+    const prestige = medalBanner();
     // Only the ones you have, as CS:GO's inventory (what's left to earn isn't shown), the rarest first.
     const order = earned.sort((a, b) => a.rare - b.rare);
     setHTML(host, head + prestige + (order.length ? `<div class="bdg-grid">${order.map((b) => tile(b, true)).join('')}</div>` : ''));
@@ -141,11 +137,41 @@ window.Badges = (() => {
     }, true));
   }
 
+  // Level 60: this year's Service Medal waits, as CS:GO's "Get Service Medal": a wide banner in gold with light running
+  // round its edge, the next medal big and gleaming, this year's six levels under it (a year's medal can't be had after
+  // 1 January), and a button that asks once more before the level goes back to 1.
+  let asking = false;
+  function medalBanner() {
+    if (!mine || !mine.prestige || !mine.prestige.can) return '';
+    const year = new Date().getFullYear();
+    const id = `service-${year}`;
+    const have = mine.badges.find((b) => b.id === id)?.tier || 0;
+    if (have >= 6) return '';
+    const next = have + 1;
+    const pips = Array.from({ length: 6 }, (_, i) => `<i class="${i < have ? 'on' : i === have ? 'next' : ''}" style="--p:${Art.glow(id, i + 1)[0]}"></i>`).join('');
+    return (
+      `<div class="sm-banner" style="--rc:${Art.glow(id, next)[0]}"><div class="sm-art"><span class="sm-medal">${Art.svg(id, next, 132)}${Art.gleam(id, next, 'sm-shine')}</span></div>` +
+      `<div class="sm-text"><small>LEVEL 60 · MAX LEVEL</small><b>${year} SERVICE MEDAL</b>` +
+      `<span>${have ? `Level ${next} of this year's medal` : "This year's medal"} is yours to take: start again at level 1 for it. Your XP total, your badges and your place on the leaderboard stay.</span>` +
+      `<span class="sm-pips">${pips}<em>${have} of 6 this year · gone on 1 January</em></span></div>` +
+      (asking
+        ? '<div class="sm-ask"><span>back to level 1?</span><button type="button" class="sm-btn" data-b="prestige-go">✓ yes, get it</button><button type="button" class="sm-no" data-b="prestige-no">cancel</button></div>'
+        : '<button type="button" class="sm-btn" data-b="prestige">GET SERVICE MEDAL</button>') +
+      '</div>'
+    );
+  }
+
   async function onClick(e) {
     const b = e.target.closest('[data-b]');
     if (!b) return;
     if (b.dataset.b === 'signin') return window.Cloud?.openSettings();
-    if (b.dataset.b === 'prestige') {
+    if (b.dataset.b === 'prestige' || b.dataset.b === 'prestige-no') {
+      asking = b.dataset.b === 'prestige';
+      render();
+      return renderShowcase();
+    }
+    if (b.dataset.b === 'prestige-go') {
+      asking = false;
       b.disabled = true;
       const r = await api('POST', 'v1/badges/prestige', {});
       if (r.error) {
@@ -185,11 +211,7 @@ window.Badges = (() => {
     if (!invEl || !invEl.isConnected) return;
     if (!mine) return setHTML(invEl, '<div class="mn-empty">loading…</div>');
     const list = mine.badges.filter((b) => b.tier).sort(ORDER);
-    const prestige = mine.prestige && mine.prestige.can
-      ? `<div class="bdg-prestige">${Art.svg(`service-${new Date().getFullYear()}`, Math.min(6, (mine.badges.find((b) => b.id === `service-${new Date().getFullYear()}`)?.tier || 0) + 1), 56)}` +
-        '<span><b>Level 60</b> Start again at level 1 for this year\'s Service Medal, as in CS:GO. Your XP total and the leaderboard keep counting.</span>' +
-        '<button type="button" class="mn-btn go" data-b="prestige">reset for the medal</button></div>'
-      : '';
+    const prestige = medalBanner();
     const guest = mine.signedIn ? '' : '<p class="bdg-sum bdg-guest"><b>Badges are for signed-in accounts.</b> Sign in (GitHub or e-mail) and what you\'ve done so far counts at once. <button type="button" class="mn-btn go" data-b="signin">sign in</button></p>';
     setHTML(invEl,
       guest + prestige +

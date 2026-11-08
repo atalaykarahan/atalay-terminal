@@ -15,7 +15,7 @@ enum Activity {
         Social.idleSeconds() < 300 && ProcessInfo.processInfo.systemUptime - lastWork < 300
     }
 
-    /// The AI tools seen at work (a session busy), for their badges (the API's badges.ts): claude, codex, gemini.
+    /// The AI tools seen at work (a session busy), for their badges (the API's badges.ts): claude, codex, gemini, antigravity.
     private static var toolsAt: [String: TimeInterval] = [:]
 
     /// A session of `tool` (a brief's name: "Codex", "Gemini", "Antigravity"…; Claude's sessions are Claude) is busy.
@@ -24,7 +24,8 @@ enum Activity {
         switch tool.lowercased() {
         case "claude": key = "claude"
         case "codex": key = "codex"
-        case "gemini", "antigravity": key = "gemini"
+        case "gemini": key = "gemini"
+        case "antigravity": key = "antigravity"
         default: return
         }
         toolsAt[key] = ProcessInfo.processInfo.systemUptime

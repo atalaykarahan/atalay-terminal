@@ -392,7 +392,7 @@ window.Messages = (() => {
   // In front: the app tells (focus).
   let focused = false;
   let pending = null; // the level-up waiting to play: the highest level, the one before, whether a rank changed
-  let badgesWaiting = null; // new badges waiting for their reveal: { badges: [{ id, tier }], quiet }, the highest tier each
+  let badgesWaiting = null; // new badges waiting for their reveal: { badges: [{ id, tier }], quiet, seen }, the highest tier each
   let takeover = null; // the one on screen
 
   function progress(ev) {
@@ -466,9 +466,7 @@ window.Messages = (() => {
       pending = null;
       takeover = showTakeover(c);
     } else {
-      const c = badgesWaiting;
-      badgesWaiting = null;
-      takeover = showReveal(c);
+      revealNext(false);
     }
     // Only now, with the takeover set, does the panel ask for the whole screen (in the app).
     sizeNotes();
@@ -485,8 +483,12 @@ window.Messages = (() => {
 
   // A key or a click once the lock is over: out now instead of waiting.
   function skip() {
-    if (takeover && takeover.free) takeover.out();
+    if (!takeover) return;
+    if (takeover.skip) return takeover.skip();
+    if (takeover.free) takeover.out();
   }
+  // How long keys wait at a badge's reveal (and after a key brought its burst forward) before they count again.
+  const KEY_GUARD = 250;
 
   const GLYPHS = '!<>-_\\/[]{}=+*^?#$%&@01ABCDEFXZ';
   // The glitch and the confetti in the app's warm colours (orange, light orange, amber, red, white).
@@ -591,39 +593,47 @@ window.Messages = (() => {
     sizeNotes();
     // Another level-up or badge waiting plays first; notices (a chat that needs you, the daily bonus) come after the last.
     if (!peek && !pending && !badgesWaiting) nextPeek();
-    setTimeout(play, 600);
+    setTimeout(play, badgesWaiting ? 250 : 600);
     setTimeout(ignite, 700);
   }
 
+  // The next badge waiting, one at a time, each with its own reveal (a key or a click after it lands brings the next),
+  // the grandest last; the count (3 of 9) runs across the ones that came together. `cont`: straight on from the one
+  // before, the screen staying dark.
+  function revealNext(cont) {
+    const c = badgesWaiting;
+    const order = [...c.badges].sort((a, b) => badgeScore(a) - badgeScore(b));
+    const seen = (c.seen || 0) + 1;
+    badgesWaiting = order.length > 1 ? { badges: order.slice(1), quiet: c.quiet, seen } : null;
+    takeover = showReveal({ badge: order[0], quiet: c.quiet, n: seen, of: seen + order.length - 1, cont });
+  }
+
+  // How grand a badge is, for the order of several (the grandest revealed last): a Service Medal, then gold and up, a
+  // hidden one or Founder, then the tier.
+  const badgeScore = (b) => (b.id.startsWith('service-') ? 20 : 0) + (window.BadgeArt.grand(b.id, b.tier) ? 10 : 0) + b.tier;
+
   // A new badge, as CS:GO reveals an item: the screen darkens while the impact's sound builds, light is pulled in to the
   // middle and only the badge's shadow shows there, the screen's edges glowing in its colour and a HUD's corners closing
-  // in; on the sound's burst the badge itself appears with a flash, a
-  // shockwave and a burst of sparks in its own colours, under turning rays, a shine ringing over it; its name and tier
-  // rise under it. A gold one and up (a medal, a hidden one) gets more of everything. Several at once (a sign-in counting
-  // what was done before): the grandest one big, the rest dropping in a row under it, one by one.
+  // in; on the sound's burst the badge itself appears with a flash, a shockwave and a burst of sparks in its own colours,
+  // under turning rays, a shine crossing it; its name and tier rise under it. A gold one and up (a medal, a hidden one)
+  // gets more of everything. Several that came together (a sign-in counting what was done before) come one by one,
+  // `c.n` of `c.of`.
   function showReveal(c) {
     const Art = window.BadgeArt;
-    const score = (b) => (b.id.startsWith('service-') ? 20 : 0) + (Art.grand(b.id, b.tier) ? 10 : 0) + b.tier;
-    const list = [...c.badges].sort((a, b) => score(b) - score(a));
-    const main = list[0];
-    const rest = list.slice(1);
-    const ROW = 9;
+    const main = c.badge;
     const grand = Art.grand(main.id, main.tier);
     const [rc, rs] = Art.glow(main.id, main.tier);
     const tier = Art.tierName(main.id, main.tier);
-    const kicker = list.length > 1
-      ? `${list.length} BADGES UNLOCKED`
-      : main.id.startsWith('service-') ? 'MEDAL EARNED' : main.tier > 1 && !main.id.startsWith('month-') ? 'BADGE UPGRADED' : 'BADGE UNLOCKED';
+    const kicker = (main.id.startsWith('service-') ? 'MEDAL EARNED' : main.tier > 1 ? 'BADGE UPGRADED' : 'BADGE UNLOCKED') +
+      (c.of > 1 ? ` · ${c.n} OF ${c.of}` : '');
     // The moment the badge shows: the impact's burst.
     const IMPACT = Sfx.hit('badge-impact');
-    const lockMs = IMPACT + 1200;
-    const rowAt = IMPACT + 900;
-    const readMs = Math.min(12_000, IMPACT + (grand ? 6000 : 5000) + 260 * Math.min(rest.length, ROW));
+    const readMs = IMPACT + (grand ? 6000 : 5000);
     const timers = [];
     const at = (ms, f) => timers.push(setTimeout(f, ms));
     const el = document.createElement('div');
     el.id = 'takeover';
-    el.className = `tk rv${grand ? ' grand' : ''}`;
+    el.className = `tk rv${grand ? ' grand' : ''}${c.cont ? ' cont' : ''}`;
     el.style.setProperty('--rc', rc);
     el.style.setProperty('--rs', rs);
     el.style.setProperty('--build', `${IMPACT}ms`);
@@ -631,24 +641,27 @@ window.Messages = (() => {
       '<div class="rv-veil"></div><div class="rv-edge"></div><div class="rv-frame"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>' +
       '<canvas class="rv-sparks"></canvas><div class="rv-flash"></div>' +
       '<div class="rv-center"><div class="rv-stage"><div class="rv-rays"></div><div class="rv-rays b"></div><div class="rv-glow"></div>' +
-      `<div class="rv-ring"></div><div class="rv-ring b"></div><div class="rv-art">${Art.svg(main.id, main.tier, 320)}<i class="rv-shine"></i></div></div>` +
+      `<div class="rv-ring"></div><div class="rv-ring b"></div><div class="rv-art">${Art.svg(main.id, main.tier, 320)}${Art.gleam(main.id, main.tier, 'rv-shine')}</div></div>` +
       `<div class="rv-kicker">${esc(kicker)}</div><div class="rv-name">${esc(Art.name(main.id))}</div>` +
       (tier ? `<div class="rv-tier">${esc(tier)}</div>` : '') +
-      (rest.length
-        ? `<div class="rv-row">${rest.slice(0, ROW).map((b, i) => `<span class="rv-mini" style="--d:${rowAt + i * 260}ms" title="${esc(Art.name(b.id))}">${Art.svg(b.id, b.tier, 64)}</span>`).join('')}` +
-          (rest.length > ROW ? `<span class="rv-more" style="--d:${rowAt + ROW * 260}ms">+${rest.length - ROW}</span>` : '') + '</div>'
-        : '') +
       (c.quiet ? '<div class="rv-note">from what you\'ve done so far · right click one in your profile to display it</div>' : '') +
-      '</div><div class="tk-hint">press any key to continue</div>';
-    document.body.appendChild(el);
+      `</div><div class="tk-hint">${c.n < c.of ? 'press any key for the next one' : 'press any key to continue'}</div>`;
+    // Straight on from the one before: under it, already dark, while it fades away on top.
+    const prev = c.cont && takeover && takeover.el.isConnected ? takeover.el : null;
+    if (prev) document.body.insertBefore(el, prev);
+    else document.body.appendChild(el);
     const t = { el, timers, free: false, stop: () => {} };
-    lockKeys(lockMs);
+    // Keys only wait a moment (one pressed for the badge before can't skip this one); from then on a key or a click
+    // before the burst jumps to it, and one after it brings the next.
+    lockKeys(KEY_GUARD);
+    const SOUNDS = [['badge-impact', 1], ['badge-shine', 0.8]];
     // The sounds, each started so that its moment falls on IMPACT.
-    for (const [name, vol] of [['badge-impact', 1], ['badge-shine', 0.8]]) {
+    for (const [name, vol] of SOUNDS) {
       Sfx.preload(name);
       at(Math.max(0, IMPACT - Sfx.hit(name)), () => Sfx.sample(name, vol));
     }
-    t.stop = sparks(el.querySelector('.rv-sparks'), el.querySelector('.rv-art'), rc, rs, grand, IMPACT);
+    const light = sparks(el.querySelector('.rv-sparks'), el.querySelector('.rv-art'), rc, rs, grand, IMPACT);
+    t.stop = light.stop;
 
     let leaving = false;
     t.out = () => {
@@ -656,28 +669,50 @@ window.Messages = (() => {
       leaving = true;
       timers.forEach(clearTimeout);
       el.classList.add('out');
+      // Another badge waiting: it starts at once under this one, the screen never going back to the dashboard.
+      if (badgesWaiting && focused && !Social.dnd()) {
+        revealNext(true);
+        return setTimeout(() => {
+          t.stop();
+          el.remove();
+        }, 450);
+      }
       at(450, () => endTakeover(t));
     };
-    // The burst: the badge shows, the flash and the shake; the text after.
-    at(IMPACT, () => el.classList.add('hit'));
-    at(IMPACT + 220, () => el.querySelector('.rv-kicker').classList.add('on'));
-    at(IMPACT + 340, () => el.querySelector('.rv-name').classList.add('on'));
-    at(IMPACT + 460, () => el.querySelector('.rv-tier')?.classList.add('on'));
-    at(IMPACT + 700, () => el.querySelector('.rv-note')?.classList.add('on'));
-    rest.slice(0, ROW).forEach((_, i) => at(rowAt + i * 260 + 120, () => Sfx.play('tick')));
-    at(readMs, t.out);
-    at(lockMs, () => {
-      t.free = true;
-      el.classList.add('free');
-      unlockKeys();
-    });
+    // The burst: the badge shows, the flash and the shake; the text after. `fast`: a key brought it forward, so the
+    // sounds jump to their moments, the sparks burst now and the text is there at once.
+    let landed = false;
+    const land = (fast) => {
+      if (landed) return;
+      landed = true;
+      el.classList.add('hit');
+      const lines = ['.rv-kicker', '.rv-name', '.rv-tier', '.rv-note'];
+      if (fast) {
+        timers.forEach(clearTimeout);
+        timers.length = 0;
+        el.classList.add('fast');
+        for (const [name, vol] of SOUNDS) Sfx.sample(name, vol, Sfx.hit(name) / 1000);
+        light.hit();
+        lines.forEach((q) => el.querySelector(q)?.classList.add('on'));
+      } else {
+        lines.forEach((q, i) => at([220, 340, 460, 700][i], () => el.querySelector(q)?.classList.add('on')));
+      }
+      at(readMs - IMPACT, t.out);
+      at(fast ? KEY_GUARD : 250, () => {
+        t.free = true;
+        el.classList.add('free');
+      });
+    };
+    at(IMPACT, () => land(false));
+    t.skip = () => (landed ? t.free && t.out() : land(true));
     el.addEventListener('mousedown', () => skip());
     return t;
   }
 
   // The reveal's light: sparks pulled in from all around to the middle until `impact` ms, then a burst out from it
   // (a second one for a grand badge), then embers rising around the badge until the reveal ends (stop).
-  function sparks(canvas, art, rc, rs, grand, impact) {
+  function sparks(canvas, art, rc, rs, grand, impactAt) {
+    let impact = impactAt; // brought forward by hit()
     const dpr = Math.min(2, devicePixelRatio || 1);
     const g = canvas.getContext('2d');
     const colors = [`rgb(${rc})`, `rgb(${rs})`, `rgb(${rs})`, '#ffffff'];
@@ -775,7 +810,7 @@ window.Messages = (() => {
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+    return { stop: () => cancelAnimationFrame(raf), hit: () => (impact = Math.min(impact, performance.now() - start)) };
   }
 
   // Confetti raining from the top of the screen, in the rank's colour and the app's: a few waves, then it falls out
@@ -878,7 +913,7 @@ window.Messages = (() => {
         if (!ev.badges || !ev.badges.length) return;
         const all = new Map((badgesWaiting ? badgesWaiting.badges : []).map((b) => [b.id, b]));
         for (const b of ev.badges) if (!all.has(b.id) || all.get(b.id).tier < b.tier) all.set(b.id, b);
-        badgesWaiting = { badges: [...all.values()], quiet: (!badgesWaiting || badgesWaiting.quiet) && !!ev.quiet };
+        badgesWaiting = { badges: [...all.values()], quiet: (!badgesWaiting || badgesWaiting.quiet) && !!ev.quiet, seen: badgesWaiting?.seen || 0 };
         play();
         return;
       }

@@ -1000,6 +1000,7 @@ window.Cloud = (() => {
       `<small>${Social.dot(status)} ${esc(Social.PRESENCE[status]?.label || status)}${r ? ` · ${esc(r.name)}` : ''}</small>` +
       (x ? `<i class="me-card-xp"><i style="width:${Xp.pct(x).toFixed(1)}%"></i></i>` : '') + '</div>' +
       (x ? `<div class="me-card-stat"><b>${Xp.dur(x.today)}</b><small>today</small></div><div class="me-card-stat"><b>${Xp.hours(x.total)}</b><small>total</small></div>` : '') +
+      (B && B.prestige && B.prestige.can ? '<span class="me-card-medal" title="Level 60: this year\'s Service Medal is yours to take">★ SERVICE MEDAL</span>' : '') +
       (earned !== null && B.signedIn ? `<div class="me-card-stat"><b>${earned}</b><small>badges</small></div>` : '') +
       '<span class="me-card-go">inventory ›</span></div>');
   }

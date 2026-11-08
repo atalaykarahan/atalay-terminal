@@ -2,7 +2,7 @@
 
 // The badges' art (badges.ts in the API decides who has which): drawn here as vectors, sharp at any size, and in fixed
 // colours, never the theme's, as CS:GO's collectibles look the same whatever your HUD. Tiered badges are coins struck in
-// their tier's metal (bronze, silver, gold, diamond); the month and Service Medals hang from a ribbon, the Service
+// their tier's metal (bronze, silver, gold, diamond); the Season and Service Medals hang from a ribbon, the Service
 // Medal's level in CS:GO's colours (grey, green, blue, purple, pink, red); a few one-offs have colours of their own.
 window.BadgeArt = (() => {
   let n = 0;
@@ -38,6 +38,7 @@ window.BadgeArt = (() => {
     claude: '<path class="f" d="M12 2l1.4 6.2L18.4 4l-3.6 5.2 6.4-.4-5.9 2.4 5.9 2.4-6.4-.4 3.6 5.2-5-4.2L12 22l-1.4-6.2L5.6 20l3.6-5.2-6.4.4 5.9-2.4-5.9-2.4 6.4.4L5.6 4l5 4.2z"/>',
     codex: '<path class="s" d="M9 5c-2.5 0-3 1.2-3 3v1.8c0 1.2-.8 2.2-2.2 2.2 1.4 0 2.2 1 2.2 2.2V16c0 1.8.5 3 3 3M15 5c2.5 0 3 1.2 3 3v1.8c0 1.2.8 2.2 2.2 2.2-1.4 0-2.2 1-2.2 2.2V16c0 1.8-.5 3-3 3"/><circle cx="12" cy="12" r="1.3" class="f"/>',
     gemini: '<path class="f" d="M12 2c.7 5.3 4.7 9.3 10 10-5.3.7-9.3 4.7-10 10-.7-5.3-4.7-9.3-10-10 5.3-.7 9.3-4.7 10-10z"/>',
+    antigravity: '<path class="s" d="M12 3v11"/><path class="s" d="M8 7l4-4 4 4"/><ellipse class="s" cx="12" cy="17.5" rx="8" ry="2.6"/>',
     polyglot: '<circle cx="9" cy="9.5" r="5" class="s"/><circle cx="15" cy="9.5" r="5" class="s"/><circle cx="12" cy="14.5" r="5" class="s"/>',
     squad: '<circle cx="9" cy="8" r="3" class="s"/><path class="s" d="M3.5 19c.5-3.4 2.7-5.5 5.5-5.5s5 2.1 5.5 5.5"/><circle cx="16.5" cy="9" r="2.5" class="s"/><path class="s" d="M15.5 13.6c2.8.1 4.5 2.1 5 5"/>',
     voice: '<path class="s" d="M12 2.5c3 2 4.5 5.2 4.5 9.2V16h-9v-4.3c0-4 1.5-7.2 4.5-9.2z"/><circle cx="12" cy="9.5" r="1.6" class="f"/><path class="s" d="M7.5 13.5L5 17l2.5 1M16.5 13.5L19 17l-2.5 1M10 19l2 2.5 2-2.5"/>',
@@ -71,7 +72,7 @@ window.BadgeArt = (() => {
     );
   }
 
-  // A medal on a ribbon: the month's (bronze, silver, gold) or the Service Medal (CS:GO's colours by level).
+  // A medal on a ribbon: the season's (bronze, silver, gold, diamond) or the Service Medal (CS:GO's colours by level).
   function medal(label, sub, m, ribbon, id) {
     return (
       `<path d="M30 2h16l6 30-14 6z" fill="${ribbon[0]}"/><path d="M54 2h16L62 38l-14-6z" fill="${ribbon[1]}"/>` +
@@ -86,18 +87,34 @@ window.BadgeArt = (() => {
   }
 
   // The badges' pictures (badges/<name>-<tier>.webp, made with Gemini, cut from its sheets): how many tiers each has.
-  // A month's medal and a year's Service Medal share one set; anything without a picture is drawn below.
-  const IMG = { week: 3, streak: 4, fire: 4, hours: 4, claude: 3, codex: 3, gemini: 3, squad: 3, voice: 3, idea: 2, tenure: 5,
-    month: 3, service: 6, mac: 1, windows: 1, both: 1, polyglot: 1, founder: 1, night: 1, comeback: 1 };
+  // Every season's medal shares one set; anything without a picture (or a tier past its pictures) is drawn below.
+  const IMG = { week: 3, streak: 4, fire: 4, hours: 4, claude: 4, codex: 4, gemini: 4, antigravity: 4, squad: 3, voice: 3, idea: 2, tenure: 5,
+    season: 4, service: 6, mac: 1, windows: 1, both: 1, polyglot: 1, founder: 1, night: 1, comeback: 1 };
+  // Each year's Service Medal has a design of its own, as CS:GO's (badges/service-<year>-<tier>.webp): the years drawn
+  // so far. A year not drawn yet shows the latest design before it.
+  const SERVICE_YEARS = [2026, 2027];
+  const serviceYear = (y) => [...SERVICE_YEARS].reverse().find((x) => x <= y) ?? SERVICE_YEARS[0];
+
+  /** The badge's picture (badges/…webp), or '' when it's drawn. */
+  function src(id, tier) {
+    const key = id.startsWith('season-') ? 'season' : id.startsWith('service-') ? 'service' : id;
+    if (!IMG[key] || (tier || 1) > IMG[key]) return '';
+    const t = Math.max(1, Math.min(IMG[key], tier || 1));
+    return `badges/${key === 'service' ? `service-${serviceYear(Number(id.slice(8)))}` : key}-${t}.webp`;
+  }
 
   /** The badge `id` at `tier` (0: not earned, grey), `size` px square: its picture, or drawn when it has none. */
   function svg(id, tier, size = 48) {
-    const key = id.startsWith('month-') ? 'month' : id.startsWith('service-') ? 'service' : id;
-    if (IMG[key]) {
-      const t = Math.max(1, Math.min(IMG[key], tier || 1));
-      return `<img class="badge-art${tier ? '' : ' locked'}" src="badges/${key}-${t}.webp" width="${size}" height="${size}" alt="" draggable="false">`;
-    }
+    const pic = src(id, tier);
+    if (pic) return `<img class="badge-art${tier ? '' : ' locked'}" src="${pic}" width="${size}" height="${size}" alt="" draggable="false">`;
     return draw(id, tier, size);
+  }
+
+  /** A gleam crossing the badge in its own shape: a brightened copy of its picture, seen through a moving stripe (the
+   *  page's CSS moves it, class `cls` + `gleam`); nothing for a drawn one. */
+  function gleam(id, tier, cls) {
+    const pic = src(id, tier);
+    return pic ? `<img class="gleam ${cls}" src="${pic}" alt="" draggable="false">` : '';
   }
 
   function draw(id, tier, size) {
@@ -107,9 +124,9 @@ window.BadgeArt = (() => {
     let body;
     if (id.startsWith('service-')) {
       body = medal(String(tier || 1), id.slice(8), m, [shade(m[1], -0.15), shade(m[1], -0.4)], uid);
-    } else if (id.startsWith('month-')) {
-      const [y, mo] = id.slice(6).split('-');
-      body = medal(['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][Number(mo) - 1] || mo, y, m, ['#c2410c', '#7c2d12'], uid);
+    } else if (id.startsWith('season-')) {
+      const [y, q] = id.slice(7).split('-');
+      body = medal(`Q${q}`, y, m, ['#c2410c', '#7c2d12'], uid);
     } else {
       body = coin(P[id] || '<circle cx="12" cy="12" r="6" class="s"/>', m, uid, tier >= 4 && !SOLO[id]);
     }
@@ -126,7 +143,7 @@ window.BadgeArt = (() => {
       const c = SERVICE[Math.max(0, Math.min(5, (tier || 1) - 1))];
       return [shade(c, -0.55), c, shade(c, 0.55), shade(c, -0.25)];
     }
-    if (id.startsWith('month-')) return METAL[Math.min(3, tier || 1)];
+    if (id.startsWith('season-')) return METAL[Math.min(4, tier || 1)];
     return SOLO[id] || METAL[Math.max(1, Math.min(5, tier || 1))];
   }
 
@@ -145,20 +162,20 @@ window.BadgeArt = (() => {
 
   // Names and how many tiers each has (badges.ts says the same; the notices panel only has ids).
   const NAMES = { mac: 'macOS', windows: 'Windows', both: 'Two Worlds', week: 'Week of Work', streak: 'Steady', fire: 'On Fire',
-    hours: 'Hundreds', claude: 'Claude', codex: 'Codex', gemini: 'Gemini', polyglot: 'Polyglot', squad: 'Squad', voice: 'Your Say',
-    idea: 'Idea Maker', tenure: 'Service', founder: 'Founder', night: 'Night Owl', comeback: 'Comeback' };
-  const TIERS = { week: 3, streak: 4, fire: 4, hours: 4, claude: 3, codex: 3, gemini: 3, squad: 3, voice: 3, idea: 2, tenure: 5 };
+    hours: 'Hundreds', claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', polyglot: 'Polyglot', squad: 'Squad', voice: 'Your Say',
+    idea: 'Idea Maker', tenure: 'Veteran', founder: 'Founder', night: 'Night Owl', comeback: 'Comeback' };
+  const TIERS = { week: 3, streak: 4, fire: 4, hours: 4, claude: 4, codex: 4, gemini: 4, antigravity: 4, squad: 3, voice: 3, idea: 2, tenure: 5 };
   const TIER = ['', 'Bronze', 'Silver', 'Gold', 'Diamond', 'Legend'];
   const NAMED = { tenure: ['', '1 month', '6 months', '1 year', '2 years', '5 years'], idea: ['', 'Planned', 'Shipped'] };
-  const name = (id) => NAMES[id] || (id.startsWith('month-') ? 'Month Medal' : id.startsWith('service-') ? 'Service Medal' : id);
+  const name = (id) => NAMES[id] || (id.startsWith('season-') ? 'Season Medal' : id.startsWith('service-') ? 'Service Medal' : id);
   /** "Gold", a medal's level, a named step ("1 year"), or nothing for a one-off. */
   function tierName(id, tier, tiers) {
     if (id.startsWith('service-')) return `Level ${tier} · ${id.slice(8)}`;
-    if (id.startsWith('month-')) return `${TIER[tier] || ''} · ${id.slice(6)}`;
+    if (id.startsWith('season-')) return `${TIER[tier] || ''} · ${id.slice(7, 11)} Q${id.slice(12)}`;
     if (NAMED[id]) return NAMED[id][tier] || '';
     if ((TIERS[id] || tiers || 1) <= 1) return '';
     return TIER[tier] || `Tier ${tier}`;
   }
 
-  return { svg, name, tierName, glow, grand };
+  return { svg, src, gleam, name, tierName, glow, grand };
 })();
