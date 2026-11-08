@@ -92,8 +92,9 @@
 .cine-tag.on { opacity: 0.85; animation: cine-pulse 2.6s ease-in-out infinite; }
 @keyframes cine-pulse { 50% { opacity: 0.45; } }
 
-/* The time machine (app.js): its button at the map's top right, its panel along the bottom, clear of the view controls. */
-#tm-open { position: absolute; top: 1px; right: 8px; z-index: 3; height: 17px; padding: 0 7px; border: 1px solid var(--line); background: rgba(10, 6, 3, 0.74); color: var(--accent-soft); font: inherit; font-size: 0.86em; cursor: pointer; }
+/* The time machine (app.js): its button on the map's tag line, after the counts (the top right is the power switch's), its
+   panel along the bottom, clear of the view controls. The tag line lets clicks through to the map; the button takes them. */
+#tm-open { height: 17px; padding: 0 7px; border: 1px solid var(--line); background: rgba(10, 6, 3, 0.74); color: var(--accent-soft); font: inherit; font-size: 0.86em; cursor: pointer; pointer-events: auto; }
 #tm-open:hover, #tm-open.on { border-color: var(--accent); color: var(--hi); }
 #tm { position: absolute; left: 8px; right: 176px; bottom: 26px; z-index: 4; padding: 6px 8px; border: 1px solid var(--accent-soft); background: rgba(var(--surface-rgb), var(--glass-a)); -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4); }
 #tm[hidden] { display: none; }

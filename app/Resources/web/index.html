@@ -48,7 +48,7 @@
 
   <main id="mapwrap">
     <div id="space"></div>
-    <div class="maptag"><span>orbit.map</span><em id="m-map"></em></div>
+    <div class="maptag"><span>orbit.map</span><em id="m-map"></em><button id="tm-open" type="button" title="Time machine: the map as it was, the last 24 hours">⟲ 24h</button></div>
     <button id="pwr" type="button" role="switch" aria-checked="false" aria-label="power save" hidden><span>power save</span><em></em><i class="pwr-sw"><i></i></i></button>
     <div id="pwr-tip"></div>
     <div class="legend">
@@ -61,7 +61,6 @@
     <div id="viewctl"><button type="button" data-v="in" title="Zoom in">+</button><button type="button" data-v="out" title="Zoom out">−</button><button type="button" data-v="reset" title="Reset view">⟲</button><button type="button" data-v="cine" title="Cinematic camera"><svg viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="9" height="7" rx="1.6"/><path d="M10.5 7.3 14.5 5.2v5.6l-4-2.1z"/><path class="slash" d="M2.5 13.5 13.5 2.5"/></svg></button></div>
     <canvas id="minimap" title="Top view · click to move there"></canvas>
     <div id="tip"></div>
-    <button id="tm-open" type="button" title="Time machine: the map as it was, the last 24 hours">⟲ 24h</button>
     <div id="tm" hidden>
       <div class="tm-bar"><span class="tm-tag">time.machine</span><input id="tm-range" type="range" step="1"><em id="tm-time">now</em><button id="tm-live" type="button">live</button></div>
       <div id="tm-list"></div>
