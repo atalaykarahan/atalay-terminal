@@ -25,12 +25,71 @@
   term.loadAddon(new Unicode11Addon.Unicode11Addon());
   term.unicode.activeVersion = '11';
   term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => atl.send('term:open', uri)));
+  // Links a program prints itself (OSC 8): a web address in the browser; a file:// one, Ctrl-clicked, as a path is.
+  term.options.linkHandler = {
+    allowNonHttpProtocols: true,
+    activate(e, uri) {
+      if (/^https?:/i.test(uri)) atl.send('term:open', uri);
+      else if (/^file:/i.test(uri) && e.ctrlKey) atl.send('term:openFile', { url: uri });
+    },
+  };
   term.open(document.getElementById('term'));
   try {
     const webgl = new WebglAddon.WebglAddon();
     webgl.onContextLoss(() => webgl.dispose());
     term.loadAddon(webgl);
   } catch {}
+  // Paths: a text file Ctrl-clicked opens in Source Control's editor (the dashboard), at the line it names
+  // ("main.js:12:4"); anything else in its app, as ⌘-click on the Mac. The app says which pieces of a line are files
+  // (from the shell's folder when relative), joining one Claude wrapped onto the lines around it; only those underline.
+  const termEl = document.getElementById('term');
+  const PATHISH = /[\\/]|^~|\.[\w-]{1,16}(?::\d+){0,2}[.,;:!?)\]}'"`]*$/;
+  const rowText = (y) => {
+    const line = term.buffer.active.getLine(y);
+    return line ? line.translateToString(true) : '';
+  };
+  term.registerLinkProvider({
+    provideLinks(y, done) {
+      const line = term.buffer.active.getLine(y - 1);
+      if (!line) return done(undefined);
+      // The line's text and the cell each of its characters starts at (a wide character takes two).
+      let text = '';
+      const cells = [];
+      for (let x = 0; x < line.length; x++) {
+        const c = line.getCell(x);
+        if (!c || !c.getWidth()) continue;
+        const ch = c.getChars() || ' ';
+        for (let k = 0; k < ch.length; k++) cells.push(x + 1);
+        text += ch;
+      }
+      text = text.replace(/\s+$/, '');
+      const links = [];
+      for (const m of text.matchAll(/\S+/g)) {
+        let piece = m[0], start = m.index;
+        while (piece && '([{<\'"`'.includes(piece[0])) piece = piece.slice(1), start++;
+        if (!piece || /:\/\/|^(mailto|tel):/i.test(piece) || !PATHISH.test(piece)) continue;
+        links.push({ text: piece, start });
+        if (links.length >= 40) break;
+      }
+      if (!links.length) return done(undefined);
+      const rows = [y - 3, y - 2, y - 1, y, y + 1].map(rowText);
+      atl.ask('term:paths', { links, rows, at: 2 }).then((found) => {
+        const out = [];
+        links.forEach((l, i) => {
+          if (!found || !found[i]) return;
+          const q = { text: l.text, start: l.start, rows, at: 2 };
+          out.push({
+            range: { start: { x: cells[l.start], y }, end: { x: cells[l.start + l.text.length - 1], y } },
+            text: l.text,
+            activate: (e) => e.ctrlKey && atl.send('term:openFile', q),
+            hover: () => (termEl.title = 'Ctrl+click to open'),
+            leave: () => (termEl.title = ''),
+          });
+        });
+        done(out.length ? out : undefined);
+      }, () => done(undefined));
+    },
+  });
   const size = () => ({ cols: term.cols, rows: term.rows });
   const refit = () => {
     try {
@@ -115,12 +174,12 @@
       copySelection();
       return false;
     }
-    // Ctrl+N (a new terminal), Ctrl+K (the shortcut wheel) and Ctrl+W (close the window: what runs in it goes on) are
-    // the app's, as ⌘N, ⌘K and ⌘W are on the Mac: left unhandled, they reach its menu instead of the shell. Antigravity
-    // approves its subagents' steps with Ctrl+K, so while it runs here the key is its own (the wheel is still Ctrl and
-    // the middle mouse button away).
+    // Ctrl+N (a new file in Source Control's editor), Ctrl+Shift+N (a new terminal), Ctrl+K (the shortcut wheel) and
+    // Ctrl+W (close the window: what runs in it goes on) are the app's, as ⌘N, ⇧⌘N, ⌘K and ⌘W are on the Mac: left
+    // unhandled, they reach its menu instead of the shell. Antigravity approves its subagents' steps with Ctrl+K, so
+    // while it runs here the key is its own (the wheel is still Ctrl and the middle mouse button away).
     if (k === 'k' && tool === 'Antigravity') return true;
-    if (!e.shiftKey && (k === 'n' || k === 'k' || k === 'w')) return false;
+    if (k === 'n' || (!e.shiftKey && (k === 'k' || k === 'w'))) return false;
     return k !== 'v';
   });
   atl.on('term:data', (data) => term.write(data));

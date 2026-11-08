@@ -8,9 +8,14 @@
 // (files.autoSave: afterDelay). A Markdown file opens as its preview, ⇧⌘V away from its text. A file changed on disk
 // (Claude wrote it again) is read again, unless it has unsaved changes: then the user picks. A new file stays until it's
 // saved (⌘S asks where), through a restart too, as VS Code keeps one. git.js draws the tabs, the toolbar, the path and the
-// status bar from what this says. The Windows app has no file side yet: there it's null.
+// status bar from what this says. The Windows app's file side is its files.js (Ctrl where the Mac has ⌘).
 window.FileEditor = (() => {
   if (!window.webkit?.messageHandlers?.files) return null;
+  // Windows' paths (the Windows app sets __platform) have "\" between names (it takes "/" too), start at a drive and
+  // don't care about case; its keys are Ctrl's.
+  const WIN = window.__platform === 'win32';
+  const SEP = WIN ? '\\' : '/';
+  const KEY = { save: WIN ? 'Ctrl+S' : '⌘S', preview: WIN ? 'Ctrl+Shift+V' : '⇧⌘V' };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const files = (type, q = {}) =>
     window.webkit.messageHandlers.files.postMessage({ type, ...q }).catch((e) => ({ error: String((e && e.message) || e) }));
@@ -32,9 +37,17 @@ window.FileEditor = (() => {
       localStorage.setItem(k, v);
     } catch {}
   };
-  const name = (p) => p.slice(p.lastIndexOf('/') + 1);
-  const folder = (p) => p.slice(0, p.lastIndexOf('/')) || '/';
-  const tilde = (p, home) => (home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p);
+  const cut = (p) => (WIN ? Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) : p.lastIndexOf('/'));
+  const name = (p) => p.slice(cut(p) + 1);
+  const folder = (p) => p.slice(0, cut(p)) || '/';
+  const under = (p, dir) => (WIN ? p.toLowerCase().startsWith(`${dir.toLowerCase()}${SEP}`) : p.startsWith(`${dir}/`));
+  const tilde = (p, home) => (home && (p === home || under(p, home)) ? `~${p.slice(home.length)}` : p);
+  // The highlighter knows a file by its name ("/" before it).
+  const scopeOf = (p) => TM().scopeOf(WIN ? p.replace(/\\/g, '/') : p);
+  // A link's path from the address in a Markdown file: absolute (/… on the Mac; C:\… or /C:/… from file:// here), or
+  // from the file's folder.
+  const absolute = (p) => (WIN ? /^[a-z]:[\\/]/i.test(p) || /^\/[a-z]:\//i.test(p) : p.startsWith('/'));
+  const fromLink = (p) => (WIN && /^\/[a-z]:\//i.test(p) ? p.slice(1).replace(/\//g, '\\') : p);
 
   // Where git.js shows a file: the banner, Monaco and the Markdown preview.
   const host = document.createElement('div');
@@ -284,7 +297,7 @@ window.FileEditor = (() => {
     const r = await files('read', { path });
     if (r.error) return say(r.error), null;
     await boot();
-    const scope = TM().scopeOf(path);
+    const scope = scopeOf(path);
     const t = { id: `f${++seq}`, path, name: name(path), cwd, home, scope, md: scope === 'text.html.markdown', mtime: r.mtime, bom: r.bom, app: r.app };
     t.mode = t.md ? 'preview' : 'code';
     t.model = monaco.editor.createModel(r.text, await languageOf(scope), monaco.Uri.file(path));
@@ -435,7 +448,7 @@ window.FileEditor = (() => {
     if (r.cancelled) return false;
     if (r.error || !r.path) return say(`Couldn't save ${t.name}: ${r.error || 'no file'}`), false;
     Object.assign(t, { untitled: false, n: 0, path: r.path, name: name(r.path), mtime: r.mtime, app: r.app, bom: false });
-    t.scope = TM().scopeOf(r.path);
+    t.scope = scopeOf(r.path);
     t.md = t.scope === 'text.html.markdown';
     monaco.editor.setModelLanguage(t.model, await languageOf(t.scope));
     t.saved = t.model.getAlternativeVersionId();
@@ -529,12 +542,13 @@ window.FileEditor = (() => {
   let marked = null;
   const slug = (s) => s.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
   function resolve(dir, rel) {
-    const out = dir.split('/');
-    for (const p of rel.split('/')) {
+    const parts = (p) => (WIN ? p.split(/[\\/]/) : p.split('/'));
+    const out = parts(dir);
+    for (const p of parts(rel)) {
       if (p === '..') out.length > 1 && out.pop();
       else if (p && p !== '.') out.push(p);
     }
-    return out.join('/') || '/';
+    return out.join(SEP) || '/';
   }
   const elsewhere = (href) => /^[a-z][a-z0-9+.-]*:/i.test(href) && !/^file:/i.test(href);
 
@@ -591,7 +605,8 @@ window.FileEditor = (() => {
       const src = img.getAttribute('src');
       if (elsewhere(src) || src.startsWith('data:')) continue;
       img.removeAttribute('src');
-      const path = src.startsWith('/') ? decodeURI(src) : resolve(folder(t.path), decodeURI(src.replace(/^file:\/\//i, '')));
+      const rel = decodeURI(src.replace(/^file:\/\//i, ''));
+      const path = WIN ? (absolute(rel) ? fromLink(rel) : resolve(folder(t.path), rel)) : src.startsWith('/') ? decodeURI(src) : resolve(folder(t.path), rel);
       files('image', { path }).then((r) => r.url && (img.src = r.url));
     }
     for (const code of previewEl.querySelectorAll('pre > code')) {
@@ -611,7 +626,7 @@ window.FileEditor = (() => {
     if (/^(https?|mailto):/i.test(href)) return files('openURL', { url: href });
     if (elsewhere(href) || !t || !t.path) return;
     const [rel, frag] = href.replace(/^file:\/\//i, '').split('#');
-    const path = rel.startsWith('/') ? decodeURI(rel) : resolve(folder(t.path), decodeURI(rel));
+    const path = absolute(rel) ? fromLink(decodeURI(rel)) : resolve(folder(t.path), decodeURI(rel));
     const line = /^L(\d+)/.exec(frag || '');
     files('openPath', { path, line: line ? +line[1] : null, cwd: t.cwd });
   });
@@ -656,13 +671,13 @@ window.FileEditor = (() => {
     const out = [];
     if (t.md) {
       out.push(t.mode === 'preview'
-        ? { act: 'mode', icon: 'edit', title: 'Edit the Markdown (⇧⌘V)', label: 'Edit' }
-        : { act: 'mode', icon: 'open-preview', title: 'Open Preview (⇧⌘V)', label: 'Preview' });
+        ? { act: 'mode', icon: 'edit', title: `Edit the Markdown (${KEY.preview})`, label: 'Edit' }
+        : { act: 'mode', icon: 'open-preview', title: `Open Preview (${KEY.preview})`, label: 'Preview' });
     }
-    if (t.untitled) out.push({ act: 'save', icon: 'save', title: 'Save As… (⌘S)' });
+    if (t.untitled) out.push({ act: 'save', icon: 'save', title: `Save As… (${KEY.save})` });
     else {
       out.push({ act: 'external', icon: 'go-to-file', title: `Open in ${t.app || 'its app'}` });
-      out.push({ act: 'reveal', icon: 'folder-opened', title: 'Reveal in Finder' });
+      out.push({ act: 'reveal', icon: 'folder-opened', title: WIN ? 'Reveal in File Explorer' : 'Reveal in Finder' });
     }
     return out;
   }
@@ -683,8 +698,8 @@ window.FileEditor = (() => {
     const t = byId(id);
     if (!t) return [];
     if (!t.path) return [t.name];
-    const inside = t.cwd && t.path.startsWith(`${t.cwd}/`);
-    return (inside ? t.path.slice(t.cwd.length + 1) : tilde(t.path, t.home)).split('/').filter(Boolean);
+    const inside = t.cwd && under(t.path, t.cwd);
+    return (inside ? t.path.slice(t.cwd.length + 1) : tilde(t.path, t.home)).split(WIN ? /[\\/]/ : '/').filter(Boolean);
   }
 
   // The status bar's part: the problems, the cursor, the indent, the encoding, the line ends, the language.
@@ -719,7 +734,7 @@ window.FileEditor = (() => {
   addEventListener('keydown', (e) => {
     const t = cur();
     if (!t || host.hidden || !host.isConnected) return;
-    const cmd = e.metaKey && !e.ctrlKey && !e.altKey;
+    const cmd = WIN ? e.ctrlKey && !e.metaKey && !e.altKey : e.metaKey && !e.ctrlKey && !e.altKey;
     const key = e.key.toLowerCase();
     const stop = () => (e.preventDefault(), e.stopPropagation(), true);
     if (cmd && !e.shiftKey && key === 's') return stop() && (t.untitled ? saveAs(t) : save(t));

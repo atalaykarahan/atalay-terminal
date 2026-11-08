@@ -473,10 +473,12 @@ function createRunaways({ onChange, onRead, onPower }) {
       }
       return out;
     },
-    /** Processes whose folder the next reading should look up (the cars' jobs). */
+    /** Processes whose folder the next reading should look up (the terminals' shells, for a path Ctrl-clicked). */
     want(pids) {
       wanted = [...new Set(pids)].filter((p) => p > 0);
     },
+    /** A process's folder as the last reading found it (one asked for with `want`), or ''. */
+    cwd: (pid) => (table.get(pid) || {}).cwd || '',
   };
 
   // The command a tool has a shell run right now (`powershell -Command "npm test"`, `cmd /c …`, `bash -c …`), from the

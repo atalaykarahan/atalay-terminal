@@ -22,6 +22,7 @@ const { createTerminals, which } = require('./terminals');
 const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
 const { createPowerSaver } = require('./power');
+const { createFiles, linkTarget } = require('./files');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
@@ -286,6 +287,14 @@ function loadClientKey() {
 }
 
 const overlay = createOverlay({ dataDir: app.getPath('userData'), claudeDir: path.join(os.homedir(), '.claude') });
+// Source Control's files (files.js, the Mac's FileEditor.swift): the ones the dashboard's editor may read and write.
+const files = createFiles({
+  shell,
+  saveDialog: (options) => dialog.showSaveDialog(dash || undefined, options),
+  // A link in a Markdown preview to a text file beside it.
+  onOpen: (p, line, cwd) => showFileInEditor(p, line, null, cwd),
+});
+
 // Power save (the Mac's PowerSaver): the map's switch, and on by itself at low battery or in Windows' Energy Saver.
 const power = createPowerSaver({ settings, onBattery: () => powerMonitor.isOnBatteryPower(), onChange: () => pushPower() });
 
@@ -746,6 +755,34 @@ function showDashboard() {
   if (!chatsView.webContents.isFocused()) dashView.webContents.focus();
 }
 
+// ---------- Source Control's editor: files from the terminals, new files ----------
+// A file in Source Control's editor, in a tab of its own (or the one it has), at `line`; `cwd`: the folder its path is
+// shown from (the terminal's).
+function showFileInEditor(p, line, column, cwd) {
+  const spec = { path: p, cwd: cwd || path.dirname(p), home: os.homedir() };
+  if (line) spec.line = line;
+  if (column) spec.column = column;
+  showDashboard();
+  pageOf(dashView)?.focus();
+  run(dashView, `window.GitView && GitView.openFile(${JSON.stringify(spec)})`);
+}
+
+// A path Ctrl-clicked in a terminal: a text file in Source Control's editor, as VS Code opens one; anything else in its
+// app (a program shown in its folder instead).
+function openTerminalFile(target, cwd) {
+  if (!target) return;
+  if (!files.canOpen(target.path)) return files.openOutside(target.path);
+  files.allow(target.path);
+  showFileInEditor(target.path, target.line, target.column, cwd);
+}
+
+// Ctrl+N: a new file in Source Control's editor (VS Code's Untitled-1), from any window.
+function newFile() {
+  showDashboard();
+  pageOf(dashView)?.focus();
+  run(dashView, 'window.GitView && GitView.newFile()');
+}
+
 // ---------- the dashboard's requests (the "radar" handler) ----------
 function handleRadar(msg) {
   switch (msg.type) {
@@ -1133,8 +1170,9 @@ function pushTerminals(force) {
       running: true, cpu: Math.round(l.cpu), left: true, pid: l.pid, started: l.started,
     });
   }
-  // Their folders come with the next reading, and the AI tools' (the title of their session).
-  runaways.want([...jobs, ...runaways.ais().map((a) => a.pid)]);
+  // Their folders come with the next reading, and the AI tools' (the title of their session), and the terminals' shells'
+  // own (a relative path Ctrl-clicked in a terminal is from there).
+  runaways.want([...jobs, ...runaways.ais().map((a) => a.pid), ...terminals.pids()]);
   list.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const json = JSON.stringify(list);
   if (json === terminalsJSON && !force) return;
@@ -1191,6 +1229,34 @@ ipcMain.on('term:copy', (e, text) => {
   if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);
 });
 ipcMain.on('term:dashboard', () => showDashboard());
+// The folder a terminal's relative paths are from: its shell's (or Claude's) own, else the one it started in.
+function termCwd(id, c) {
+  const pid = terminals.list().find((t) => t.id === id)?.pid;
+  return (pid && runaways.cwd(pid)) || c.cwd || os.homedir();
+}
+// Which of a line's pieces name files, as the pointer goes over it (a Ctrl-click opens one): [{ path, line, column }
+// or null], one for each of `q.links` ({ text, start }) in `q.rows[q.at]`.
+ipcMain.handle('term:paths', (e, q) => {
+  const found = chatOf(e);
+  if (!found || !q || !Array.isArray(q.links)) return [];
+  const cwd = termCwd(...found);
+  return q.links.slice(0, 40).map((l) => linkTarget({ ...l, rows: q.rows, at: q.at }, cwd, os.homedir()));
+});
+// A path Ctrl-clicked (worked out again here), or a file:// link the program printed (OSC 8).
+ipcMain.on('term:openFile', (e, q) => {
+  const found = chatOf(e);
+  if (!found || !q) return;
+  const cwd = termCwd(...found);
+  if (typeof q.url === 'string') {
+    let p = null;
+    try {
+      p = /^file:/i.test(q.url) ? fileURLToPath(q.url) : null;
+    } catch {}
+    if (p && fs.existsSync(p)) openTerminalFile({ path: path.resolve(p), line: null, column: null }, cwd);
+    return;
+  }
+  openTerminalFile(linkTarget(q, cwd, os.homedir()), cwd);
+});
 ipcMain.on('term:open', (_e, uri) => {
   if (typeof uri !== 'string') return;
   const clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
@@ -1753,6 +1819,10 @@ ipcMain.handle('atl:post', async (e, name, body) => {
         return engine.spendHistory(body.range);
       case 'git':
         return await git.handle(body);
+      // Source Control's editor reads and writes files: the dashboard's page only, as on the Mac.
+      case 'files':
+        if (e.sender !== pageOf(dashView)) throw new Error('not this page');
+        return await files.handle(body);
       case 'theme':
         return themes.handle(body);
       case 'messages':
@@ -1814,7 +1884,10 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Terminal…', accelerator: 'CmdOrCtrl+N', click: () => showOverlay('Overlay.newTerminal()') },
+        // VS Code's: Ctrl+N a new file in Source Control's editor, Ctrl+Shift+N a new window (here a terminal), as the
+        // Mac's ⌘N and ⇧⌘N.
+        { label: 'New File', accelerator: 'CmdOrCtrl+N', click: () => newFile() },
+        { label: 'New Terminal…', accelerator: 'CmdOrCtrl+Shift+N', click: () => showOverlay('Overlay.newTerminal()') },
         { label: 'Shortcut Wheel', accelerator: 'CmdOrCtrl+K', click: () => showShortcuts() },
         // No key of its own: Ctrl+0 is Actual Size's (the text size, ⌘0 on the Mac), and two items on one key leave only
         // one of them working.
@@ -1913,8 +1986,10 @@ app.whenReady().then(() => {
   if (PROBE) probe();
 });
 
+let savingFiles = false;
 app.on('before-quit', (e) => {
   if (quitting) return;
+  if (savingFiles) return e.preventDefault();
   // Only chats running in the app itself stop: the session host's go on, and come back at the next launch.
   const running = [...chats.entries()].filter(([id, c]) => c.claude && terminals.local(id)).length;
   if (running && !PROBE) {
@@ -1925,12 +2000,31 @@ app.on('before-quit', (e) => {
     });
     if (r !== 0) return e.preventDefault();
   }
+  // A file edited in the last second is saved first (Source Control's editor saves a second after a change), as on the
+  // Mac: the quit goes on once the page says so, 2 s at most (a page that doesn't answer).
+  const wc = !PROBE && pageOf(dashView);
+  if (wc) {
+    e.preventDefault();
+    savingFiles = true;
+    const saved = wc.executeJavaScript('window.FileEditor ? FileEditor.flush() : true').catch(() => {});
+    Promise.race([saved, new Promise((r) => setTimeout(r, 2000))]).then(() => {
+      savingFiles = false;
+      leave();
+      app.quit();
+    });
+    return;
+  }
+  leave();
+});
+
+// Quitting for good: the chats running in the session host go on, the parts stop.
+function leave() {
   quitting = true;
   terminals.detachAll();
   engine.stop();
   runaways.stop();
   cloud.stop();
-});
+}
 
 app.on('window-all-closed', () => {
   if (!quitting) app.quit();

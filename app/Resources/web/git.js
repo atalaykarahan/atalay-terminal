@@ -157,7 +157,9 @@ window.GitView = (() => {
   function fileRepo() {
     const path = !allRepos && FE ? FE.list().find((f) => f.id === FE.current())?.path : null;
     if (!path) return null;
-    return repos.filter((r) => path.startsWith(`${r.root}/`)).sort((a, b) => b.root.length - a.root.length)[0] || null;
+    // Windows' paths: "\" between names, any case.
+    const inside = (r) => (WIN ? path.toLowerCase().startsWith(`${r.root.toLowerCase()}\\`) : path.startsWith(`${r.root}/`));
+    return repos.filter(inside).sort((a, b) => b.root.length - a.root.length)[0] || null;
   }
   let graphRoot = null; // the repo the graph shows: the one last used in CHANGES (VS Code's "Auto")
   let graph = { root: null, rows: [], n: 50, more: false, sig: '', at: 0 };
@@ -720,7 +722,7 @@ window.GitView = (() => {
     if (front !== 'diff' && !files.some((f) => f.id === front)) front = 'diff';
     if (front === 'diff' && !editor && files.length) front = files.some((f) => f.id === FE.current()) ? FE.current() : files[files.length - 1].id;
     if (!editor && !files.length) {
-      edEl.innerHTML = FE ? `<div class="vs-wm"><div><span>New File</span><kbd>${MOD}N</kbd></div><div><span>Open a File</span><span>${MOD}-click its path in a terminal</span></div></div>` : '';
+      edEl.innerHTML = FE ? `<div class="vs-wm"><div><span>New File</span><kbd>${MOD}N</kbd></div><div><span>Open a File</span><span>${WIN ? 'Ctrl+click' : '⌘-click'} its path in a terminal</span></div></div>` : '';
       facts = null;
       window.GitEditor.close();
       return renderStatus();
@@ -1295,12 +1297,12 @@ window.GitView = (() => {
     if (!open || e.target.closest?.('input, textarea, .fe-host')) return;
     if (e.key === 'Escape') return setOpen(false);
   });
-  // VS Code's: ⌘W closes the tab in front, ⌃Tab goes through the tabs. (The Windows app keeps its keys as they were.)
+  // VS Code's: ⌘W (Ctrl+W on Windows) closes the tab in front, ⌃Tab goes through the tabs.
   addEventListener('keydown', (e) => {
-    if (!open || WIN) return;
+    if (!open) return;
     const tabs = [...edEl.querySelectorAll('.vs-tab[data-tab]')].map((t) => t.dataset.tab);
     if (!tabs.length) return;
-    if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyW') {
+    if ((WIN ? e.ctrlKey && !e.metaKey : e.metaKey && !e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === 'KeyW') {
       e.preventDefault();
       e.stopPropagation();
       return closeTab(front);

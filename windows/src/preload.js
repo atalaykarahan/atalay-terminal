@@ -8,7 +8,7 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 const boot = ipcRenderer.sendSync('atl:boot') || {};
 
 const handlers = {};
-for (const name of ['radar', 'cloud', 'git', 'theme', 'overlay', 'messages', 'savers', 'chats', 'archive', 'spend']) {
+for (const name of ['radar', 'cloud', 'git', 'theme', 'overlay', 'messages', 'savers', 'chats', 'archive', 'spend', 'files']) {
   handlers[name] = { postMessage: (body) => ipcRenderer.invoke('atl:post', name, body) };
 }
 contextBridge.exposeInMainWorld('webkit', { messageHandlers: handlers });
@@ -25,6 +25,8 @@ const TERM = /^term:/;
 contextBridge.exposeInMainWorld('atl', {
   send: (channel, data) => TERM.test(channel) && ipcRenderer.send(channel, data),
   on: (channel, fn) => TERM.test(channel) && ipcRenderer.on(channel, (_e, data) => fn(data)),
+  // A question with an answer (which of a line's pieces are files).
+  ask: (channel, data) => (TERM.test(channel) ? ipcRenderer.invoke(channel, data) : Promise.reject(new Error('not a terminal channel'))),
 });
 
 // The shortcut wheel: Ctrl and the middle mouse button, anywhere in the app's windows (the Mac opens it with the middle
