@@ -7,7 +7,7 @@
 // Steam inventory. Signed-in accounts only: a guest sees the badges grey and a way to sign in. At level 60 a button
 // resets the level for that year's Service Medal (CS:GO's prestige): the medal is the year's it's taken in.
 window.Badges = (() => {
-  if (window.__platform === 'win32' || !window.BadgeArt) return null;
+  if (!window.BadgeArt) return null;
   const h = window.webkit && window.webkit.messageHandlers;
   if (!h || !h.cloud) return null;
   const api = (method, path, body) => h.cloud.postMessage({ type: 'social', method, path, body }).catch(() => ({ error: 'offline' }));

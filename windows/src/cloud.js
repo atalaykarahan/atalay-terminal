@@ -46,6 +46,8 @@ const isPrivate = (p) => {
 };
 const allowed = (p) =>
   !p.includes('..') && !isPrivate(p) && (SOCIAL_ROUTES.includes(p) || SOCIAL_TREES.some((t) => under(p, t)));
+// The AI tools the API counts hours with for their badges (its badges.ts).
+const TOOLS = new Set(['claude', 'codex', 'gemini', 'antigravity']);
 
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
@@ -163,10 +165,12 @@ class Failure extends Error {
 //   sign of work in the last five: a busy Claude session, a job using the CPU, typing in a chat or terminal)
 // - idleSeconds(): seconds since the last key, mouse or touch input anywhere on the PC, for "away"
 // - theme(): the chosen theme's id; onChange(state): the page's state changed (`json()`); onSocial(text): a live event
+// - tools(): the AI tools at work since the last heartbeat (claude, codex, gemini, antigravity), for their badges
 function createCloud(opts = {}) {
   const dataDir = opts.dataDir;
   if (!dataDir) throw new Error('createCloud: dataDir is required');
   const isActive = opts.isActive || (() => false);
+  const toolsAtWork = opts.tools || (() => []);
   const idleSeconds = opts.idleSeconds || (() => 0);
   const theme = opts.theme || (() => 'atalay');
   const onChange = opts.onChange || (() => {});
@@ -320,6 +324,9 @@ function createCloud(opts = {}) {
     const body = { ...client(), active: !!ask(isActive, false), tz: -Math.round(new Date().getTimezoneOffset()) };
     const th = ask(theme, '');
     if (typeof th === 'string' && THEME.test(th)) body.theme = th;
+    // Which AI tools were at work, for their badges (hours with each).
+    const tools = ask(toolsAtWork, []);
+    body.tools = Array.isArray(tools) ? [...new Set(tools)].filter((t) => TOOLS.has(t)).sort() : [];
     let a;
     try {
       a = await call('POST', 'v1/heartbeat', body, token);

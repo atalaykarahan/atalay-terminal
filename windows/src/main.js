@@ -241,6 +241,7 @@ const cloud = createCloud({
   isActive: () => powerMonitor.getSystemIdleTime() < 300 && (terminals.busySince(300_000) || engine.live().some((s) => s.status === 'busy')),
   idleSeconds: () => powerMonitor.getSystemIdleTime(),
   theme: () => themes.chosenId(),
+  tools: () => toolsAtWork(),
   onChange(state) {
     pushCloud();
     if (state && state.xp) toNotices(`xp(${JSON.stringify(state.xp)})`);
@@ -251,6 +252,20 @@ const cloud = createCloud({
     for (const p of panels.chats.values()) runPanel(p, `window.__messages && __messages.event(${text})`);
   },
 });
+
+// The AI tools seen at work (a session busy), for their badges (the API's badges.ts), as the Mac's Activity.toolAtWork:
+// Claude's chats, and the others by name (Codex, Gemini, Antigravity). The heartbeat sends those of the last minute and
+// a half, a minute's slack.
+const toolsAt = new Map();
+function noteToolsAtWork() {
+  const now = Date.now();
+  for (const s of engine.live()) {
+    if (s.status !== 'busy') continue;
+    const key = s.ai ? String(s.name || '').toLowerCase() : 'claude';
+    if (['claude', 'codex', 'gemini', 'antigravity'].includes(key)) toolsAt.set(key, now);
+  }
+}
+const toolsAtWork = () => [...toolsAt].filter(([, at]) => Date.now() - at < 90_000).map(([key]) => key).sort();
 
 // The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed). A run
 // from the sources against the local API (npm run staging) brings its own instead; a packaged app never reads one.
@@ -1206,12 +1221,22 @@ ipcMain.on('atl:wheel', () => showShortcuts());
 // Each chat panel's intended bounds: on a scaled display (125%, 150%) Electron's getBounds() rounds up by a pixel, so
 // reading it back on every drag step would grow the panel as it moves.
 const panelBounds = new WeakMap();
+// A level-up or a new badge takes the screen (the notices' takeover): keys do nothing while it plays (as long as the page
+// asks, 4 s at most), then a key ends it (a badge's reveal jumps to its burst), as on the Mac (Messages.swift holds).
+const takeover = { on: false, lockedUntil: 0 };
 function panelWindow(role, friend) {
   const win = new BrowserWindow({
     width: 380, height: 140, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: role === 'notices',
     alwaysOnTop: role === 'notices', hasShadow: false, backgroundColor: '#00000000', webPreferences: webPrefs(),
   });
   bootFor(win.webContents, { role, friend });
+  if (role === 'notices') {
+    win.webContents.on('before-input-event', (e, input) => {
+      if (input.type !== 'keyDown' || !(takeover.on || Date.now() < takeover.lockedUntil)) return;
+      e.preventDefault();
+      if (Date.now() >= takeover.lockedUntil) run(win, 'window.__messages && __messages.skip && __messages.skip()');
+    });
+  }
   panelWaiting.set(win, []);
   win.webContents.on('render-process-gone', () => {
     panelWaiting.set(win, []);
@@ -1388,6 +1413,11 @@ function handleMessages(win, body) {
       // every page of the app's), the window is that many times larger.
       const z = win.webContents.getZoomFactor() || 1;
       const w = Math.round((body.w || 0) * z), h = Math.round((body.h || 0) * z);
+      // The takeover's keys: held while it's on screen, free once the panel is a notice again (or gone).
+      if (role === 'notices') {
+        takeover.on = body.place === 'screen' && w >= 1 && h >= 1;
+        if (!takeover.on) takeover.lockedUntil = 0;
+      }
       if (w < 1 || h < 1) {
         if (role === 'notices') win.setIgnoreMouseEvents(false);
         win.steppedAside = false;
@@ -1487,6 +1517,10 @@ function handleMessages(win, body) {
       return true;
     case 'openChat':
       return openFriendChat(body.id);
+    // The takeover's lock on the keys (ms; 0 frees them).
+    case 'lock':
+      if (role === 'notices') takeover.lockedUntil = Date.now() + Math.min(Math.max(Number(body.ms) || 0, 0), 4000);
+      return true;
     case 'showing': {
       const entry = [...panels.chats.entries()].find(([, w]) => w === win);
       if (!entry) return true;
@@ -1836,6 +1870,7 @@ app.whenReady().then(() => {
   // The orbit's cinematic camera waits for minutes without input; the terminals ride the orbit as cars.
   setInterval(() => {
     toDash(`idle(${powerMonitor.getSystemIdleTime().toFixed(1)})`);
+    noteToolsAtWork();
     pushTerminals();
     // A chat window opened or ended between the engine's states: the list says "in a window" or stops saying it.
     pushWinOpen();
