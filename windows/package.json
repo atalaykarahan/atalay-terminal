@@ -1,7 +1,7 @@
 {
   "name": "atalay-terminal",
   "productName": "Atalay's Terminal",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "description": "A HUD for running many Claude Code sessions: every session on a live orbit map, each chat in its own window",
   "author": "atalay karahan",
   "license": "MIT",
