@@ -14,4 +14,25 @@ enum Activity {
     static var active: Bool {
         Social.idleSeconds() < 300 && ProcessInfo.processInfo.systemUptime - lastWork < 300
     }
+
+    /// The AI tools seen at work (a session busy), for their badges (the API's badges.ts): claude, codex, gemini.
+    private static var toolsAt: [String: TimeInterval] = [:]
+
+    /// A session of `tool` (a brief's name: "Codex", "Gemini", "Antigravity"…; Claude's sessions are Claude) is busy.
+    static func toolAtWork(_ tool: String) {
+        let key: String
+        switch tool.lowercased() {
+        case "claude": key = "claude"
+        case "codex": key = "codex"
+        case "gemini", "antigravity": key = "gemini"
+        default: return
+        }
+        toolsAt[key] = ProcessInfo.processInfo.systemUptime
+    }
+
+    /// The tools at work since the last heartbeat (a minute and a half, for slack).
+    static var tools: [String] {
+        let now = ProcessInfo.processInfo.systemUptime
+        return toolsAt.filter { now - $0.value < 90 }.map(\.key).sorted()
+    }
 }

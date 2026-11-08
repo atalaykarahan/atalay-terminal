@@ -82,6 +82,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             MainActor.assumeIsolated {
                 // A Claude session at work is work (Activity, for XP); so is a busy job in a terminal (pushTerminals).
                 if self?.briefs.values.contains(where: { $0.live && $0.status == "busy" }) == true { Activity.work() }
+                // Which AI tools were at work, for their badges: Claude's sessions, and the others by name ("ai:…").
+                for b in self?.briefs.values ?? [:].values where b.live && b.status == "busy" {
+                    Activity.toolAtWork(b.id.hasPrefix("ai:") ? b.name : "claude")
+                }
                 self?.pushTerminals()
                 // How long since the last input anywhere on the Mac: the orbit's cinematic camera waits for five
                 // minutes of it, and typing in a terminal window counts.

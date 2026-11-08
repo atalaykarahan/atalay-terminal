@@ -55,6 +55,8 @@ window.Cloud = (() => {
     const title = r ? `<small class="rk" style="--rc:${r.color}">${esc(r.name.toUpperCase())} · LV ${x.level}</small>` : '<small>HACKER</small>';
     const bar = r ? `<i class="xpb" style="--rc:${r.color}"><i style="width:${Xp.pct(x).toFixed(1)}%"></i></i>` : '';
     setHTML(stack, s.hackerName ? `${title}<b${long}>${esc(s.hackerName)}<i class="htag">${tagText(s.tag)}</i></b>${bar}` : "<small>ATALAY'S</small><b>TERMINAL</b>");
+    // The badge you display, beside your name (badges.js).
+    window.Badges?.paintTop();
     brand.title = r
       ? `Level ${x.level} · ${r.name} · ${x.to ? `${Xp.num(x.xp - x.from)} / ${Xp.num(x.to - x.from)} XP` : `${Xp.num(x.xp)} XP`} · today ${Xp.dur(x.today)}`
       : 'Profile and settings';
@@ -81,6 +83,8 @@ window.Cloud = (() => {
       renderProfile();
       renderActivity();
     }
+    if (meOpen) renderMe();
+    else if (shown === 'friends') meCard();
     // Friends and messages need a signed-in Mac.
     if (s.registered && s.reachable && !Social.state()) Social.load();
     badges();
@@ -726,6 +730,7 @@ window.Cloud = (() => {
       setHTML(q('.mn-status'), me ? `${Social.dot(me.status)}<span>${Social.PRESENCE[me.status].label}</span>▾` : `${Social.dot('offline')}<span>offline</span>`);
     }
     if (shown !== 'friends') return;
+    meCard();
     const unread = Social.unread(), requests = Social.requests();
     const online = s ? s.friends.filter((f) => f.presence && f.presence !== 'offline').length : 0;
     setText(fq('.cv-friends .meta'), s ? `${s.friends.length} friends · ${online} online${unread ? ` · ${unread} unread` : ''}` : '');
@@ -752,7 +757,8 @@ window.Cloud = (() => {
               const fire = (f.xp && f.xp.today) >= 5 * 3600;
               // A nickname you gave them comes first, their own name#tag beside it, quieter (Steam's "append nicknames
               // to friends' names", the other way round).
-              const name = f.nick ? `<b class="mn-nick">${esc(f.nick)}</b><i class="mn-real">${esc(f.name)}#${String(f.tag).padStart(4, '0')}</i>` : tagged(f);
+              const name = (f.nick ? `<b class="mn-nick">${esc(f.nick)}</b><i class="mn-real">${esc(f.name)}#${String(f.tag).padStart(4, '0')}</i>` : tagged(f)) +
+                (window.Badges && f.badge ? window.Badges.small(f.badge) : '');
               const hover = f.nick ? `${f.name}#${String(f.tag).padStart(4, '0')} · ` : '';
               return `<div class="mn-row${fire ? ' fire' : ''}${f.id === pickedFriend ? ' sel' : ''}" data-id="${esc(f.id)}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
                 `${fire ? '<canvas class="fire-card"></canvas>' : ''}${Social.dot(f.presence)}<div class="mn-main" title="${esc(hover)}Click for their card · double-click to message"><span class="mn-name">${name}${lv}</span><small>${line}</small></div>` +
@@ -910,10 +916,12 @@ window.Cloud = (() => {
         `<div class="pf-stats">${stat('TODAY', Xp.dur(x.today))}${stat('THIS WEEK', `${x.week}/${x.goal} days`, x.week >= x.goal ? 'goal reached' : '30+ min a day')}` +
         `${stat('STREAK', `${x.streak} ${x.streak === 1 ? 'week' : 'weeks'}`, x.bonus ? `+${x.bonus}% XP` : `${x.goal} days a week`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
         (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color)}` : '') +
+        (window.Badges ? '<div class="hk-h">BADGES</div><div class="bdg-host"></div>' : '') +
         `<div class="hk-h">RANKS</div><div class="pf-ranks">${ranks}</div>` +
         '<p class="pf-rules">1 XP for every active minute · the first 2 hours a day count double, past 8 hours half · +50 for showing up · ' +
         `${x.goal} days a week keep a streak, +10% XP for every week of it</p>`,
     );
+    window.Badges?.mountInventory(q('.mn-profile .bdg-host'));
   }
 
   // A nickname for a friend, as on Steam: what you call them on your screens only (the friends list, the chat window),
@@ -955,6 +963,87 @@ window.Cloud = (() => {
     input.select();
   }
 
+  // ---------- your profile, where the friends are (the account menu's "Profile & badges", the friends' "my profile") ----------
+  // CS:GO's inventory screen across the whole view: you at the top (your picture, name, rank and XP, your hours, the badge
+  // you display), your badges under it (badges.js).
+  let meOpen = false;
+  function setMe(on) {
+    meOpen = !!on;
+    views.friends.classList.toggle('me', meOpen);
+    if (meOpen) return renderMe();
+    fq('.me-host').innerHTML = '';
+    meCard();
+  }
+  function openProfile() {
+    window.GitView?.view('friends');
+    setMe(true);
+  }
+
+  // You at the top of your friends, as on Steam: a wide card (your picture, name, status, rank, today's time, the badge
+  // you display); a click opens your profile and your badges.
+  function meCard() {
+    const el = fq('.me-card-host');
+    if (!el || !S || !S.hackerName) return el && setHTML(el, '');
+    const x = S.xp;
+    const r = x ? Xp.rank(x.level) : null;
+    const A = window.Account?.state();
+    const me = Social.state()?.me;
+    const status = me ? me.status : 'offline';
+    const B = window.Badges?.mine();
+    const shownBadge = B && B.featured && B.badges.find((b) => b.id === B.featured && b.tier);
+    const earned = B ? B.badges.filter((b) => b.tier).length : null;
+    setHTML(el,
+      `<div class="me-card" role="button" tabindex="0" data-me="open" title="Your profile and your badges" style="--rc:${r ? r.color : 'var(--accent-rgb)'}">` +
+      (A && A.signedIn && A.avatar ? `<img class="me-card-pic" alt="" src="${esc(A.avatar)}">` : x ? Xp.headband(x.level, 'me-card-band') : '') +
+      `<div class="me-card-who"><span class="mn-name"><b>${esc(S.hackerName)}</b><i class="htag">${tagText(S.tag)}</i>` +
+      `${shownBadge ? window.Badges.small(shownBadge, 20) : ''}${x ? Xp.badge(x.level) : ''}<em class="lb-you">you</em></span>` +
+      `<small>${Social.dot(status)} ${esc(Social.PRESENCE[status]?.label || status)}${r ? ` · ${esc(r.name)}` : ''}</small>` +
+      (x ? `<i class="me-card-xp"><i style="width:${Xp.pct(x).toFixed(1)}%"></i></i>` : '') + '</div>' +
+      (x ? `<div class="me-card-stat"><b>${Xp.dur(x.today)}</b><small>today</small></div><div class="me-card-stat"><b>${Xp.hours(x.total)}</b><small>total</small></div>` : '') +
+      (earned !== null && B.signedIn ? `<div class="me-card-stat"><b>${earned}</b><small>badges</small></div>` : '') +
+      '<span class="me-card-go">inventory ›</span></div>');
+  }
+
+  function renderMe() {
+    const el = fq('.me-host');
+    if (!el || !S) return;
+    const x = S.xp;
+    const r = x ? Xp.rank(x.level) : null;
+    const A = window.Account?.state();
+    const pic = A && A.signedIn && A.avatar ? `<img class="me-pic" alt="" src="${esc(A.avatar)}">` : '';
+    const hero =
+      `<div class="me-hero" style="--rc:${r ? r.color : 'var(--accent-rgb)'}"><div class="me-id">${pic}` +
+      (x ? Xp.headband(x.level, 'me-band') : '') +
+      `<div class="me-who"><b>${esc(S.hackerName || 'hacker')}<i>${tagText(S.tag)}</i></b>` +
+      (x
+        ? `<span class="me-rank">${esc(r.name)} · Level ${x.level}</span><div class="pf-bar"><i style="width:${Xp.pct(x).toFixed(1)}%"></i></div>` +
+          `<small>${x.to ? `${Xp.num(x.to - x.xp)} XP to level ${x.level + 1}` : 'top level'} · ${Xp.num(x.xp)} XP</small>`
+        : `<small>${S.reachable ? 'loading…' : "can't reach the server"}</small>`) +
+      `<small class="me-acct">${A && A.signedIn ? `✓ signed in${A.github ? ` · GitHub ${esc(A.github)}` : ''}` : 'not signed in · badges need an account'}</small></div></div>` +
+      (x
+        ? `<div class="me-stats">${stat('TODAY', Xp.dur(x.today))}${stat('THIS WEEK', `${x.week}/${x.goal} days`)}` +
+          `${stat('STREAK', `${x.streak} ${x.streak === 1 ? 'week' : 'weeks'}`)}${stat('TOTAL', Xp.hours(x.total))}</div>`
+        : '<div class="me-stats"></div>') +
+      '<div class="me-show"></div></div>';
+    // The hero is redrawn as your XP moves; the badges keep their own place (and their hover) below it.
+    let top = el.querySelector(':scope > .me-top');
+    if (!top) {
+      el.innerHTML = '<div class="me-top"></div><div class="me-inv"></div>';
+      top = el.querySelector('.me-top');
+      top.innerHTML = hero;
+      top.__h = hero;
+      window.Badges?.mountShowcase(top.querySelector('.me-show'), el.querySelector('.me-inv'));
+      return;
+    }
+    if (top.__h === hero) return;
+    top.__h = hero;
+    const show = top.querySelector('.me-show');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = hero;
+    tmp.querySelector('.me-show').replaceWith(show);
+    top.replaceChildren(...tmp.childNodes);
+  }
+
   // The friend picked in the list (a click; the first one until then), their card on the right as the leaderboard's:
   // their rank and level, and their active time unless they keep it to themselves.
   let pickedFriend = null;
@@ -980,8 +1069,10 @@ window.Cloud = (() => {
           ? '<p class="pf-note">keeps their active time to themselves</p>'
           : `<div class="pf-stats">${stat('LAST 24H', x.last24 == null ? '—' : Xp.dur(x.last24))}${stat('THIS WEEK', `${x.week}/3 days`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
             (x.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(x.days, r.color, x.daysEnd)}` : '')) +
+        (window.Badges ? `<div class="hk-h">BADGES</div><div class="bdg-friend" data-id="${esc(f.id)}"></div>` : '') +
         '<div class="mn-ask-btns"><button type="button" class="mn-btn go" data-ans="chat">✉ message</button></div></div>',
     );
+    window.Badges?.mountFriend(fq('.fr-host .bdg-friend'), f.id);
   }
 
   function renderActivity() {
@@ -1065,7 +1156,7 @@ window.Cloud = (() => {
       : '<span class="lb-spark off" title="keeps their active time to themselves"></span>';
     return (
       `<div class="lb-row${u.me ? ' me' : ''}${u.pos <= 3 ? ' top' : ''}${fire ? ' fire' : ''}" data-id="${esc(u.id)}" style="--rc:${r.color}"${fire ? ' title="On fire: 5 hours of work today"' : ''}>` +
-      `${fire ? '<canvas class="fire-card"></canvas>' : ''}<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${u.working ? '<i class="lb-live" title="working now"></i>' : ''}${tagged(u)}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
+      `${fire ? '<canvas class="fire-card"></canvas>' : ''}<span class="lb-pos">${u.pos}</span><div class="lb-who"><span class="mn-name">${u.working ? '<i class="lb-live" title="working now"></i>' : ''}${tagged(u)}${window.Badges && u.badge ? window.Badges.small(u.badge) : ''}${Xp.badge(u.level)}${u.me ? '<em class="lb-you">you</em>' : ''}` +
       `${u.me && u.anon ? '<em class="lb-hid" title="Others see you as Anonymous">hidden</em>' : ''}</span>` +
       `<small>${esc(r.name)}${u.last24 ? ` · ${Xp.dur(u.last24)} in 24h` : ''}${active === null ? '' : ` · ${Xp.dur(active)} this week`}</small></div>${spark}` +
       `<span class="lb-score">${boardBy === 'week' ? `+${Xp.num(u.week)}` : Xp.num(u.xp)} XP</span><span class="lb-act">${boardButton(u, 'act')}</span></div>`
@@ -1344,12 +1435,24 @@ window.Cloud = (() => {
   const fq = (sel) => views.friends.querySelector(sel);
   views.friends.innerHTML =
     '<section class="panel cv-friends"><header><span class="tag">friends</span><span class="meta"></span></header><div class="body">' +
+    '<div class="me-card-host"></div>' +
     '<label class="hk-field mn-add"><span class="hk-prompt">+</span><input class="mn-handle-in" maxlength="21" spellcheck="false" autocomplete="off" placeholder="add a friend · name#0427"><button class="mn-send" type="button" disabled>send request</button></label>' +
     '<p class="hk-status mn-add-status"></p><div class="mn-list mn-friends"></div></div></section>' +
     '<div class="cv-col"><section class="panel cv-friend"><header><span class="tag">friend</span><span class="meta">double-click a friend to message them</span></header><div class="body fr-host"></div></section>' +
     '<section class="panel cv-requests"><header><span class="tag">requests</span><span class="meta"></span></header><div class="body">' +
-    '<div class="hk-h">INCOMING</div><div class="mn-list mn-in"></div><div class="hk-h">SENT</div><div class="mn-list mn-out"></div></div></section></div>';
+    '<div class="hk-h">INCOMING</div><div class="mn-list mn-in"></div><div class="hk-h">SENT</div><div class="mn-list mn-out"></div></div></section></div>' +
+    '<section class="panel cv-me"><header><span class="tag">profile</span><span class="meta">your badges · hover one to see what it\'s for, right click to display it</span>' +
+    '<button type="button" class="cv-hbtn" data-me="back" title="Back to your friends">← friends</button></header><div class="body me-host"></div></section>';
   views.friends.addEventListener('click', listAction);
+  views.friends.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-me]');
+    if (b) setMe(b.dataset.me === 'open');
+  });
+  views.friends.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.closest?.('.me-card')) setMe(true);
+  });
+  // Your badges came in or changed: your card shows the one you display and how many you have.
+  window.Badges?.on(() => shown === 'friends' && !meOpen && meCard());
   // A double click on a friend (not on their buttons) opens the chat.
   views.friends.addEventListener('dblclick', (e) => {
     const row = e.target.closest('.mn-friends .mn-row');
@@ -1428,7 +1531,9 @@ window.Cloud = (() => {
 
   let shown = null;
   function showView(v) {
-    if (v === shown) return;
+    // The friends icon again while your profile shows there: back to the friends.
+    if (v === shown) return v === 'friends' && meOpen && setMe(false);
+    if (shown === 'friends' && meOpen) setMe(false);
     if (shown === 'themes') theme('revert').catch(() => {});
     shown = v;
     document.getElementById('app').classList.toggle('cloud-mode', !!v);
@@ -1487,5 +1592,5 @@ window.Cloud = (() => {
   refresh();
   Social.loadNotes();
 
-  return { render, openMenu, openSettings: () => openMenu('settings'), openUpdate, openFeedback, showView, renderPower, close };
+  return { render, openMenu, openSettings: () => openMenu('settings'), openProfile, openUpdate, openFeedback, showView, renderPower, close };
 })();

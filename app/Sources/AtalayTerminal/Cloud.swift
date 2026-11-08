@@ -203,7 +203,8 @@ final class Cloud {
     private func heartbeat(_ token: String) async {
         struct Answer: Decodable { let hackerName: String; let tag: Int; let online: Int; let update: Release?; let xp: XP?; let xpPaused: Bool? }
         // The theme too: the leaderboard shows someone's card in their theme, and anyone can take it.
-        let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60, "theme": ThemeStore.shared.chosenId]
+        let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60, "theme": ThemeStore.shared.chosenId,
+                                   "tools": Activity.tools]
         do {
             let a: Answer = try await call("POST", "v1/heartbeat", body: client.merging(work) { $1 }, token: token)
             var name = a.hackerName, tag = a.tag
@@ -603,7 +604,7 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
                 // Only the friends, messages, notifications, feedback, Roadmap, account, sign-in and settings-sync
                 // endpoints; the page never reaches anything else with the token.
                 let path = body["path"] as? String ?? ""
-                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap", "v1/account", "v1/auth", "v1/settings"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap", "v1/account", "v1/auth", "v1/settings", "v1/badges"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
                       !path.contains("..") else {
                     replyHandler(["error": "bad_path"], nil)
                     return

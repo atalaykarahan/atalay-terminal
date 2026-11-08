@@ -392,6 +392,7 @@ window.Messages = (() => {
   // In front: the app tells (focus).
   let focused = false;
   let pending = null; // the level-up waiting to play: the highest level, the one before, whether a rank changed
+  let badgesWaiting = null; // new badges waiting for their reveal: { badges: [{ id, tier }], quiet }, the highest tier each
   let takeover = null; // the one on screen
 
   function progress(ev) {
@@ -457,11 +458,18 @@ window.Messages = (() => {
     }, FIRE_MS);
   }
 
+  // A level-up first, then the badges it may have brought.
   function play() {
-    if (!pending || takeover || fire || !focused || Social.dnd()) return;
-    const c = pending;
-    pending = null;
-    takeover = showTakeover(c);
+    if ((!pending && !badgesWaiting) || takeover || fire || !focused || Social.dnd()) return;
+    if (pending) {
+      const c = pending;
+      pending = null;
+      takeover = showTakeover(c);
+    } else {
+      const c = badgesWaiting;
+      badgesWaiting = null;
+      takeover = showReveal(c);
+    }
     // Only now, with the takeover set, does the panel ask for the whole screen (in the app).
     sizeNotes();
   }
@@ -581,10 +589,193 @@ window.Messages = (() => {
     unlockKeys();
     takeover = null;
     sizeNotes();
-    // Another level-up waiting plays first; notices (a chat that needs you, the daily bonus) come after the last one.
-    if (!peek && !pending) nextPeek();
+    // Another level-up or badge waiting plays first; notices (a chat that needs you, the daily bonus) come after the last.
+    if (!peek && !pending && !badgesWaiting) nextPeek();
     setTimeout(play, 600);
     setTimeout(ignite, 700);
+  }
+
+  // A new badge, as CS:GO reveals an item: the screen darkens while the impact's sound builds, light is pulled in to the
+  // middle and only the badge's shadow shows there, the screen's edges glowing in its colour and a HUD's corners closing
+  // in; on the sound's burst the badge itself appears with a flash, a
+  // shockwave and a burst of sparks in its own colours, under turning rays, a shine ringing over it; its name and tier
+  // rise under it. A gold one and up (a medal, a hidden one) gets more of everything. Several at once (a sign-in counting
+  // what was done before): the grandest one big, the rest dropping in a row under it, one by one.
+  function showReveal(c) {
+    const Art = window.BadgeArt;
+    const score = (b) => (b.id.startsWith('service-') ? 20 : 0) + (Art.grand(b.id, b.tier) ? 10 : 0) + b.tier;
+    const list = [...c.badges].sort((a, b) => score(b) - score(a));
+    const main = list[0];
+    const rest = list.slice(1);
+    const ROW = 9;
+    const grand = Art.grand(main.id, main.tier);
+    const [rc, rs] = Art.glow(main.id, main.tier);
+    const tier = Art.tierName(main.id, main.tier);
+    const kicker = list.length > 1
+      ? `${list.length} BADGES UNLOCKED`
+      : main.id.startsWith('service-') ? 'MEDAL EARNED' : main.tier > 1 && !main.id.startsWith('month-') ? 'BADGE UPGRADED' : 'BADGE UNLOCKED';
+    // The moment the badge shows: the impact's burst.
+    const IMPACT = Sfx.hit('badge-impact');
+    const lockMs = IMPACT + 1200;
+    const rowAt = IMPACT + 900;
+    const readMs = Math.min(12_000, IMPACT + (grand ? 6000 : 5000) + 260 * Math.min(rest.length, ROW));
+    const timers = [];
+    const at = (ms, f) => timers.push(setTimeout(f, ms));
+    const el = document.createElement('div');
+    el.id = 'takeover';
+    el.className = `tk rv${grand ? ' grand' : ''}`;
+    el.style.setProperty('--rc', rc);
+    el.style.setProperty('--rs', rs);
+    el.style.setProperty('--build', `${IMPACT}ms`);
+    el.innerHTML =
+      '<div class="rv-veil"></div><div class="rv-edge"></div><div class="rv-frame"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>' +
+      '<canvas class="rv-sparks"></canvas><div class="rv-flash"></div>' +
+      '<div class="rv-center"><div class="rv-stage"><div class="rv-rays"></div><div class="rv-rays b"></div><div class="rv-glow"></div>' +
+      `<div class="rv-ring"></div><div class="rv-ring b"></div><div class="rv-art">${Art.svg(main.id, main.tier, 320)}<i class="rv-shine"></i></div></div>` +
+      `<div class="rv-kicker">${esc(kicker)}</div><div class="rv-name">${esc(Art.name(main.id))}</div>` +
+      (tier ? `<div class="rv-tier">${esc(tier)}</div>` : '') +
+      (rest.length
+        ? `<div class="rv-row">${rest.slice(0, ROW).map((b, i) => `<span class="rv-mini" style="--d:${rowAt + i * 260}ms" title="${esc(Art.name(b.id))}">${Art.svg(b.id, b.tier, 64)}</span>`).join('')}` +
+          (rest.length > ROW ? `<span class="rv-more" style="--d:${rowAt + ROW * 260}ms">+${rest.length - ROW}</span>` : '') + '</div>'
+        : '') +
+      (c.quiet ? '<div class="rv-note">from what you\'ve done so far · right click one in your profile to display it</div>' : '') +
+      '</div><div class="tk-hint">press any key to continue</div>';
+    document.body.appendChild(el);
+    const t = { el, timers, free: false, stop: () => {} };
+    lockKeys(lockMs);
+    // The sounds, each started so that its moment falls on IMPACT.
+    for (const [name, vol] of [['badge-impact', 1], ['badge-shine', 0.8]]) {
+      Sfx.preload(name);
+      at(Math.max(0, IMPACT - Sfx.hit(name)), () => Sfx.sample(name, vol));
+    }
+    t.stop = sparks(el.querySelector('.rv-sparks'), el.querySelector('.rv-art'), rc, rs, grand, IMPACT);
+
+    let leaving = false;
+    t.out = () => {
+      if (leaving) return;
+      leaving = true;
+      timers.forEach(clearTimeout);
+      el.classList.add('out');
+      at(450, () => endTakeover(t));
+    };
+    // The burst: the badge shows, the flash and the shake; the text after.
+    at(IMPACT, () => el.classList.add('hit'));
+    at(IMPACT + 220, () => el.querySelector('.rv-kicker').classList.add('on'));
+    at(IMPACT + 340, () => el.querySelector('.rv-name').classList.add('on'));
+    at(IMPACT + 460, () => el.querySelector('.rv-tier')?.classList.add('on'));
+    at(IMPACT + 700, () => el.querySelector('.rv-note')?.classList.add('on'));
+    rest.slice(0, ROW).forEach((_, i) => at(rowAt + i * 260 + 120, () => Sfx.play('tick')));
+    at(readMs, t.out);
+    at(lockMs, () => {
+      t.free = true;
+      el.classList.add('free');
+      unlockKeys();
+    });
+    el.addEventListener('mousedown', () => skip());
+    return t;
+  }
+
+  // The reveal's light: sparks pulled in from all around to the middle until `impact` ms, then a burst out from it
+  // (a second one for a grand badge), then embers rising around the badge until the reveal ends (stop).
+  function sparks(canvas, art, rc, rs, grand, impact) {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const g = canvas.getContext('2d');
+    const colors = [`rgb(${rc})`, `rgb(${rs})`, `rgb(${rs})`, '#ffffff'];
+    const bits = [];
+    const start = performance.now();
+    let last = start, raf = 0, burst = 0, inward = 0, ember = 0;
+    // Its middle on screen, and its radius as laid out (not as scaled while it falls).
+    const centre = () => {
+      const r = art.getBoundingClientRect();
+      return [(r.left + r.width / 2) * dpr, (r.top + r.height / 2) * dpr, (art.offsetWidth / 2) * dpr];
+    };
+    const spawnBurst = (n, power) => {
+      const [x, y, r] = centre();
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const v = (3 + Math.random() * 13) * power * dpr;
+        bits.push({ x: x + Math.cos(a) * r * 0.5, y: y + Math.sin(a) * r * 0.5, vx: Math.cos(a) * v, vy: Math.sin(a) * v, drag: 0.94 + Math.random() * 0.03,
+          grav: 0.12 * dpr, life: 0, max: 50 + Math.random() * 70, size: (1 + Math.random() * 2.4) * dpr, c: colors[(Math.random() * colors.length) | 0], streak: true });
+      }
+    };
+    const frame = (now) => {
+      if (canvas.width !== Math.round(innerWidth * dpr) || canvas.height !== Math.round(innerHeight * dpr)) {
+        canvas.width = Math.round(innerWidth * dpr);
+        canvas.height = Math.round(innerHeight * dpr);
+      }
+      const dt = Math.min(3, (now - last) / 16.7);
+      last = now;
+      const age = now - start;
+      const [cx, cy, cr] = centre();
+      // Pulled in: from a ring around the middle, faster as they near it.
+      if (age < impact - 60 && age > impact * 0.15) {
+        inward += dt * (grand ? 4 : 2.6) * (0.3 + 1.4 * (age / impact));
+        for (; inward >= 1; inward--) {
+          const a = Math.random() * Math.PI * 2;
+          const d = (0.35 + Math.random() * 0.35) * Math.min(canvas.width, canvas.height);
+          bits.push({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d, tx: cx, ty: cy, pull: 0, life: 0, max: 60, size: (1 + Math.random() * 1.6) * dpr, c: colors[(Math.random() * colors.length) | 0], streak: true });
+        }
+      }
+      if (burst === 0 && age >= impact) burst = 1, spawnBurst(grand ? 260 : 150, 1);
+      if (grand && burst === 1 && age >= impact + 260) burst = 2, spawnBurst(140, 0.7);
+      // Embers: slow, from around the badge, upwards, twinkling.
+      if (age >= impact) {
+        ember += dt * (grand ? 0.9 : 0.5);
+        for (; ember >= 1; ember--) {
+          const a = Math.random() * Math.PI * 2;
+          const d = cr * (0.6 + Math.random() * 0.9);
+          bits.push({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d, vx: (Math.random() - 0.5) * 0.5 * dpr, vy: -(0.4 + Math.random() * 1.1) * dpr, drag: 1, grav: 0,
+            life: 0, max: 90 + Math.random() * 90, size: (0.8 + Math.random() * 1.8) * dpr, c: colors[(Math.random() * colors.length) | 0], twinkle: Math.random() * 6.28 });
+        }
+      }
+      g.clearRect(0, 0, canvas.width, canvas.height);
+      g.globalCompositeOperation = 'lighter';
+      for (let i = bits.length - 1; i >= 0; i--) {
+        const b = bits[i];
+        b.life += dt;
+        const px = b.x, py = b.y;
+        if (b.tx !== undefined) {
+          b.pull += 0.012 * dt;
+          b.x += (b.tx - b.x) * Math.min(1, b.pull * b.pull * 3 * dt);
+          b.y += (b.ty - b.y) * Math.min(1, b.pull * b.pull * 3 * dt);
+          if (Math.hypot(b.tx - b.x, b.ty - b.y) < cr * 0.3 || age >= impact) {
+            bits.splice(i, 1);
+            continue;
+          }
+        } else {
+          b.vx *= b.drag ** dt;
+          b.vy = b.vy * b.drag ** dt + b.grav * dt;
+          b.x += b.vx * dt;
+          b.y += b.vy * dt;
+          if (b.life >= b.max) {
+            bits.splice(i, 1);
+            continue;
+          }
+        }
+        const fade = b.tx !== undefined ? Math.min(1, b.life / 10) : 1 - b.life / b.max;
+        const tw = b.twinkle !== undefined ? 0.5 + 0.5 * Math.sin(b.twinkle + b.life * 0.25) : 1;
+        g.globalAlpha = Math.max(0, fade * tw);
+        if (b.streak) {
+          g.strokeStyle = b.c;
+          g.lineWidth = b.size;
+          g.lineCap = 'round';
+          g.beginPath();
+          g.moveTo(px, py);
+          g.lineTo(b.x + (b.x - px) * 0.6, b.y + (b.y - py) * 0.6);
+          g.stroke();
+        } else {
+          g.fillStyle = b.c;
+          g.beginPath();
+          g.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'source-over';
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
   }
 
   // Confetti raining from the top of the screen, in the rank's colour and the app's: a few waves, then it falls out
@@ -682,6 +873,15 @@ window.Messages = (() => {
         return;
       case 'xp':
         return progress(ev);
+      case 'badge': {
+        // Its reveal waits for the app in front and do not disturb's end, as a level-up; what comes meanwhile joins it.
+        if (!ev.badges || !ev.badges.length) return;
+        const all = new Map((badgesWaiting ? badgesWaiting.badges : []).map((b) => [b.id, b]));
+        for (const b of ev.badges) if (!all.has(b.id) || all.get(b.id).tier < b.tier) all.set(b.id, b);
+        badgesWaiting = { badges: [...all.values()], quiet: (!badgesWaiting || badgesWaiting.quiet) && !!ev.quiet };
+        play();
+        return;
+      }
       case 'status':
         // Do not disturb ended: a level-up or the flames it held play now.
         if (ev.status !== 'dnd') play(), ignite();

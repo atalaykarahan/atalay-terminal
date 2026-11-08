@@ -77,8 +77,7 @@ window.Account = (() => {
     if (!host || !host.isConnected) return;
     if (!A) return setHTML(host, '<p class="acct-why">loading…</p>');
     const status = form.msg ? `<p class="hk-status acct-status ${form.bad ? 'bad' : 'ok'}">${esc(form.msg)}</p>` : '';
-    if (!A.signedIn) {
-      const mail =
+    const mail =
         form.mode === 'email'
           ? '<div class="acct-form"><label class="hk-field"><span class="hk-prompt">@</span><input class="acct-email" type="email" maxlength="254" spellcheck="false" autocomplete="email" placeholder="you@example.com"></label>' +
             `<button type="button" class="mn-btn go" data-acct="send"${form.busy ? ' disabled' : ''}>send code</button></div>`
@@ -86,6 +85,7 @@ window.Account = (() => {
             ? `<div class="acct-form"><label class="hk-field"><span class="hk-prompt">#</span><input class="acct-code" inputmode="numeric" maxlength="6" spellcheck="false" autocomplete="one-time-code" placeholder="6-digit code sent to ${esc(form.email)}"></label>` +
               `<button type="button" class="mn-btn go" data-acct="verify"${form.busy ? ' disabled' : ''}>sign in</button></div>`
             : '';
+    if (!A.signedIn) {
       setHTML(
         host,
         '<p class="acct-why">One name, XP, friends and settings on all your computers, Mac and Windows. Optional: everything works without it.</p>' +
@@ -117,9 +117,20 @@ window.Account = (() => {
       )
       .join('');
     const on = Sync.enabled();
+    // GitHub says an address of theirs, verified, is another account's: join it once a code to that address proves it
+    // (never on the address alone).
+    const hint = A.emailHint && !form.mode
+      ? `<div class="acct-hint"><span><b>${esc(A.emailHint)}</b> already has an account of yours. Send a code to it to join the two?</span>` +
+        '<button type="button" class="mn-btn go" data-acct="hintsend">send code</button><button type="button" class="mn-btn" data-acct="hintno">not mine</button></div>'
+      : '';
+    // The other way in, added to this account.
+    const add = (!A.email && !A.emailHint ? '<button type="button" class="mn-btn" data-acct="email">✉ add e-mail</button>' : '') +
+      (!A.github && A.methods.github ? `<button type="button" class="mn-btn acct-addgh" data-acct="github">${GH}add GitHub</button>` : '');
     setHTML(
       host,
       `<div class="acct-who"><span class="acct-ok">✓ signed in</span>${who}</div>` +
+        hint +
+        (add || mail ? `<div class="acct-add">${add}</div>${mail}` : '') +
         `<div class="acct-devs">${devices}</div>` +
         '<div class="hk-row"><span>sync settings across your computers<small>theme, interface font and size, terminal text size, sound, token savers, AI colours, updates · as VS Code\'s Settings Sync</small></span>' +
         `<button type="button" class="hk-sw acct-sync${on ? ' on' : ''}" role="switch" aria-checked="${on}" title="Sync settings across your computers"><i></i></button></div>` +
@@ -274,6 +285,17 @@ window.Account = (() => {
       if (act === 'send') return sendCode();
       if (act === 'verify') return verify();
       if (act === 'remove') return remove(b.dataset.id);
+      if (act === 'hintsend') {
+        form.email = A.emailHint;
+        form.mode = 'email';
+        return sendCode();
+      }
+      if (act === 'hintno') {
+        return api('DELETE', 'v1/account/hint').then((r) => {
+          if (r && r.account) A = r.account;
+          render();
+        });
+      }
       if (act === 'signout') return signOut();
       if (act === 'delete') return deleteData();
     }
@@ -322,12 +344,13 @@ window.Account = (() => {
     const who = A.signedIn
       ? `<span class="acct-ok">✓ signed in</span><b>${esc(A.name)}<i>${tagText(A.tag)}</i></b><small>${esc(A.github ? `GitHub · ${A.github}` : A.email)}${A.devices.length > 1 ? ` · ${A.devices.length} computers` : ''}</small>`
       : `<b>${esc(A.name)}<i>${tagText(A.tag)}</i></b><small>not signed in · this computer only</small>`;
+    const profile = `<button type="button" data-m="profile">${icon(0xea67)}Profile &amp; badges</button>`;
     const items = A.signedIn
-      ? `<button type="button" data-m="settings">${icon(0xeb99)}Account settings…</button>` +
+      ? profile + `<button type="button" data-m="settings">${icon(0xeb99)}Account settings…</button>` +
         `<button type="button" data-m="sync">${icon(0xea77)}Settings sync<em>${Sync.enabled() ? 'on' : 'off'}</em></button>` +
         `<button type="button" data-m="signout">${icon(0xea6e)}Sign out on this computer</button>` +
         `<hr><button type="button" class="danger" data-m="delete">${icon(0xea81)}Delete account…</button>`
-      : (A.methods.github ? `<button type="button" data-m="github">${GH}Sign in with GitHub</button>` : '') +
+      : profile + (A.methods.github ? `<button type="button" data-m="github">${GH}Sign in with GitHub</button>` : '') +
         (A.methods.email ? `<button type="button" data-m="email">${icon(0xeb1c)}Sign in with e-mail…</button>` : '') +
         `<hr><button type="button" class="danger" data-m="delete">${icon(0xea81)}Delete my data…</button>`;
     menuEl = document.createElement('div');
@@ -345,6 +368,7 @@ window.Account = (() => {
       const m = b.dataset.m;
       closeMenu();
       if (m === 'github') return github();
+      if (m === 'profile') return window.Cloud?.openProfile();
       if (m === 'email' || m === 'settings') {
         if (m === 'email') form.mode = 'email';
         return window.Cloud?.openSettings();

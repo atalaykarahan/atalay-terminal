@@ -321,6 +321,102 @@
 #friends-view .mn-friends .mn-row { cursor: pointer; -webkit-user-select: none; user-select: none; }
 /* the picked one: a bar on its left and a tint, as backgrounds, so a burning row keeps its glow (a box-shadow) */
 #friends-view .mn-friends .mn-row.sel { background: linear-gradient(var(--accent), var(--accent)) left / 3px 100% no-repeat, rgba(var(--glow), 0.1); }
+/* Your profile where the friends are (cloud.js renderMe): the whole view, as CS:GO's inventory screen */
+#friends-view .cv-me { display: none; flex: 1; }
+#friends-view.me > .cv-friends, #friends-view.me > .cv-col { display: none; }
+#friends-view.me > .cv-me { display: flex; }
+/* you at the top of your friends, as on Steam: a click opens your profile and your badges */
+.me-card { position: relative; display: flex; align-items: center; gap: 14px; margin: 0 0 12px; padding: 10px 14px; overflow: hidden; border: 1px solid rgba(var(--rc), 0.45); border-radius: 6px; background: linear-gradient(100deg, rgba(var(--rc), 0.2), rgba(0, 0, 0, 0.3) 55%); cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.me-card:hover, .me-card:focus-visible { outline: none; border-color: rgb(var(--rc)); background: linear-gradient(100deg, rgba(var(--rc), 0.3), rgba(0, 0, 0, 0.25) 60%); }
+.me-card-pic { flex: none; width: 48px; height: 48px; border: 2px solid rgba(var(--rc), 0.8); border-radius: 5px; object-fit: cover; }
+.me-card-band { flex: none; width: 64px; }
+.me-card-who { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.me-card-who .mn-name b { color: var(--hi); font-size: 1.2em; font-weight: 800; }
+.me-card-who .mn-name .htag { color: var(--dim); font-style: normal; }
+.me-card-who .lb-you { margin-left: 6px; }
+.me-card-who small { color: var(--dim); }
+.me-card-xp { display: block; max-width: 260px; height: 3px; overflow: hidden; border-radius: 2px; background: rgba(255, 255, 255, 0.1); }
+.me-card-xp i { display: block; height: 100%; background: rgb(var(--rc)); box-shadow: 0 0 8px rgba(var(--rc), 0.9); }
+.me-card-stat { display: flex; flex: none; flex-direction: column; align-items: flex-end; min-width: 54px; }
+.me-card-stat b { color: var(--hi); font-size: 1.1em; font-weight: 800; }
+.me-card-stat small { color: var(--dim); font-size: 0.8em; letter-spacing: 0.08em; }
+.me-card-go { flex: none; padding-left: 12px; border-left: 1px solid rgba(var(--rc), 0.3); color: rgb(var(--rc)); font-weight: 700; letter-spacing: 0.06em; white-space: nowrap; }
+.cv-hbtn { position: relative; z-index: 1; flex: none; height: 100%; padding: 0 10px; border: 0; border-left: 1px solid var(--line-soft); background: transparent; color: var(--accent-soft); font: inherit; font-size: 0.9em; font-weight: 700; letter-spacing: 0.04em; cursor: pointer; }
+.cv-hbtn:hover { background: rgba(var(--accent-rgb), 0.15); color: var(--hi); }
+.me-hero { position: relative; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 230px; gap: 16px; margin-bottom: 18px; padding: 16px; border: 1px solid rgba(var(--rc), 0.35); background: linear-gradient(110deg, rgba(var(--rc), 0.16), rgba(0, 0, 0, 0.25) 45%, rgba(0, 0, 0, 0.35)); }
+.me-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.me-pic { flex: none; width: 96px; height: 96px; border: 2px solid rgba(var(--rc), 0.8); border-radius: 6px; box-shadow: 0 0 18px rgba(var(--rc), 0.4); object-fit: cover; }
+.me-band { flex: none; width: 96px; }
+.me-who { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.me-who > b { overflow: hidden; color: var(--hi); font-size: 1.9em; font-weight: 800; line-height: 1.1; letter-spacing: 0.03em; white-space: nowrap; text-overflow: ellipsis; }
+.me-who > b i { margin-left: 4px; color: var(--dim); font-size: 0.55em; font-style: normal; font-weight: 600; }
+.me-rank { color: rgb(var(--rc)); font-weight: 700; letter-spacing: 0.06em; }
+.me-who .pf-bar { max-width: 340px; height: 8px; margin: 4px 0 2px; }
+.me-who small { color: var(--dim); }
+.me-who small.me-acct { color: var(--accent-soft); }
+.me-stats { display: grid; grid-template-columns: repeat(2, 1fr); align-content: center; gap: 8px; }
+.me-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid rgba(var(--rc), 0.22); border-radius: 6px; background: rgba(0, 0, 0, 0.3); }
+.me-stats label { color: var(--dim); font-size: 0.78em; font-weight: 700; letter-spacing: 0.16em; }
+.me-stats b { color: var(--hi); font-size: 1.45em; font-weight: 800; }
+/* The badges keep their own colours whatever the theme, as CS:GO's items: fixed greys, the badge's colour (--q) on top. */
+.sc-slot { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; height: 100%; min-height: 176px; padding: 10px; border: 1px dashed rgba(255, 255, 255, 0.18); border-radius: 6px; background: rgba(0, 0, 0, 0.3); color: #8b929b; text-align: center; }
+.sc-slot small { color: #8b929b; font-size: 0.72em; font-weight: 700; letter-spacing: 0.25em; }
+.sc-slot > i { color: rgba(255, 255, 255, 0.14); font-size: 2.8em; font-style: normal; }
+.sc-slot span { font-size: 0.85em; line-height: 1.4; }
+.sc-slot.on { border: 1px solid rgba(var(--q), 0.7); background: radial-gradient(circle at 50% 40%, rgba(var(--q), 0.32), rgba(12, 13, 16, 0.92) 70%); box-shadow: inset 0 0 30px rgba(var(--q), 0.22), 0 0 18px rgba(var(--q), 0.18); }
+.sc-slot.on .badge-art { filter: drop-shadow(0 0 14px rgba(var(--q), 0.7)); }
+.sc-slot.on b { color: #fff; font-size: 1.1em; }
+.sc-slot.on span { color: rgb(var(--q)); font-weight: 700; filter: brightness(1.35); }
+/* a badge put on display (badges.js): it drops into the slot and lands hard on the sound's hit (0.36 s in), the slot
+   flashing in its colour, a ring going out, a gleam crossing it; its tile and the one beside your name pulse with it */
+.sc-slot { position: relative; overflow: hidden; }
+.sc-slot.land { animation: sc-slot-hit 1.2s ease-out both; }
+.sc-slot.land .badge-art { animation: sc-land 1.2s cubic-bezier(0.5, 0, 0.5, 1) both; }
+.sc-slot.land::before { content: ""; position: absolute; top: 46%; left: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; border: 2px solid rgba(255, 255, 255, 0.9); border-radius: 50%; box-shadow: 0 0 18px rgba(var(--q), 0.9), inset 0 0 18px rgba(var(--q), 0.7); opacity: 0; animation: sc-ring 0.75s cubic-bezier(0.1, 0.6, 0.3, 1) 0.36s forwards; pointer-events: none; }
+.sc-slot.land::after { content: ""; position: absolute; top: -20%; bottom: -20%; left: -60%; width: 40%; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent); transform: skewX(-20deg); opacity: 0; animation: sc-gleam 0.9s ease-in-out 0.5s both; pointer-events: none; }
+.sc-item.just { animation: sc-just 1s ease-out 0.36s forwards; }
+.bdg.just { --q: var(--accent-rgb); animation: sc-just 1s ease-out 0.36s forwards; }
+.bdg-mini.pop { animation: bdg-pop 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.5) 0.3s both; }
+@keyframes sc-land { 0% { opacity: 0; transform: translateY(-46px) scale(1.9); filter: blur(5px) brightness(1.6); } 30% { opacity: 1; transform: translateY(0) scale(0.92, 0.84); filter: blur(0) brightness(2.2) drop-shadow(0 0 26px rgba(var(--q), 1)); } 42% { transform: scale(1.07); filter: brightness(1.4) drop-shadow(0 0 22px rgba(var(--q), 1)); } 58% { transform: scale(0.98); } 100% { opacity: 1; transform: none; filter: drop-shadow(0 0 14px rgba(var(--q), 0.7)); } }
+@keyframes sc-slot-hit { 0%, 28% { border-color: rgba(var(--q), 0.7); } 31% { border-color: #fff; box-shadow: inset 0 0 80px rgba(var(--q), 0.85), 0 0 46px rgba(var(--q), 0.85); } 100% { border-color: rgba(var(--q), 0.7); box-shadow: inset 0 0 30px rgba(var(--q), 0.22), 0 0 18px rgba(var(--q), 0.18); } }
+@keyframes sc-ring { 0% { opacity: 1; transform: scale(0.4); } 100% { opacity: 0; transform: scale(2.4); } }
+@keyframes sc-gleam { 0% { opacity: 0; transform: skewX(-20deg) translateX(0); } 20%, 80% { opacity: 1; } 100% { opacity: 0; transform: skewX(-20deg) translateX(480%); } }
+@keyframes sc-just { 0% { box-shadow: 0 0 0 0 rgba(var(--q), 0.9), inset 0 0 40px rgba(var(--q), 0.6); } 100% { box-shadow: 0 0 0 14px rgba(var(--q), 0), inset 0 0 0 rgba(var(--q), 0); } }
+@keyframes bdg-pop { 0% { opacity: 0; transform: scale(2.2); } 60% { opacity: 1; transform: scale(0.9); } 100% { transform: none; } }
+.sc-bar { display: flex; align-items: center; gap: 14px; margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+.sc-title { color: var(--hi); font-weight: 800; letter-spacing: 0.25em; }
+.sc-count { color: var(--dim); }
+.sc-count b { color: var(--hi); }
+.sc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(134px, 1fr)); gap: 6px; }
+.sc-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 6px 13px; overflow: hidden; border: 1px solid #2c3036; background: linear-gradient(180deg, #2a2e35, #1b1e23); text-align: center; }
+.sc-item::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 50% 36%, rgba(var(--q), 0.22), transparent 62%); pointer-events: none; }
+.sc-item:hover { border-color: rgba(var(--q), 0.85); background: linear-gradient(180deg, #343943, #1f2228); }
+.sc-art { position: relative; display: grid; place-items: center; height: 90px; }
+.sc-art .badge-art { filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.55)); transition: transform 0.15s; }
+.sc-item:hover .sc-art .badge-art { transform: scale(1.07); }
+.sc-item b { position: relative; color: #e6e8eb; font-size: 0.9em; font-weight: 700; line-height: 1.2; }
+.sc-item span { position: relative; color: rgb(var(--q)); font-size: 0.78em; font-weight: 700; filter: brightness(1.35); }
+.sc-q { position: absolute; right: 0; bottom: 0; left: 0; height: 3px; background: rgb(var(--q)); box-shadow: 0 0 10px rgba(var(--q), 0.8); }
+.sc-item.shown { border-color: rgba(var(--q), 0.9); box-shadow: inset 0 0 0 1px rgba(var(--q), 0.5); }
+.sc-flag { position: absolute; top: 5px; right: 7px; color: #ffd23f; font-style: normal; text-shadow: 0 0 6px rgba(255, 210, 63, 0.8); }
+.sc-rare { position: absolute; top: 6px; left: 6px; padding: 0 4px; background: rgba(var(--q), 0.3); color: #fff; font-size: 0.62em; font-style: normal; font-weight: 800; letter-spacing: 0.12em; }
+/* the card on hover, as CS:GO's item card */
+.sc-tip { position: fixed; z-index: 3000; display: flex; flex-direction: column; gap: 5px; width: 280px; padding: 10px 12px 12px; border: 1px solid rgba(var(--q), 0.55); border-top: 3px solid rgb(var(--q)); background: rgba(17, 19, 23, 0.97); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); color: #c9ced4; font-family: var(--font); font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+.sc-tip.on { opacity: 1; }
+.sc-tip b { color: rgb(var(--q)); font-size: 1.3em; filter: brightness(1.3); }
+.sc-tip .q { color: #8b929b; font-size: 0.92em; letter-spacing: 0.04em; }
+.sc-tip .steps { display: flex; gap: 3px; }
+.sc-tip .steps i { flex: 1; height: 4px; background: #33373d; }
+.sc-tip .steps i.on { background: rgb(var(--q)); box-shadow: 0 0 6px rgba(var(--q), 0.7); }
+.sc-tip p { margin: 3px 0; color: #e6e8eb; line-height: 1.45; }
+.tp-prog { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; font-size: 0.9em; }
+.tp-prog label { color: #8b929b; }
+.tp-prog > i { height: 4px; overflow: hidden; border-radius: 2px; background: #33373d; }
+.tp-prog > i > i { display: block; height: 100%; background: rgb(var(--q)); }
+.sc-tip small { color: #8b929b; font-size: 0.9em; }
+.sc-tip .tp-prog small { color: #e6e8eb; }
+.sc-tip .tp-rare.rare { color: #ffd23f; font-weight: 700; }
+.sc-tip em { margin-top: 3px; color: #6b7179; font-size: 0.88em; font-style: normal; }
 #board-view .cv-list { flex: 1.3; }
 #board-view .cv-card { flex: 1; }
 #board-view .lb-row { cursor: pointer; }
@@ -490,3 +586,42 @@
 #activity .vs-ci[hidden] { display: none; }
 .mn-main .mn-name i.mn-real { margin-left: 6px; color: var(--dim); font-style: normal; font-size: 0.88em; }
 .nick-ask { width: 420px; }
+
+/* ===== Badges (badges.js / badge-art.js): the inventory in the profile, a friend's in their card, the displayed one
+   beside names. The art keeps its own colours whatever the theme; only the frames around it follow the theme. */
+.badge-art.locked { filter: grayscale(1) brightness(0.42) contrast(0.95); }
+.bdg-mini { display: inline-flex; align-items: center; margin: 0 4px 0 6px; vertical-align: -4px; }
+.bdg-mini .badge-art { filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.6)); }
+.bdg-sum { margin: 0 0 10px; color: var(--txt2); line-height: 1.5; }
+.bdg-sum b { color: var(--hi); }
+.bdg-guest { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; border: 1px dashed rgba(var(--accent-rgb), 0.45); border-radius: 8px; }
+.bdg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; }
+.bdg-grid.small { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
+.bdg { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px 8px; border: 1px solid rgba(var(--accent-rgb), 0.18); border-radius: 8px; background: rgba(0, 0, 0, 0.28); text-align: center; cursor: default; }
+.bdg:hover { border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.06); }
+.bdg.shown { border-color: var(--accent); box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.3); }
+.bdg b { color: var(--hi); font-size: 0.95em; line-height: 1.2; }
+.bdg small { color: var(--accent-soft); font-size: 0.82em; }
+.bdg.locked b { color: var(--txt2); }
+.bdg.locked small { color: var(--dim); }
+.bdg em { color: var(--dim); font-size: 0.8em; font-style: normal; }
+.bdg-bar { display: block; width: 80%; height: 4px; margin-top: 3px; overflow: hidden; border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
+.bdg-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.bdg-rare { color: var(--dim); font-size: 0.76em; }
+.bdg-rare.rare { color: var(--amber); font-weight: 700; }
+.bdg-flag { position: absolute; top: 5px; right: 5px; padding: 0 5px; border-radius: 4px; background: var(--accent); color: var(--ink); font-size: 0.68em; font-weight: 800; letter-spacing: 0.04em; }
+.bdg-grid.small .bdg { padding: 8px 4px 6px; }
+.bdg-grid.small .bdg b { font-size: 0.86em; }
+.bdg-none { margin: 0; color: var(--dim); }
+.bdg-prestige { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid rgba(var(--amber-rgb), 0.55); border-radius: 8px; background: rgba(var(--amber-rgb), 0.08); }
+.bdg-prestige span { flex: 1; color: var(--txt2); line-height: 1.45; }
+.bdg-prestige span b { display: block; color: var(--amber); }
+.bdg-ctx { z-index: 2900; }
+.bdg-ctx button[disabled] { color: var(--dim); cursor: default; }
+
+/* the account: GitHub's verified address is another account's (account.js), and the other way in */
+.acct-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid rgba(var(--amber-rgb), 0.55); border-radius: 8px; background: rgba(var(--amber-rgb), 0.07); }
+.acct-hint span { flex: 1 1 220px; color: var(--txt2); line-height: 1.45; }
+.acct-hint b { color: var(--hi); }
+.acct-add { display: flex; flex-wrap: wrap; gap: 8px; }
+.acct-addgh svg { width: 13px; height: 13px; margin-right: 5px; fill: currentColor; vertical-align: -2px; }

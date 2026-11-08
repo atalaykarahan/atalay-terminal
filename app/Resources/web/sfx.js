@@ -4,8 +4,9 @@
 // bright chord when a request is accepted, a soft two-note call when a friend comes online, a soft blip when a message
 // goes out, and for your own choices a happy "accepted" and a falling "declined". Your progress has its own: a coin
 // for the daily bonus, for the level-up takeover a burst of static, then a ringing "ding" for a new level or a brass
-// fanfare for a new rank, and a fire catching for five hours of work in a day. Do not disturb silences what comes in,
-// not what you do (the level-up and the flames wait for it to end and then play).
+// fanfare for a new rank, a fire catching for five hours of work in a day; a new badge's reveal plays recorded sounds
+// (sounds/, from Artlist). Do not disturb silences what comes in, not what you do (the level-up, the badges and the
+// flames wait for it to end and then play).
 window.Sfx = (() => {
   let ctx = null;
   let out = null;
@@ -116,6 +117,52 @@ window.Sfx = (() => {
     src.stop(t + dur);
   }
 
+  // A struck bell: the inharmonic partials of a metal bar, each dying at its own rate (the low ones ring longest).
+  function bell(freq, at, dur, vol) {
+    const t = ctx.currentTime + at;
+    for (const [mult, level, len] of [[0.5, 0.5, 1], [1, 1, 0.9], [1.183, 0.45, 0.6], [1.506, 0.35, 0.5], [2, 0.3, 0.45], [2.514, 0.18, 0.3], [3.011, 0.12, 0.25], [4.166, 0.08, 0.18]]) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = freq * mult;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol * level, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur * len);
+      o.connect(g).connect(out);
+      o.start(t);
+      o.stop(t + dur * len + 0.05);
+    }
+  }
+
+  // A heavy landing: a sine falling from `from` to `to` Hz under a dull thud of low noise, dry (no echo).
+  function thump(at, from, to, dur, vol) {
+    const t = ctx.currentTime + at;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(from, t);
+    o.frequency.exponentialRampToValueAtTime(to, t + dur * 0.7);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(ctx.destination);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+    const n = Math.floor(ctx.sampleRate * 0.25);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 3;
+    const src = ctx.createBufferSource();
+    const f = ctx.createBiquadFilter();
+    const ng = ctx.createGain();
+    src.buffer = buf;
+    f.type = 'lowpass';
+    f.frequency.value = Math.min(900, from * 3);
+    ng.gain.value = vol * 0.7;
+    src.connect(f).connect(ng).connect(ctx.destination);
+    src.start(t);
+  }
+
   // How long the longer sounds ring, so the audio doesn't rest before they end.
   const LENGTH = { levelup: 3000, rankup: 4200, glitch: 1200, fire: 3200, alarm: 2800, hit: 800, boom: 2000 };
 
@@ -192,6 +239,11 @@ window.Sfx = (() => {
       [523.25, 659.25, 783.99, 1174.66].forEach((f) => horn(f, 0.6, 1.7, 0.035));
       [2093, 2637, 3135.96, 4186].forEach((f, i) => note(f, 0.68 + i * 0.09, { dur: 0.9, vol: 0.028, bright: 0 }));
       note(1046.5, 0.6, { dur: 2.4, vol: 0.04, bright: 0.5 });
+    },
+    // One more badge in a row under it: a small coin dropping onto the pile.
+    tick() {
+      thump(0, 420, 140, 0.14, 0.14);
+      bell(1567.98, 0, 0.7, 0.03);
     },
     // On fire: a burner catching (a low thump under a rising whoosh), the crackle of the fire, and a short brass hit.
     fire() {
@@ -375,9 +427,36 @@ window.Sfx = (() => {
     else console.warn(msg);
   }
 
+  // Recorded sounds (sounds/*.m4a), and where in each its moment is (s): the impact's burst, the shine's ring (the
+  // badge's reveal lines them up on the moment the badge shows), a badge put on display landing.
+  const SAMPLES = { 'badge-impact': 1.62, 'badge-shine': 1.07, 'badge-equip': 0.36 };
+  const loaded = new Map();
+  function sample(name) {
+    let a = loaded.get(name);
+    if (!a) {
+      a = new Audio(`sounds/${name}.m4a`);
+      a.preload = 'auto';
+      loaded.set(name, a);
+    }
+    return a;
+  }
+
   return {
+    /** Loads a recorded sound ahead, so it starts on time. */
+    preload: (name) => void sample(name).load(),
+    /** Where in the recorded sound its moment is, in ms. */
+    hit: (name) => Math.round(1000 * (SAMPLES[name] || 0)),
+    /** Plays a recorded sound from the start (yours: do not disturb doesn't silence it). */
+    sample(name, vol = 1) {
+      const a = sample(name);
+      try {
+        a.currentTime = 0;
+        a.volume = vol;
+        a.play().catch(() => {});
+      } catch {}
+    },
     play(name) {
-      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom'].includes(name);
+      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom', 'tick'].includes(name);
       if (!SOUNDS[name] || (window.Social && window.Social.dnd() && !yours)) return;
       try {
         audio(LENGTH[name] || 2500);
