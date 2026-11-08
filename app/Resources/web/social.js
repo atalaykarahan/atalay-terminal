@@ -124,6 +124,12 @@ window.Social = (() => {
         }
         break;
       // A friend's new level, sent quietly (no notice): whatever shows them updates.
+      // A nickname set or taken off (here or on another of your computers).
+      case 'nickname': {
+        const f = friend(ev.id);
+        if (f) f.nick = ev.nick || null;
+        break;
+      }
       case 'friend_xp': {
         const f = friend(ev.id);
         if (f) f.xp = { ...(f.xp || {}), level: ev.level, rank: ev.rank };
@@ -155,6 +161,14 @@ window.Social = (() => {
         return r;
       }),
     friend,
+    // What you call a friend: the nickname you gave them (as on Steam), else their name#tag.
+    label: (p) => (p && friend(p.id)?.nick) || handle(p),
+    nick: (id) => friend(id)?.nick || null,
+    setNick: (id, nick) =>
+      api('PUT', `v1/friends/${id}/nickname`, { nick }).then((r) => {
+        if (!r.error) event({ type: 'nickname', id, nick: r.nick });
+        return r;
+      }),
     unread: () => (S ? S.friends.reduce((n, f) => n + (f.unread || 0), 0) : 0),
     requests: () => (S ? S.incoming.length : 0),
     dnd: () => !!(S && S.me.status === 'dnd'),
@@ -190,8 +204,9 @@ window.Social = (() => {
     read: (id) => api('POST', 'v1/messages/read', { with: id }),
     // Whether friends see your active time (today, this week, in total); your level shows either way.
     setActivity: (show) => api('PATCH', 'v1/me/activity', { show }),
-    // Everyone with XP, by this week since Monday ('week') or ever ('all'); and whether you're listed there.
-    leaderboard: (by) => api('GET', `v1/leaderboard?by=${by === 'all' ? 'all' : 'week'}`),
+    // Everyone with XP, by this week since Monday ('week'), ever ('all') or this week among your friends ('friends');
+    // and whether you're listed there.
+    leaderboard: (by) => api('GET', `v1/leaderboard?by=${['all', 'friends'].includes(by) ? by : 'week'}`),
     setBoard: (show) => api('PATCH', 'v1/me/leaderboard', { show }),
     // Settings → Feedback: straight to the developer, with who sent it and when.
     feedback: (body) => api('POST', 'v1/feedback', { body }),

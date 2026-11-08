@@ -26,9 +26,9 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         webView.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
     }
 
-    /// The terminals' font for the page (Source Control shows code in it), the user's iTerm2 one, as
-    /// `window.__terminalLook`; their colours are the theme's (ThemeStore).
-    private static let terminalLook: String = {
+    /// The terminals' font for the pages that show code in it (Source Control, the file editor), the user's iTerm2 one,
+    /// as `window.__terminalLook`; their colours are the theme's (ThemeStore).
+    static let terminalLook: String = {
         let look = ITermLook.current
         let family = look?.fontName.flatMap { NSFont(name: $0, size: 13)?.familyName } ?? "Menlo"
         let value: [String: Any] = ["font": family, "size": Double(look?.fontSize ?? 13)]
@@ -55,6 +55,40 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     /// Source Control's requests (web/git.js) go to Git.swift.
     func handleGit(_ bridge: GitBridge) {
         webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "git")
+    }
+
+    /// The spend panel's history (web/app.js) comes from the engine's ledger (Ledger.swift).
+    func handleSpend(_ bridge: SpendBridge) {
+        webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "spend")
+    }
+
+    /// Source Control's files (web/file-editor.js) are read and written by FileEditor.swift.
+    func handleFiles(_ bridge: FilesBridge) {
+        bridge.web = webView
+        webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "files")
+    }
+
+    /// A file in Source Control's editor, in a tab of its own (or the one it has), at `line`; `cwd`: the folder its path
+    /// is shown from.
+    func openFile(_ url: URL, line: Int?, column: Int?, cwd: String) {
+        var spec: [String: Any] = ["path": url.standardizedFileURL.path, "cwd": cwd, "home": NSHomeDirectory()]
+        if let line { spec["line"] = line }
+        if let column { spec["column"] = column }
+        callPage("window.GitView && GitView.openFile(spec)", ["spec": spec])
+    }
+
+    /// ⌘N: a new file in Source Control's editor, VS Code's Untitled-1.
+    func newFile() { callPage("window.GitView && GitView.newFile()") }
+
+    /// What the editor hasn't saved yet goes to disk (the app quits), then `done`.
+    func flushFiles(_ done: @escaping @MainActor () -> Void) {
+        webView.callAsyncJavaScript("return window.FileEditor ? await FileEditor.flush() : true", arguments: [:], in: nil, in: .page) { _ in done() }
+    }
+
+    private func callPage(_ js: String, _ args: [String: Any] = [:]) {
+        webView.callAsyncJavaScript(js, arguments: args, in: nil, in: .page) { result in
+            if case .failure(let error) = result { NSLog("dashboard page: %@ failed: %@", js, String(describing: error)) }
+        }
     }
 
     func push(_ fn: String, _ json: String) {
@@ -111,5 +145,24 @@ final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     init(_ target: WKScriptMessageHandler) { self.target = target }
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(ucc, didReceive: message)
+    }
+}
+
+/// The spend panel's history tabs (web/app.js): the spend of the last days, weeks or months by project, from the engine's
+/// ledger (Ledger.swift).
+final class SpendBridge: NSObject, WKScriptMessageHandlerWithReply {
+    private let engine: RadarEngine
+
+    init(engine: RadarEngine) { self.engine = engine }
+
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        let body = message.body as? [String: Any] ?? [:]
+        guard body["type"] as? String == "history" else {
+            return MainActor.assumeIsolated { replyHandler(nil, "unknown request") }
+        }
+        engine.spendHistory(body["range"] as? String ?? "30d") { out in
+            MainActor.assumeIsolated { replyHandler(out, nil) }
+        }
     }
 }

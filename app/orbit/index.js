@@ -105,8 +105,9 @@ composer.addPass(new OutputPass());
 
 // Frame rate and resolution by where the map is. In front: 60 fps at full Retina resolution, since below either the
 // thin lines and names of the moving session hexagons flicker in the glow. Behind a chat window (or another app) the
-// map is in the corner of your eye, so it draws fewer and smaller frames. On battery or in Low Power Mode (power(),
-// from the app) it never goes past `saver`, in front either, and the cinematic camera doesn't start on its own.
+// map is in the corner of your eye, so it draws fewer and smaller frames. In power save (power(), from the app: the
+// switch on the map, a low battery or Low Power Mode on the Mac; on battery on Windows) it never goes past `saver`, in
+// front either, and the cinematic camera doesn't start on its own.
 // Dragging the view, or the camera flying somewhere, gets the front rate anywhere.
 const QUALITY = {
   front: { fps: 60, dpr: 2 },
@@ -784,9 +785,10 @@ const GONE = new Map();
 function syncShips(list) {
   const seen = new Set(), now = performance.now();
   const listed = new Set((list || []).map((t) => t.id));
+  const burning = new Set([...BOXES.values()].filter((b) => !b.dying).map((b) => b.r.pid));
   for (const [id, until] of GONE) if (until < now || !listed.has(id)) GONE.delete(id);
   for (const t of list || []) {
-    if (GONE.has(t.id)) continue;
+    if (GONE.has(t.id) || (t.left && burning.has(t.pid))) continue;
     seen.add(t.id);
     let s = SHIPS.get(t.id);
     if (!s || s.dying) {
@@ -982,6 +984,7 @@ function syncBoxes(list) {
     const k = `${r.pid}:${r.started}`;
     seen.add(k);
     if (killed.has(k)) continue;
+    for (const s of [...SHIPS.values()]) if (s.t.left && s.t.pid === r.pid) disposeShip(s);
     let b = BOXES.get(k);
     if (!b) {
       const model = buildBlueBox();
@@ -1200,7 +1203,7 @@ function stepCinematic(dt, now) {
     return;
   }
   if (now > cine.until || (cine.alarm && !subjectPos(cine))) {
-    // The alarm's shot is over: home, unless you're away and the idle camera goes on (not on battery).
+    // The alarm's shot is over: home, unless you're away and the idle camera goes on (not in power save).
     if (cine.alarm && (now - lastInput < CINE.IDLE_MS || ACT.saver)) {
       cine = null;
       resetView();
@@ -1881,7 +1884,7 @@ function activity(visible, focused) {
   applyQuality();
   wake();
 }
-// The Mac runs on battery or in Low Power Mode (true), or neither: see QUALITY. An idle camera tour going on ends.
+// Power save on (true) or off, from the app: see QUALITY. An idle camera tour going on ends.
 function power(saver) {
   ACT.saver = !!saver;
   if (ACT.saver && cine && !cine.alarm) {
@@ -1898,5 +1901,6 @@ function focusRunaway(pid) {
   if (b) followBox(b);
 }
 setCinematic(cineOn);
-window.Orbit = { state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
+// QUALITY too: the power save switch's tooltip (app.js) gives its numbers.
+window.Orbit = { quality: QUALITY, state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);

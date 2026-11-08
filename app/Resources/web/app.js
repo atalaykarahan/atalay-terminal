@@ -138,12 +138,53 @@ function setVisibility(visible, focused) {
   document.documentElement.classList.toggle('behind', visible && !focused);
   map('activity', visible, focused);
 }
+// Power save (the app decides and keeps it: PowerSaver.swift, the Windows app's power.js): the switch at the map's top
+// right, on when the map draws fewer and smaller frames, with why when it came on by itself (a low battery, the
+// system's own saver: the Mac's Low Power Mode, or `saver`, what the app calls it, Windows' Energy Saver). Not shown
+// until the app says.
+const saverName = (s) => s.saver || 'Low Power Mode';
+function setPowerSave(s) {
+  window.__powerSave = s;
+  const b = $('pwr');
+  b.hidden = false;
+  b.classList.toggle('on', s.on);
+  b.setAttribute('aria-checked', String(s.on));
+  setText(b.querySelector('em'), s.automatic ? (s.lowPower ? `auto · ${saverName(s).toLowerCase()}` : `auto · ${s.battery}%`) : '');
+  if ($('pwr-tip').classList.contains('show')) powerTip();
+  window.Cloud?.renderPower?.();
+}
+// Hovered, the switch says what power save changes, in the map's own numbers (QUALITY in orbit/index.js).
+function powerTip() {
+  const s = window.__powerSave, Q = window.Orbit?.quality;
+  if (!s || !Q) return;
+  const full = Math.min(Q.front.dpr, devicePixelRatio || 1), saved = Math.min(Q.saver.dpr, full);
+  const row = (what, off, on) => `<div class="r"><span>${what}</span>${off} → <b>${on}</b></div>`;
+  const why = s.automatic ? (s.lowPower ? `on by itself · ${saverName(s)}` : `on by itself · battery ${s.battery}%`) : '';
+  setHTML(
+    $('pwr-tip'),
+    `<div class="h">power save · ${s.on ? 'on' : 'off'}${why ? ` <i>${why}</i>` : ''}</div>` +
+      '<div class="d">on, the map in front draws:</div>' +
+      row('frame rate', `${Q.front.fps} fps`, `${Q.saver.fps} fps`) +
+      (saved < full ? row('resolution', `${full}×`, `${saved}× · ${Math.round(100 * (1 - (saved / full) ** 2))}% fewer pixels`) : '') +
+      row('camera tour', 'when you\'re away', 'never') +
+      `<div class="d gap">the same either way: ${Q.behind.fps} fps at ${Q.behind.dpr}× behind another window, ${Q.front.fps} fps while you drag or the camera flies, nothing drawn while the dashboard is hidden</div>` +
+      `<div class="d">${s.auto ? `on by itself below ${s.threshold}% on battery and in ${saverName(s)}` : 'never on by itself'} · Settings · POWER</div>` +
+      `<div class="d">click to turn it ${s.on ? 'off' : 'on'}</div>`,
+  );
+}
+$('pwr').addEventListener('click', () => native({ type: 'powerSave', on: !window.__powerSave?.on }));
+for (const [ev, show] of [['mouseenter', true], ['focus', true], ['mouseleave', false], ['blur', false]]) {
+  $('pwr').addEventListener(ev, () => {
+    if (show) powerTip();
+    $('pwr-tip').classList.toggle('show', show);
+  });
+}
 function setActiveSession(sid) {
   ACTIVE_SID = sid || null;
   if (STATE) renderTop();
 }
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
 }
 
@@ -276,6 +317,17 @@ $('sound').addEventListener('click', () => {
   if (soundOn) ping('idle');
 });
 paintSound();
+// Settings sync (sync.js): the sound as set here, or as another of the user's computers set it.
+window.__sound = {
+  on: () => soundOn,
+  set(on) {
+    soundOn = !!on;
+    try {
+      localStorage.setItem('radar.sound', soundOn ? '1' : '0');
+    } catch {}
+    paintSound();
+  },
+};
 
 // ---------- small UI bits ----------
 function flashEdge() {
@@ -718,9 +770,50 @@ function updateCard(el, s) {
   setText(q('.cost'), fmtUsd(s.cost));
   setHTML(q('.spark'), sparkBars(s.spark, col));
   setText(q('.ag'), s.agents.length ? `⤷ ${s.agentsRunning} running · ${s.agents.length} subagents (15 min)` : '');
-  setHTML(q('.flags'), s.flags.map((f) => `<span class="flag">${esc(f)}</span>`).join(''));
+  const clash = CLASH.get(s.id);
+  setHTML(
+    q('.flags'),
+    s.flags.map((f) => `<span class="flag">${esc(f)}</span>`).join('') +
+      (clash ? `<span class="flag clash" title="${esc(`Another chat is writing the same file: ${clash.join(' · ')}`)}">⚠ same file</span>` : ''),
+  );
 }
+// Files two chats wrote in the last 20 minutes (the engine's `collision`; a chat and its own subagents are one chat), by
+// chat: each one's card says so (⚠ same file), with the file and the other chat. The Windows engine names no `clash` yet:
+// its file's editors then.
+let CLASH = new Map();
+function clashFiles() {
+  return (STATE.files || [])
+    .filter((f) => f.collision)
+    .map((f) => ({ f, sids: f.clash && f.clash.length ? f.clash : [...new Set((f.editors || []).map((e) => e.s))] }));
+}
+function clashes() {
+  const m = new Map();
+  for (const { f, sids } of clashFiles()) {
+    for (const s of sids) {
+      const others = sids.filter((x) => x !== s).map(sessName);
+      if (!m.has(s)) m.set(s, []);
+      m.get(s).push(`${f.short} (also ${others.join(', ')})`);
+    }
+  }
+  return m;
+}
+
+// A collision that begins pops up in the screen's corner as a chat that needs you does (messages.js), and its notice goes
+// when it's over. What collides when the page starts was there before: no notice for that.
+let clashSeen = null;
+function tellClashes() {
+  const now = new Map();
+  for (const { f, sids } of clashFiles()) now.set(f.p, { key: f.p, file: f.short, path: f.p, chats: sids.map(sessName) });
+  if (clashSeen) {
+    for (const [k, c] of now) if (!clashSeen.has(k)) native({ type: 'clash', ...c });
+    for (const k of clashSeen.keys()) if (!now.has(k)) native({ type: 'clashOver', key: k });
+  }
+  clashSeen = now;
+}
+
 function renderSessions() {
+  CLASH = clashes();
+  tellClashes();
   const box = $('sessions');
   if (!STATE.sessions.length) return placeholder(box, 'no Claude Code session in the last 30 min');
   keyed(box, STATE.sessions, (s) => s.id, createCard, updateCard);
@@ -859,6 +952,8 @@ function renderFiles() {
       .sort((a, b) => b.r + b.w - (a.r + a.w));
   }
   const collisions = items.filter((f) => f.collision).length;
+  // A collision stays marked on the panel's strip, not only in its line (a ⚠ blinked three times and was gone).
+  $('p-files').classList.toggle('clash', collisions > 0);
   setText($('m-files'), collisions ? `⚠ ${collisions} file edited by 2+ agents` : c ? `${items.length} touched ${since(c)}` : `${items.length} most-touched today`);
   if (!items.length) return placeholder(box, c ? `cleared · no file reads or edits ${since(c)}` : 'no file reads or edits yet today');
   const max = Math.max(1, ...items.map((f) => f.r + f.w));
@@ -932,15 +1027,165 @@ function renderWorkers() {
   );
 }
 
+// ---------- spend ----------
+// Today: the live figures. 7d, 30d, 12w, 12m: spend by project (a git repo, else the folder) from the app's ledger
+// (Ledger.swift), asked of the app when the tab changes and once a minute while it shows; its last bar is today, live.
+const SPEND_RANGES = ['today', '7d', '30d', '12w', '12m'];
+const SPEND_SPAN = { '7d': '7 days', '30d': '30 days', '12w': '12 weeks', '12m': '12 months' };
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+let spendRange = 'today';
+try {
+  const r = localStorage.getItem('spend.range');
+  if (SPEND_RANGES.includes(r)) spendRange = r;
+} catch {}
+let spendHist = null;
+let spendAsked = 0;
+let spendAsking = false;
+
+function askSpend(force) {
+  const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spend;
+  if (spendRange === 'today' || spendAsking || !handler) return;
+  // While the app reads the transcripts the first time, again every few seconds.
+  const every = spendHist && spendHist.reading ? 4000 : 60_000;
+  if (!force && Date.now() - spendAsked < every) return;
+  spendAsking = true;
+  spendAsked = Date.now();
+  const range = spendRange;
+  Promise.resolve(handler.postMessage({ type: 'history', range }))
+    .then((d) => {
+      if (range !== spendRange || !d) return;
+      spendHist = d;
+      if (STATE) renderSpend();
+    })
+    .catch(() => {})
+    .finally(() => {
+      spendAsking = false;
+    });
+}
+
+function setSpendRange(r) {
+  if (!SPEND_RANGES.includes(r) || r === spendRange) return;
+  spendRange = r;
+  spendHist = null;
+  try {
+    localStorage.setItem('spend.range', r);
+  } catch {}
+  askSpend(true);
+  if (STATE) renderSpend();
+}
+
+// "2026-11-05" in the panel's words: "5 Nov"; a month by its name ("Nov 2026" in full).
+function spendLabel(key, unit, full) {
+  const [y, m, d] = String(key).split('-').map(Number);
+  if (unit === 'month') return full || m === 1 ? `${MONTHS[m - 1]} ${y}` : MONTHS[m - 1];
+  return `${d} ${MONTHS[m - 1]}`;
+}
+
+// The rows' and the bars' colour: the sessions' hues, "other" dim.
+const spendColor = (p, i) => (p.id === '*' ? 'var(--dim2)' : `var(--hue${i % 10})`);
+
+// A bar a day (week, month), stacked by project; hovering one tells its date and total.
+function stackBars(d, w, h) {
+  const n = d.totals.length;
+  const max = Math.max(...d.totals, 1e-9);
+  const bw = w / n;
+  const gap = Math.min(2, bw * 0.25);
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    const x = (i * bw + gap / 2).toFixed(2);
+    const width = (bw - gap).toFixed(2);
+    let y = h;
+    let rects = '';
+    d.projects.forEach((p, j) => {
+      const v = p.series[i];
+      if (!v) return;
+      const bh = (v / max) * (h - 2);
+      y -= bh;
+      rects += `<rect x="${x}" y="${y.toFixed(2)}" width="${width}" height="${bh.toFixed(2)}" style="fill:${spendColor(p, j)}"/>`;
+    });
+    const when = d.unit === 'week' ? `week of ${spendLabel(d.starts[i], 'day')}` : spendLabel(d.starts[i], d.unit, true);
+    out += `<g><title>${esc(when)} · ${fmtUsd(d.totals[i])}</title><rect x="${x}" y="0" width="${width}" height="${h}" style="fill:transparent"/>${rects}</g>`;
+  }
+  return out;
+}
+
+function renderSpendHistory() {
+  // Cleared (its right-click menu, for a stream or what nobody else should see): the days before it don't show either.
+  const c = clearedOf('p-spend');
+  if (c) {
+    setNum('spend-big', Math.max(0, STATE.totals.cost - c.cost), fmtUsd);
+    setText($('spend-sub'), `${since(c)} · history hidden while cleared`);
+    for (const id of ['spend-chart', 'spend-rows', 'spend-models', 'spend-kv']) setHTML($(id), '');
+    return;
+  }
+  askSpend(false);
+  const d = spendHist;
+  if (!d || !d.totals) {
+    setText($('spend-sub'), `last ${SPEND_SPAN[spendRange]} · loading…`);
+    for (const id of ['spend-chart', 'spend-rows', 'spend-models', 'spend-kv']) setHTML($(id), '');
+    return;
+  }
+  setNum('spend-big', d.total, fmtUsd);
+  // The average over the bars since the history starts (Claude keeps transcripts for 30 days; the app keeps the ledger
+  // from then on), not over the empty months before it.
+  let first = 0;
+  if (d.since) d.starts.forEach((s, i) => s <= d.since && (first = i));
+  const bars = d.starts.length - first;
+  setText($('spend-sub'), `last ${SPEND_SPAN[spendRange]} · ${fmtUsd(d.total / Math.max(1, bars))}/${d.unit} avg · api-eq`);
+  setHTML($('spend-chart'), stackBars(d, 300, 34));
+  setHTML(
+    $('spend-rows'),
+    d.projects.length
+      ? d.projects
+          .map(
+            (p, j) =>
+              `<div class="sr"><span title="${esc(p.path)}"><i class="sw" style="background:${spendColor(p, j)}"></i><b>${esc(p.label)}</b>${p.model ? ` · ${esc(p.model)}` : ''}</span><span>${Math.round(p.share * 100)}%</span><span class="c">${fmtUsd(p.cost)}</span></div>`,
+          )
+          .join('')
+      : `<div class="sr"><span>${d.reading ? 'reading your transcripts…' : 'no spend in this period'}</span></div>`,
+  );
+  // Every project's spend by model, in one line: the three costliest, the rest counted.
+  const models = d.models || [];
+  setHTML(
+    $('spend-models'),
+    models.length
+      ? '<span class="lbl">models</span>' +
+          models
+            .slice(0, 3)
+            .map(
+              (m) =>
+                `<span title="${m.calls} calls · ${fmtTok(m.out)} out"><b>${esc(m.model)}</b> ${m.cost > 0 ? `${fmtUsd(m.cost)} <i>${Math.round(m.share * 100)}%</i>` : 'no price'}</span>`,
+            )
+            .join('') +
+          (models.length > 3 ? `<span title="${esc(models.slice(3).map((m) => `${m.model} ${fmtUsd(m.cost)}`).join(' · '))}">+${models.length - 3} more</span>` : '')
+      : '',
+  );
+  let top = 0;
+  d.totals.forEach((v, i) => v > d.totals[top] && (top = i));
+  const kv = [];
+  const busiest = (d.unit === 'week' ? 'week of ' : '') + spendLabel(d.starts[top], d.unit);
+  if (d.total > 0) kv.push(`<span>busiest <b>${esc(busiest)}</b> ${fmtUsd(d.totals[top])}</span>`);
+  if (d.since) kv.push(`<span>history from <b>${esc(spendLabel(d.since, 'day'))}</b></span>`);
+  if (d.reading) kv.push('<span>reading transcripts…</span>');
+  setHTML($('spend-kv'), kv.join(''));
+}
+
 function renderSpend() {
   const box = $('spend');
+  const tabs = document.querySelectorAll('#spend-tabs button');
   if (!box.dataset.ready) {
     box.innerHTML =
       '<div class="spend-big" id="spend-big">$0</div><div class="spend-sub" id="spend-sub"></div>' +
       '<svg class="chart" id="spend-chart" viewBox="0 0 300 34" preserveAspectRatio="none"></svg>' +
-      '<div class="spend-rows" id="spend-rows"></div><div class="spend-kv" id="spend-kv"></div>';
+      '<div class="spend-rows" id="spend-rows"></div><div class="spend-models" id="spend-models"></div><div class="spend-kv" id="spend-kv"></div>';
+    for (const b of tabs) b.addEventListener('click', () => setSpendRange(b.dataset.r));
     box.dataset.ready = '1';
   }
+  for (const b of tabs) b.classList.toggle('on', b.dataset.r === spendRange);
+  box.classList.toggle('hist', spendRange !== 'today');
+  if (spendRange !== 'today') return renderSpendHistory();
+  // Today's models are the rows themselves.
+  setHTML($('spend-models'), '');
   const c = clearedOf('p-spend');
   let T = STATE.totals, models = STATE.byModel;
   const spark = sparkSince(STATE.costSpark, c);

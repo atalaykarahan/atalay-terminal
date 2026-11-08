@@ -8,13 +8,15 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 const boot = ipcRenderer.sendSync('atl:boot') || {};
 
 const handlers = {};
-for (const name of ['radar', 'cloud', 'git', 'theme', 'overlay', 'messages', 'savers', 'chats', 'archive']) {
+for (const name of ['radar', 'cloud', 'git', 'theme', 'overlay', 'messages', 'savers', 'chats', 'archive', 'spend', 'files']) {
   handlers[name] = { postMessage: (body) => ipcRenderer.invoke('atl:post', name, body) };
 }
 contextBridge.exposeInMainWorld('webkit', { messageHandlers: handlers });
 // The pages name the computer and the command key by it ("this PC", Ctrl+).
 contextBridge.exposeInMainWorld('__platform', process.platform);
 if (boot.look) contextBridge.exposeInMainWorld('__terminalLook', boot.look);
+// A terminal window's text size (main.js's termFontSize), before it draws its first line.
+if (boot.termFont) contextBridge.exposeInMainWorld('__termFont', boot.termFont);
 if (boot.role) contextBridge.exposeInMainWorld('__MESSAGES_ROLE__', boot.role);
 if (boot.friend) contextBridge.exposeInMainWorld('__MESSAGES_FRIEND__', boot.friend);
 
@@ -23,6 +25,8 @@ const TERM = /^term:/;
 contextBridge.exposeInMainWorld('atl', {
   send: (channel, data) => TERM.test(channel) && ipcRenderer.send(channel, data),
   on: (channel, fn) => TERM.test(channel) && ipcRenderer.on(channel, (_e, data) => fn(data)),
+  // A question with an answer (which of a line's pieces are files).
+  ask: (channel, data) => (TERM.test(channel) ? ipcRenderer.invoke(channel, data) : Promise.reject(new Error('not a terminal channel'))),
 });
 
 // The shortcut wheel: Ctrl and the middle mouse button, anywhere in the app's windows (the Mac opens it with the middle

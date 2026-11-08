@@ -71,6 +71,11 @@
 .mb.wait .mb-border { background: conic-gradient(from var(--ang), var(--warn), var(--amber), var(--accent), var(--warn)); animation-duration: 2.4s; }
 .mb.wait .mb-x { margin-left: auto; }
 .mb.wait .mb-text { padding-bottom: 11px; }
+/* two chats writing the same file: as a chat that needs you, in red */
+.mb.clash { --glow: var(--red-rgb); }
+.mb.clash .mb-tag { background: var(--red); }
+.mb.clash .mb-border { background: conic-gradient(from var(--ang), var(--red), var(--amber), var(--red)); }
+.mb.clash .mb-text { color: var(--dim); font-size: 0.9em; overflow-wrap: anywhere; }
 
 /* the input: a prompt line, as in the rest of the app */
 .mb-input { display: flex; align-items: flex-end; gap: 8px; margin: 6px 10px 10px; padding: 6px 8px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.42); transition: border-color 0.2s, box-shadow 0.2s; }
@@ -151,6 +156,95 @@
 .tk-hint { position: absolute; left: 0; right: 0; bottom: 7vh; color: rgba(var(--rc), 0.85); font-size: clamp(11px, 0.95vw, 15px); font-weight: 700; letter-spacing: 0.4em; text-align: center; text-transform: uppercase; opacity: 0; transition: opacity 0.4s; }
 .tk.free .tk-hint { opacity: 1; animation: tk-caret 1.1s steps(1) infinite; }
 
+/* A new badge's reveal (messages.js showReveal), in the badge's own colours (--rc the rim, --rs the shine), never the
+   theme's: the badges look the same everywhere, as CS:GO's items. */
+.tk.rv { --rc: 201, 138, 85; --rs: 242, 192, 141; --art: min(34vh, 30vw); cursor: none; }
+.rv-veil { position: absolute; inset: 0; background: radial-gradient(circle at 50% 42%, rgba(var(--rc), 0.28), transparent 55%), rgba(6, 6, 9, 0.9); animation: rv-fade var(--build, 0.5s) cubic-bezier(0.4, 0, 0.8, 1) both; }
+/* the screen's edges, as CS:GO's rarity light: the badge's colour glowing in from them, flickering while the sound builds,
+   flaring on the burst and then breathing; a HUD's corners closing in, a line of light along the top and the bottom */
+.rv-edge { position: absolute; inset: 0; z-index: 1; opacity: 0; box-shadow: inset 0 0 14vh rgba(var(--rc), 0.6), inset 0 0 2.5vh rgba(var(--rs), 0.55); pointer-events: none; animation: rv-edge-build var(--build, 0.6s) ease-in both; }
+.rv.hit .rv-edge { animation: rv-edge-hit 0.9s ease-out both, rv-edge-breathe 2.6s ease-in-out 0.9s infinite; }
+.rv-frame { position: absolute; inset: 2.4vh; z-index: 2; pointer-events: none; }
+.rv-frame i { position: absolute; width: 8vh; height: 8vh; border: 0 solid rgb(var(--rs)); filter: drop-shadow(0 0 1vh rgba(var(--rc), 0.95)); opacity: 0; animation: rv-corner var(--build, 0.6s) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.rv-frame .tl { top: 0; left: 0; border-width: 0.5vh 0 0 0.5vh; --x: -8vh; --y: -8vh; transform-origin: 0 0; }
+.rv-frame .tr { top: 0; right: 0; border-width: 0.5vh 0.5vh 0 0; --x: 8vh; --y: -8vh; transform-origin: 100% 0; }
+.rv-frame .bl { bottom: 0; left: 0; border-width: 0 0 0.5vh 0.5vh; --x: -8vh; --y: 8vh; transform-origin: 0 100%; }
+.rv-frame .br { right: 0; bottom: 0; border-width: 0 0.5vh 0.5vh 0; --x: 8vh; --y: 8vh; transform-origin: 100% 100%; }
+.rv.hit .rv-frame i { opacity: 1; animation: rv-corner-hit 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.3) both; }
+.rv-frame::before, .rv-frame::after { content: ""; position: absolute; right: 9vh; left: 9vh; height: 0.3vh; opacity: 0; background: linear-gradient(90deg, transparent, rgb(var(--rs)), transparent); box-shadow: 0 0 1.5vh rgba(var(--rc), 0.9); }
+.rv-frame::before { top: 0.1vh; }
+.rv-frame::after { bottom: 0.1vh; }
+.rv.hit .rv-frame::before, .rv.hit .rv-frame::after { animation: rv-line 1.3s ease-out both; }
+.rv-sparks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+.rv-flash { position: absolute; inset: 0; z-index: 3; pointer-events: none; opacity: 0; background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.85), rgba(var(--rs), 0.45) 12%, rgba(var(--rc), 0.12) 30%, transparent 55%); }
+.rv.hit .rv-flash { animation: rv-flash 0.4s ease-out both; }
+.rv-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-bottom: 4vh; }
+.rv-stage { position: relative; width: var(--art); height: var(--art); margin-bottom: 4vh; }
+.rv.hit .rv-stage { animation: rv-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+.rv-stage > * { position: absolute; left: 50%; top: 50%; }
+/* light turning behind it: wide rays one way, thin ones the other */
+.rv-rays { width: 260%; height: 260%; margin: -130% 0 0 -130%; opacity: 0; border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(var(--rs), 0.2) 0deg 5deg, transparent 5deg 20deg);
+  -webkit-mask-image: radial-gradient(circle, #000 12%, transparent 62%); mask-image: radial-gradient(circle, #000 12%, transparent 62%); }
+.rv-rays.b { width: 220%; height: 220%; margin: -110% 0 0 -110%; background: repeating-conic-gradient(from 7deg, rgba(var(--rc), 0.22) 0deg 1.5deg, transparent 1.5deg 11deg); }
+.rv.hit .rv-rays { animation: rv-rays-in 0.8s ease-out both, rv-spin 28s linear infinite; }
+.rv.hit .rv-rays.b { animation: rv-rays-in 1s ease-out both, rv-spin-b 40s linear infinite; }
+.rv-glow { width: 170%; height: 170%; margin: -85% 0 0 -85%; border-radius: 50%; opacity: 0; background: radial-gradient(circle, rgba(var(--rs), 0.5), rgba(var(--rc), 0.25) 35%, transparent 65%); }
+.rv:not(.hit) .rv-glow { animation: rv-charge var(--build, 0.6s) ease-in both; }
+.rv.hit .rv-glow { animation: rv-pulse 2.6s ease-in-out 0.3s infinite; opacity: 1; }
+/* the shockwave: two rings out from where it lands */
+.rv-ring { width: 100%; height: 100%; margin: -50% 0 0 -50%; border-radius: 50%; border: 0.5vh solid rgba(var(--rs), 0.9); box-shadow: 0 0 3vh rgba(var(--rc), 0.8), inset 0 0 3vh rgba(var(--rc), 0.6); opacity: 0; }
+.rv.hit .rv-ring { animation: rv-ring 0.75s cubic-bezier(0.1, 0.6, 0.3, 1) both; }
+.rv.hit .rv-ring.b { animation: rv-ring 1s cubic-bezier(0.1, 0.6, 0.3, 1) 0.12s both; border-width: 0.25vh; }
+/* the badge: only its shadow while the sound builds (black, its colour around the edge, growing, trembling at the end),
+   itself on the burst (a white-hot slam), then it floats */
+.rv-art { width: 100%; height: 100%; margin: -50% 0 0 -50%; filter: brightness(0) drop-shadow(0 0 1.4vh rgba(var(--rc), 0.85)); animation: rv-shadow var(--build, 0.6s) cubic-bezier(0.3, 0, 0.7, 1) both; }
+/* the burst (a key can bring it forward), or straight on from the badge before: the dark is simply there */
+.rv.hit .rv-veil, .rv.cont .rv-veil { animation: none; opacity: 1; }
+.rv.hit .rv-art { filter: none; animation: rv-reveal 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.3) both, rv-float 4.5s ease-in-out 0.6s infinite; }
+.rv-art .badge-art { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 2.2vh rgba(var(--rc), 0.75)) drop-shadow(0 1.5vh 2vh rgba(0, 0, 0, 0.6)); }
+/* a gleam across its face after it lands */
+/* a badge's gleam (badge-art.js gleam): a brightened copy of its picture through a stripe that crosses it */
+.gleam { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; filter: brightness(2.4) saturate(0.4); opacity: 0.85;
+  -webkit-mask-image: linear-gradient(110deg, transparent 42%, #000 50%, transparent 58%); mask-image: linear-gradient(110deg, transparent 42%, #000 50%, transparent 58%);
+  -webkit-mask-size: 300% 100%; mask-size: 300% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+@keyframes gleam-cross { 0% { -webkit-mask-position: 100% 0; mask-position: 100% 0; } 100% { -webkit-mask-position: 0 0; mask-position: 0 0; } }
+.rv.hit .rv-shine { animation: gleam-cross 1.1s ease-in-out 0.45s both, gleam-cross 1.1s ease-in-out 3.2s both; }
+.rv-kicker { color: rgb(var(--rs)); font-size: min(1.6vw, 2.4vh); font-weight: 800; letter-spacing: 0.55em; text-indent: 0.55em; opacity: 0; text-shadow: 0 0 1.2vh rgba(var(--rc), 0.9); }
+.rv-name { margin-top: 1.4vh; color: #fff; font-size: min(6.4vw, 9.5vh); font-weight: 800; line-height: 1.05; letter-spacing: 0.04em; white-space: nowrap; opacity: 0;
+  text-shadow: 0 0 0.12em rgba(var(--rc), 0.9), 0 0 0.5em rgba(var(--rc), 0.45), 0 0.06em 0.12em #000; }
+.rv-tier { margin-top: 1.2vh; color: rgb(var(--rc)); font-size: min(2.2vw, 3.3vh); font-weight: 800; letter-spacing: 0.4em; text-indent: 0.4em; text-transform: uppercase; opacity: 0; filter: brightness(1.35); text-shadow: 0 0 1vh rgba(var(--rc), 0.7), 0 2px 4px #000; }
+.rv-kicker.on, .rv-name.on, .rv-tier.on, .rv-note.on { animation: rv-up 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.rv-note { margin-top: 3vh; color: rgba(255, 255, 255, 0.6); font-size: min(1.1vw, 1.8vh); letter-spacing: 0.08em; opacity: 0; }
+.tk.rv .tk-hint { color: rgba(var(--rs), 0.8); z-index: 4; }
+#takeover.rv.out { animation: rv-out 0.45s ease-in both; }
+/* a grand one (gold and up, a medal, a hidden one): bigger, brighter, faster rays */
+.rv.grand { --art: min(40vh, 34vw); }
+.rv.grand .rv-rays { background: repeating-conic-gradient(from 0deg, rgba(var(--rs), 0.32) 0deg 6deg, transparent 6deg 18deg); }
+.rv.grand.hit .rv-rays { animation: rv-rays-in 0.8s ease-out both, rv-spin 16s linear infinite; }
+.rv.grand .rv-veil { background: radial-gradient(circle at 50% 42%, rgba(var(--rc), 0.42), transparent 60%), rgba(6, 6, 9, 0.9); }
+
+@keyframes rv-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rv-edge-build { 0% { opacity: 0; } 45% { opacity: 0.35; } 55% { opacity: 0.15; } 70% { opacity: 0.5; } 78% { opacity: 0.25; } 88% { opacity: 0.7; } 93% { opacity: 0.4; } 100% { opacity: 0.9; } }
+@keyframes rv-edge-hit { 0% { opacity: 1; box-shadow: inset 0 0 26vh rgba(var(--rs), 0.95), inset 0 0 5vh rgba(255, 255, 255, 0.9); } 100% { opacity: 0.75; } }
+@keyframes rv-edge-breathe { 50% { opacity: 0.4; } }
+@keyframes rv-corner { 0% { opacity: 0; transform: translate(var(--x), var(--y)); } 50% { opacity: 0.9; } 100% { opacity: 1; transform: none; } }
+@keyframes rv-corner-hit { 0% { transform: scale(1.6); filter: brightness(2.2) drop-shadow(0 0 2vh rgba(var(--rs), 1)); } 100% { transform: none; } }
+@keyframes rv-line { 0% { opacity: 1; transform: scaleX(0); } 35% { opacity: 1; transform: scaleX(1); } 100% { opacity: 0.3; transform: scaleX(1); } }
+@keyframes rv-flash { 0% { opacity: 0; } 10% { opacity: 0.8; } 100% { opacity: 0; } }
+@keyframes rv-shake { 0% { transform: translate(0, 1.6vh); } 15% { transform: translate(-1vh, -0.8vh) rotate(-1.2deg); } 30% { transform: translate(0.9vh, 0.6vh) rotate(1deg); } 45% { transform: translate(-0.6vh, -0.3vh); } 60% { transform: translate(0.4vh, 0.2vh); } 80% { transform: translate(-0.15vh, 0); } 100% { transform: none; } }
+@keyframes rv-rays-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rv-spin { from { rotate: 0deg; } to { rotate: 360deg; } }
+@keyframes rv-spin-b { from { rotate: 0deg; } to { rotate: -360deg; } }
+@keyframes rv-charge { from { opacity: 0; transform: scale(0.3); } to { opacity: 0.8; transform: scale(0.75); } }
+@keyframes rv-pulse { 0%, 100% { transform: scale(0.95); opacity: 0.85; } 50% { transform: scale(1.06); opacity: 1; } }
+@keyframes rv-ring { from { opacity: 1; transform: scale(0.6); } to { opacity: 0; transform: scale(3.4); } }
+@keyframes rv-shadow { 0% { opacity: 0; transform: scale(0.72); } 35% { opacity: 0.85; } 86% { transform: scale(0.94); } 90% { transform: scale(0.93) translateX(-0.35vh); } 94% { transform: scale(0.95) translateX(0.35vh); } 97% { transform: scale(0.94) translateX(-0.2vh); } 100% { opacity: 1; transform: scale(0.96); } }
+@keyframes rv-reveal { 0% { transform: scale(1.22); filter: brightness(2.6) drop-shadow(0 0 4vh rgba(var(--rs), 1)); } 45% { transform: scale(0.94); filter: brightness(1.3); } 100% { transform: none; filter: none; } }
+@keyframes rv-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -1.2vh; } }
+@keyframes rv-up { from { opacity: 0; transform: translateY(1.6vh) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes rv-out { to { opacity: 0; transform: scale(1.04); filter: blur(4px); } }
+
 @keyframes tk-veil { 0% { opacity: 0; } 20% { opacity: 0.9; } 40% { opacity: 0.25; } 60% { opacity: 1; } 80% { opacity: 0.55; } 100% { opacity: 1; } }
 @keyframes tk-noise { 0% { transform: translate(0, 0); } 20% { transform: translate(-6%, 4%); } 40% { transform: translate(5%, -3%); } 60% { transform: translate(-3%, -6%); } 80% { transform: translate(6%, 5%); } 100% { transform: translate(0, 0); } }
 @keyframes tk-bar { from { transform: translateX(-4vw); } to { transform: translateX(4vw); } }
@@ -196,3 +290,5 @@ body.danger-on #msgbox { display: none; }
 .dg-acts button { height: 30px; min-width: 104px; padding: 0 14px; border: 1px solid rgba(255, 90, 90, 0.45); border-radius: 6px; background: transparent; color: #f5e0e0; font: inherit; font-size: 13px; cursor: pointer; }
 .dg-acts button:hover { border-color: #ff8a8a; }
 .dg-acts .go { border-color: #ff2e2e; background: #ff2e2e; color: #1a0000; font-weight: 700; }
+
+/* a badge earned (badges.ts): its art beside the words */

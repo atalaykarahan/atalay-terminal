@@ -3,6 +3,27 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.19.0
+
+- Accounts: sign in if you like, with GitHub or a 6-digit code by e-mail (Settings → ACCOUNT, or the account icon at the activity bar's foot, your GitHub picture once signed in). Your Macs and Windows PCs join one account: XP and hours add up (time on two at once counts once), friends and messages come together, and settings follow you as VS Code's Settings Sync. Sign out, take a computer off, or delete everything after a warning
+- Badges: 21 collectibles as CS:GO's, bronze to diamond, for signed-in accounts: one for each AI tool (Claude, Codex, Gemini, Antigravity), a Season Medal each quarter, Founder for everyone here before 1.0, and more, a few hidden. Your card tops the friends list; a click opens your profile and inventory. Right click a badge to display it beside your name everywhere. A new one takes the screen with its own sound, several come one by one (any key jumps ahead), and level 60 offers that year's Service Medal
+- Leaderboard and friends, redrawn: everyone's week together at the top with a weekly goal, the first three on a podium, your row pinned with how far the one above you is, FRIENDS and NEAR ME tabs, and pictures (GitHub's once someone signed in) on the leaderboard, the podium and the friends list, split into ONLINE and OFFLINE
+- Roadmap: the rocket on the activity bar asks what to build next. 3 votes each, the results once yours are in, and what the votes made: coming next and shipped, with a notice when the one you voted for ships
+- Files: a text file ⌘-clicked in a terminal opens in Source Control's editor beside the diff (a Markdown file as its preview), saved as you type and read again when Claude changes it. ⌘N opens a new file; New terminal moves to ⇧⌘N
+- Friends: nicknames as on Steam (right click → add nickname, only you see it); a click on a friend shows their card, a double click opens the chat
+- Power save: a switch at the map's top right draws the map at 30 fps and smaller; it comes on by itself below 20% battery and in Low Power Mode, which Settings · POWER can turn off
+- Fixes: the orbit map no longer goes blank after the friends list or the leaderboard; End Session on a mirror ends the chat where it runs (asking first), and a mirror fits its window with no empty space
+
+## 0.18.0
+
+- Same file: two chats writing one file in the last 20 minutes turn files.heat's strip red, put ⚠ same file on both chats' cards and pop up in the screen's corner until it's over; a chat's own subagents don't count as another chat. The idea is @EmirCobanOfficial's on GitHub
+- Spend: spend.ledger gets 7d, 30d, 12w and 12m tabs by project and model; the app keeps each day's spend itself, as Claude Code deletes transcripts after 30 days. Thanks to @kwa0x2 on GitHub, kwa#4873 in the app
+- Chats list: each folder is a card of its own, folded or opened with a click on its strip (⌘-click, Ctrl+click on Windows, selects it for archiving several at once); the app's terminals show in their folders with what runs in them, and open folder keeps a folder at the top with a terminal in it. After @OmerAktas1's design on GitHub
+- Chats list: the chat in front lights up as the active window, and Windows terminals copy a selection as the Mac's do. Thanks to @EmirCobanOfficial on GitHub
+- Runaways: macOS system and XPC services no longer raise the alarm, a process stuck under a closed terminal's leftover burns as its blue box instead of flying as a car, and work a live chat started in its folder is left alone. Thanks to @EmirCobanOfficial on GitHub
+- Mac terminals: Codex and Antigravity take a multi-line paste whole and the scroll wheel; the orbit's cars free all their graphics memory. Thanks to @EmirCobanOfficial on GitHub
+- Windows: links in a terminal window open in the browser. Thanks to @farukiskender on GitHub
+
 ## 0.17.0
 
 - Dashboard: move the small panels by their strip, hide them (the top bar's panels menu brings them back) and size them by the lines between them; the layout stays. Thanks to @OmerAktas1 on GitHub
@@ -123,10 +144,8 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Terminal view (PR #10, Ömer; Mac version written 2026-11-07, set aside): the chats and terminals shown take the dashboard's middle side by side, up to six in a grid, and the activity bar's terminal button brings them back. Hard to use as it is: they cover the map, so another one opens only from the chats list. Idea: the button brings every open one at once. The Mac code is kept at `refs/postponed/terminal-view` (`git cherry-pick refs/postponed/terminal-view`)
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines. Cause (found 2026-11-04, reproduced headless with SwiftTerm + the relay + screen): screen 4.0 resizes a window bottom-anchored. Shrinking keeps the cursor's distance from the bottom, so with blank rows under the cursor (short output, after a clear) the output above it goes into screen's own history, which the view never shows, and only blank rows remain; growing pulls lines back in at the top. Fix to try: before a shrink, put the cursor on row max(0, old rows - new rows - blank rows under it) (screen then drops the blank bottom rows instead), apply the size, put the cursor back; the pty size has to wait for that (LocalProcessTerminalView.sizeChanged isn't open, so the relay holds it). Windows has no screen: check it there separately
-- Runaways (bug, reported 2026-11-04): a frozen project shows on the orbit as a car, not as the burning blue box (the TARDIS) that runaway processes get; find out why it isn't taken for a runaway, or why its box is drawn as a car (Mac and Windows)
-- Runaways (bug, reported 2026-11-04): a long job Claude starts in a shell (a video edit's render, for one) flies as a car of its own, and a click on it offers to end it as if it were left running loose, while it's doing the user's work; tell real work (still busy, started by a live session) from leftovers, and don't offer to end it there (Mac and Windows)
-- Chat list (requested 2026-11-04): the chat whose window is in front lights up as selected in the list, and moves with the click: with two chat windows open, the one you click to the top glows in the list (Mac and Windows)
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
 - Themes of your own: make a theme and keep up to 4 in slots; watching someone on the leaderboard, copy their theme into one of your 4 slots, as CS2 copies a crosshair: a copy of its own, so it stays as it was when its owner changes or deletes theirs
 - Big update · accounts: sign in, and a user's Macs and Windows PCs join one account: their hours and XP add up there, and their settings sync between them by default (as VS Code's Settings Sync), which Settings can turn off

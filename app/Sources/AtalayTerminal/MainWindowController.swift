@@ -11,6 +11,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let overlay = OverlayController()
     /// Processes left burning a core where nobody sees them; the dashboard sounds the alarm.
     let runaways = Runaways()
+    /// Source Control's files (FileEditor.swift): the ones the page may read and write.
+    let files = FilesBridge()
 
     private var chats: [String: ChatWindowController] = [:]
     private var briefs: [String: SessionBrief] = [:]
@@ -32,6 +34,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var pendingOpen: [String] = []
     private var hasState = false
 
+    /// The one dashboard window (the cloud bridge sets the terminal text size from a synced setting).
+    static weak var shared: MainWindowController?
+
     init(engine: RadarEngine) {
         self.engine = engine
         UserDefaults.standard.register(defaults: ["sidebarHidden": false])
@@ -51,9 +56,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         window.setFrameAutosaveName("atalay-terminal.main")
         super.init(window: window)
+        Self.shared = self
         window.delegate = self
         MessagePanel.dashboard = window
         radar.handleGit(GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] }))
+        radar.handleSpend(SpendBridge(engine: engine))
+        radar.handleFiles(files)
+        files.onOpen = { [weak self] url, line, cwd in self?.radar.openFile(url, line: line, column: nil, cwd: cwd) }
         overlay.manager = self
         buildLayout()
         wireEngine()
@@ -62,16 +71,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         runaways.onChange = { [weak self] json in
             self?.radar.push("runaways", json)
             MessagePanel.notices.runaways(json)
+            self?.pushTerminals()
         }
         runaways.start()
         observeVisibility()
-        PowerSaver.shared.onChange = { [weak self] _ in self?.pushPower() }
+        PowerSaver.shared.onChange = { [weak self] in self?.pushPower() }
         PowerSaver.shared.start()
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: ThemeStore.changed, object: nil)
         let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 // A Claude session at work is work (Activity, for XP); so is a busy job in a terminal (pushTerminals).
                 if self?.briefs.values.contains(where: { $0.live && $0.status == "busy" }) == true { Activity.work() }
+                // Which AI tools were at work, for their badges: Claude's sessions, and the others by name ("ai:…").
+                for b in self?.briefs.values ?? [:].values where b.live && b.status == "busy" {
+                    Activity.toolAtWork(b.id.hasPrefix("ai:") ? b.name : "claude")
+                }
                 self?.pushTerminals()
                 // How long since the last input anywhere on the Mac: the orbit's cinematic camera waits for five
                 // minutes of it, and typing in a terminal window counts.
@@ -102,6 +116,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString($0, forType: .string)
             },
+            openTerminal: { [weak self] in self?.openTerminal($0) },
+            endTerminal: { [weak self] in self?.endTerminal($0) },
+            openFolder: { [weak self] in self?.openFolder() },
             close: { [weak self] in self?.toggleSidebar() })))
         sidebarHost = side
         ThemeStore.glow(side, on: ThemeStore.shared.glows, soft: true)
@@ -155,6 +172,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.showDashboard()
             self?.radar.push("openView", "\"notifications\"")
         }
+        // The "same file" notice: the dashboard in front, on its panels (files.heat names the file).
+        MessagePanel.onOpenClash = { [weak self] in
+            self?.showDashboard()
+            self?.radar.push("openView", "\"dash\"")
+        }
         // The danger alarm's Details: the dashboard in front, its engine-failure panel open.
         MessagePanel.onOpenDanger = { [weak self] in
             self?.showDashboard()
@@ -190,12 +212,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             engine.requestInit()
             lastVisibility = ""
             dashboardVisibilityChanged()
-            pushPower()
+            pushPower(force: true)
             pushCloud()
             terminalsJSON = ""
             pushTerminals()
             radar.push("runaways", runaways.json)
             pushActiveSession(force: true)
+        // Power save: the switch on the map, and Settings' "on by itself at low battery".
+        case "powerSave": PowerSaver.shared.choose(msg["on"] as? Bool == true)
+        case "powerSaveAuto": PowerSaver.shared.setAuto(msg["on"] as? Bool == true)
         case "open": if let sid = msg["sid"] as? String { openSession(sid) }
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
@@ -215,6 +240,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             for c in chats.values { open ? c.stepAside() : c.stepBack() }
             MessagePanel.stepAside(open)
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
+        // Two chats began (or stopped) writing the same file (files.heat): the corner's notice.
+        case "clash":
+            guard let key = msg["key"] as? String, !key.isEmpty else { return }
+            MessagePanel.notices.clash(["key": key, "file": msg["file"] as? String ?? "", "path": msg["path"] as? String ?? "",
+                                        "chats": msg["chats"] as? [String] ?? []])
+        case "clashOver": if let key = msg["key"] as? String { MessagePanel.notices.clashOver(key) }
         default: break
         }
     }
@@ -291,6 +322,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             c.apply(b)
         }
         let live = list.filter(\.live)
+        runaways.liveSessions = live.compactMap { b in
+            guard !b.cwd.isEmpty else { return nil }
+            let started = b.pid.flatMap { Proc.info($0).map { Double($0.started / 1000) } } ?? 0
+            return Runaways.LiveSession(cwd: b.cwd, started: started, busy: b.status == "busy")
+        }
         let needYou = live.filter { $0.status == "waiting" }.count
         NSApp.dockTile.badgeLabel = needYou > 0 ? "\(needYou)" : nil
         for b in live {
@@ -332,7 +368,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func pushActiveSession(force: Bool = false) {
-        let shell = activeTerminalWindow.flatMap { chats[$0]?.focusedShellPid } ?? 0
+        let chat = activeChat ?? activeTerminalWindow.flatMap { chats[$0] }
+        let shell = chat?.focusedShellPid ?? 0
         var best: (brief: SessionBrief, distance: Int)?
         if shell > 0 {
             for b in briefs.values where b.live {
@@ -347,7 +384,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         }
-        let sid = best?.brief.id ?? ""
+        let sid = best?.brief.id ?? chat?.sessionId ?? ""
+        let chatSid = (best?.brief.id).flatMap({ $0.hasPrefix("ai:") ? nil : $0 }) ?? chat?.sessionId ?? (sid.isEmpty ? nil : sid)
+        if sidebar.activeSessionId != chatSid { sidebar.activeSessionId = chatSid }
         guard force || sid != lastActiveSession else { return }
         lastActiveSession = sid
         let json = sid.isEmpty ? "null" : "\"\(sid)\""
@@ -381,17 +420,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             measured.insert(key)
             return cpu
         }
+        // The chats list shows them too, each in the folder it was opened in (with what runs in it).
+        var rows: [TermRow] = []
         // An ended window's other tabs are still running: their cars stay.
         for c in chats.values {
             for pane in c.plainShells() {
                 let jobs = Proc.children(of: pane.shell)
                 let cwd = Proc.cwd(pane.shell) ?? pane.cwd
                 let cpu = busy(pane.shell, jobs, work: true)
+                let cmd = jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? ""
                 list.append([
                     "id": pane.id, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
-                    "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
-                    "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                    "cmd": cmd, "running": !jobs.isEmpty, "cpu": cpu.rounded(),
                 ])
+                rows.append(TermRow(id: pane.id, cwd: pane.cwd, title: (pane.cwd as NSString).lastPathComponent, job: cmd,
+                                    shown: c.isShown && !c.hud.exited))
             }
         }
         // Closed tabs and panes, still running (an AI in one, Claude or Codex…, is a session on the orbit, not a car).
@@ -406,12 +449,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let jobs = Proc.children(of: shell)
             let cwd = Proc.cwd(shell) ?? HOME
             let cpu = busy(shell, jobs, work: true)
+            let cmd = jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? ""
             list.append([
                 "id": "s:" + name, "cwd": tildify(cwd), "dir": (cwd as NSString).lastPathComponent,
-                "cmd": jobs.first.flatMap(Proc.arguments).map(Self.commandLabel) ?? "",
-                "running": !jobs.isEmpty, "cpu": cpu.rounded(),
+                "cmd": cmd, "running": !jobs.isEmpty, "cpu": cpu.rounded(),
             ])
+            rows.append(TermRow(id: "s:" + name, cwd: cwd, title: (cwd as NSString).lastPathComponent, job: cmd, shown: false))
         }
+        rows.sort { $0.id < $1.id }
+        if sidebar.terminals != rows { sidebar.terminals = rows }
         if gone { saveParked() }
         for l in runaways.left {
             let cpu = busy(l.pid, [l.pid], work: false)
@@ -503,9 +549,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         radar.webView.evaluateJavaScript("window.__radar && window.__radar.visibility && window.__radar.visibility(\(visible), \(focused)); true", completionHandler: nil)
     }
 
-    /// On battery or in Low Power Mode the map draws fewer and smaller frames (PowerSaver).
-    private func pushPower() {
-        radar.push("power", PowerSaver.shared.on ? "true" : "false")
+    /// In power save the map draws fewer and smaller frames (PowerSaver); the switch on the map and Settings show it.
+    /// The map hears only when power save comes on or goes off: it sets its quality anew each time.
+    private var mapSaves: Bool?
+    private func pushPower(force: Bool = false) {
+        let saver = PowerSaver.shared
+        if force || mapSaves != saver.on {
+            mapSaves = saver.on
+            radar.push("power", saver.on ? "true" : "false")
+        }
+        radar.push("powerSave", saver.json)
     }
 
     // MARK: chats
@@ -513,6 +566,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func showDashboard() {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// A text file ⌘-clicked in a terminal: in Source Control's editor, as VS Code opens one, in a tab of its own (at
+    /// `line`). False for a file the editor doesn't show (the terminal opens it in its app). `cwd`: the terminal's folder,
+    /// its path is shown from there.
+    func openFile(_ url: URL, line: Int?, column: Int?, cwd: String) -> Bool {
+        guard FilesBridge.canOpen(url) else { return false }
+        files.allow(url)
+        showDashboard()
+        window?.makeFirstResponder(radar.webView)
+        radar.openFile(url, line: line, column: column, cwd: cwd)
+        return true
+    }
+
+    /// ⌘N: a new file in Source Control's editor (VS Code's Untitled-1), from any window.
+    func newFile() {
+        showDashboard()
+        window?.makeFirstResponder(radar.webView)
+        radar.newFile()
     }
 
     // Friend chats stay above the dashboard when it's clicked, like the terminals.
@@ -614,7 +686,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         // Running in another Atalay's Terminal (the installed app and the staging build side by side): a mirror here,
         // a second screen on the same chat. Both windows show it live and type into the one Claude; closing the mirror
-        // leaves the chat running there.
+        // leaves the chat running there, End Session ends it there too.
         if let name = Detached.sessionName(hosting: pid, anyBuild: true) {
             if let c = chats.values.first(where: { $0.detached?.name == name }) { return c.show() }
             openWindow(cwd: cwd, claudeArgs: [], sessionId: sid, title: "⧉ " + title, detached: DetachedLink(name: name), mirror: true)
@@ -870,6 +942,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if id.hasPrefix("s:") { reopenParked(String(id.dropFirst(2)), own: true) }
     }
 
+    /// The chats list's End Terminal: a window's own terminal ends as its End button does (it asks when something runs in
+    /// it); a tab's or split pane's, or a closed one still running, ends its session.
+    private func endTerminal(_ id: String) {
+        if let c = chats.values.first(where: { $0.carId == id && $0.hud.status == "terminal" && !$0.hud.exited }) {
+            return c.endChat()
+        }
+        guard id.hasPrefix("s:") else { return }
+        let name = String(id.dropFirst(2))
+        if parked.removeValue(forKey: name) != nil { saveParked() }
+        Detached.quit(name)
+        terminalEnding(id)
+        pushTerminals()
+    }
+
+    /// The chats list's open folder button: a folder from the system's picker stays at the list's top, with a terminal
+    /// opened in it.
+    private func openFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Open a folder in the chats list"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        let done = { [weak self] (r: NSApplication.ModalResponse) in
+            guard let self, r == .OK, let url = panel.url else { return }
+            self.sidebar.pin(url.path)
+            self.newTerminal(in: url.path)
+        }
+        if let w = window, w.isVisible { panel.beginSheetModal(for: w, completionHandler: done) } else { done(panel.runModal()) }
+    }
+
     /// A terminal ended with its End button: its car explodes on the orbit now, not at the next terminals update.
     func terminalEnding(_ id: String) {
         radar.push("terminalGone", "\"\(id)\"")
@@ -880,16 +983,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         c.endPanes()
         c.window?.parent?.removeChildWindow(c.window!)
         c.window?.orderOut(nil)
+        if activeTerminalWindow == id { activeTerminalWindow = activeChat?.id }
         syncShells()
         pushWinOpen()
+        pushActiveSession()
     }
 
     func chatProcessEnded(_ id: String) {
         syncShells()
         pushWinOpen()
+        pushActiveSession()
     }
 
-    func chatVisibilityChanged() { pushWinOpen() }
+    func chatVisibilityChanged() {
+        if let id = activeTerminalWindow, chats[id]?.isShown != true { activeTerminalWindow = activeChat?.id }
+        pushWinOpen()
+        pushActiveSession()
+    }
 
     private func syncShells() {
         var map: [Int32: String] = [:]
@@ -913,6 +1023,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Chats that stop when the app quits: only those whose detached session couldn't start.
     var runningChatCount: Int { chats.values.filter { !$0.hud.exited && $0.detached == nil }.count }
+
+    /// What Source Control's editor hasn't saved yet goes to disk (the app quits), then `done`, always later: at the
+    /// latest in 2 s (a page that doesn't answer).
+    func flushFiles(_ done: @escaping () -> Void) {
+        var finished = false
+        let finish = {
+            guard !finished else { return }
+            finished = true
+            DispatchQueue.main.async(execute: done)
+        }
+        radar.flushFiles { finish() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish() }
+    }
 
     func terminateAll() {
         for c in chats.values {
@@ -990,6 +1113,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 UserDefaults.standard.set(side.isHidden, forKey: "sidebarHidden")
             }
         })
+    }
+
+    /// The terminals' text size, and whether the user picked it here (else it's their iTerm2 one): Settings sync
+    /// (sync.js) carries it to their other computers.
+    var terminalFont: (size: CGFloat, chosen: Bool) { (fontSize, UserDefaults.standard.double(forKey: "terminalFontSize") >= 9) }
+
+    /// A size from another of the user's computers (Settings sync).
+    func setFont(_ size: CGFloat) {
+        fontSize = min(24, max(9, size))
+        UserDefaults.standard.set(Double(fontSize), forKey: "terminalFontSize")
+        for c in chats.values { c.setFont(fontSize) }
     }
 
     func changeFont(by delta: CGFloat?) {

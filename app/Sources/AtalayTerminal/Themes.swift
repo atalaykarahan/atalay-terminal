@@ -173,7 +173,8 @@ final class ThemeStore: ObservableObject {
             + "radial-gradient(ellipse at 50% 40%,var(--bloom) 0%,var(--bg) 70%) fixed}"
             // A neon theme's text glows in its own colour, as SynthWave '84's "Neon Dreams" does in VS Code.
             + (current.glow == true ? "body{text-shadow:0 0 1px rgba(255,255,255,0.3),0 0 5px currentColor,0 0 12px rgba(var(--accent-rgb),0.5)}" : "")
-            + (Self.uiFonts.first { $0.id == uiFont }?.css.map { ":root:root{--font:\($0)}" } ?? "")
+            // A font picked in Settings is the text font too, where the monospace leaves names to a sans (style.css --font-sans).
+            + (Self.uiFonts.first { $0.id == uiFont }?.css.map { ":root:root{--font:\($0);--font-sans:\($0)}" } ?? "")
     }
 
     private var script: WKUserScript {

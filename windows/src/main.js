@@ -21,6 +21,8 @@ const { createAIColors } = require('./aicolors');
 const { createTerminals, which } = require('./terminals');
 const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
+const { createPowerSaver } = require('./power');
+const { createFiles, linkTarget } = require('./files');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
@@ -241,6 +243,7 @@ const cloud = createCloud({
   isActive: () => powerMonitor.getSystemIdleTime() < 300 && (terminals.busySince(300_000) || engine.live().some((s) => s.status === 'busy')),
   idleSeconds: () => powerMonitor.getSystemIdleTime(),
   theme: () => themes.chosenId(),
+  tools: () => toolsAtWork(),
   onChange(state) {
     pushCloud();
     if (state && state.xp) toNotices(`xp(${JSON.stringify(state.xp)})`);
@@ -251,6 +254,20 @@ const cloud = createCloud({
     for (const p of panels.chats.values()) runPanel(p, `window.__messages && __messages.event(${text})`);
   },
 });
+
+// The AI tools seen at work (a session busy), for their badges (the API's badges.ts), as the Mac's Activity.toolAtWork:
+// Claude's chats, and the others by name (Codex, Gemini, Antigravity). The heartbeat sends those of the last minute and
+// a half, a minute's slack.
+const toolsAt = new Map();
+function noteToolsAtWork() {
+  const now = Date.now();
+  for (const s of engine.live()) {
+    if (s.status !== 'busy') continue;
+    const key = s.ai ? String(s.name || '').toLowerCase() : 'claude';
+    if (['claude', 'codex', 'gemini', 'antigravity'].includes(key)) toolsAt.set(key, now);
+  }
+}
+const toolsAtWork = () => [...toolsAt].filter(([, at]) => Date.now() - at < 90_000).map(([key]) => key).sort();
 
 // The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed). A run
 // from the sources against the local API (npm run staging) brings its own instead; a packaged app never reads one.
@@ -270,14 +287,28 @@ function loadClientKey() {
 }
 
 const overlay = createOverlay({ dataDir: app.getPath('userData'), claudeDir: path.join(os.homedir(), '.claude') });
+// Source Control's files (files.js, the Mac's FileEditor.swift): the ones the dashboard's editor may read and write.
+const files = createFiles({
+  shell,
+  saveDialog: (options) => dialog.showSaveDialog(dash || undefined, options),
+  // A link in a Markdown preview to a text file beside it.
+  onOpen: (p, line, cwd) => showFileInEditor(p, line, null, cwd),
+});
+
+// Power save (the Mac's PowerSaver): the map's switch, and on by itself at low battery or in Windows' Energy Saver.
+const power = createPowerSaver({ settings, onBattery: () => powerMonitor.isOnBatteryPower(), onChange: () => pushPower() });
+
 // Processes left burning a core where nobody sees them: the dashboard sounds the alarm (DANGER).
 const runaways = createRunaways({
   // Each reading: the AI tools running besides Claude (Codex, Antigravity…), sessions on the orbit.
   onRead: () => engine.setOthers(runaways.ais()),
+  // And the battery's charge and Energy Saver, which Electron doesn't tell.
+  onPower: (r) => power.read(r),
   onChange: (json) => {
     toDash(`runaways(${json})`);
     // The alarm, in the middle of the screen (the notices panel can play its sound).
     toNotices(`runaways && __messages.runaways(${json})`);
+    pushTerminals();
   },
 });
 
@@ -321,7 +352,12 @@ function pushActiveSession(force = false) {
   const active = activeTerminalId
     ? engine.live().filter((s) => s.tab === activeTerminalId).sort((a, b) => rank(a) - rank(b))[0]
     : null;
-  const sid = active ? active.sessionId : null;
+  const c = activeTerminalId ? chats.get(activeTerminalId) : null;
+  const sid = (active && active.sessionId) || (c && c.sessionId) || null;
+  const chatSid = (active && !active.ai && active.sessionId) || (c && c.sessionId) || sid;
+  if (chatlist.setActive(chatSid) || force) {
+    run(chatsView, `window.__chats && __chats.active(${JSON.stringify(chatSid)})`);
+  }
   if (!force && sid === lastActiveSession) return;
   lastActiveSession = sid;
   toDash(`activeSession(${JSON.stringify(sid)})`);
@@ -332,6 +368,59 @@ function cloudState() {
   return { ...cloud.json(), ...updates.state() };
 }
 const pushCloud = () => toDash(`cloud(${JSON.stringify(cloudState())})`);
+
+// In power save the map draws fewer and smaller frames (power.js); the switch on the map and Settings show it. The map
+// hears only when power save comes on or goes off: it sets its quality anew each time.
+let mapSaves = null;
+function pushPower(force = false) {
+  if (force || mapSaves !== power.on()) {
+    mapSaves = power.on();
+    toDash(`power(${mapSaves})`);
+  }
+  toDash(`powerSave(${power.json()})`);
+}
+
+// Signing in with GitHub happens in the browser (Settings → Account, account.js): only GitHub's sign-in page opens.
+const SIGN_IN = 'https://github.com/login/oauth/authorize?';
+function openSignIn(url) {
+  if (typeof url !== 'string' || !url.startsWith(SIGN_IN)) return false;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.origin !== 'https://github.com' || u.pathname !== '/login/oauth/authorize') return false;
+  shell.openExternal(u.href).catch(() => {});
+  return true;
+}
+
+// The terminals' text size, the same in all of them and kept, as the Mac's: View's bigger and smaller text change it
+// with a terminal in front (zoom), and Settings sync (account.js) reads it or sets one from the user's other computers.
+// Never picked: xterm.js's 14 px, and it doesn't count as chosen (the account's comes in instead).
+const TERM_FONT = 14;
+const termFontSize = () => {
+  const n = Number(settings.get('terminalFontSize'));
+  return n >= 9 && n <= 24 ? n : TERM_FONT;
+};
+function setTermFont(size) {
+  const n = Math.min(24, Math.max(9, Math.round(Number(size) || TERM_FONT)));
+  settings.set('terminalFontSize', n);
+  for (const c of chats.values()) send(c.win, 'term:font', n);
+}
+function terminalFont(size) {
+  if (typeof size === 'number' && Number.isFinite(size)) setTermFont(size);
+  const n = Number(settings.get('terminalFontSize'));
+  return { size: termFontSize(), chosen: n >= 9 && n <= 24 };
+}
+// View's Zoom In, Zoom Out and Actual Size: in a terminal window its text size (all the terminals', as ⌘+ and ⌘− on the
+// Mac); in any other page that page's zoom, as the menu's own roles did.
+function zoom(step) {
+  const wc = webContents.getFocusedWebContents();
+  if (!wc || wc.isDestroyed()) return;
+  if ([...chats.values()].some((c) => pageOf(c.win) === wc)) return setTermFont(step ? termFontSize() + step : TERM_FONT);
+  wc.setZoomLevel(step ? wc.getZoomLevel() + step * 0.5 : 0);
+}
 
 // ---------- windows ----------
 function webPrefs() {
@@ -528,6 +617,18 @@ function pushChats(force) {
   run(chatsView, `window.__chats && __chats.update(${json})`);
 }
 
+// The chats list's open folder button: a folder from the system's picker stays at the list's top, with a terminal opened
+// in it.
+async function openFolder() {
+  const r = await dialog.showOpenDialog(dash || undefined, { title: 'Open a folder in the chats list', properties: ['openDirectory'] });
+  const d = !r.canceled && r.filePaths && r.filePaths[0];
+  if (!d || !fs.existsSync(d)) return null;
+  chatlist.pin(d);
+  pushChats(true);
+  openChatWindow({ cwd: d, claudeArgs: null, title: path.basename(d) || d });
+  return d;
+}
+
 // The chats list's requests (pages/chats.js).
 function handleChats(msg) {
   const dir = () => {
@@ -537,6 +638,7 @@ function handleChats(msg) {
   switch (msg.type) {
     case 'ready':
       pushChats(true);
+      pushActiveSession(true);
       return true;
     case 'open':
       return openSession(String(msg.id || ''), false);
@@ -554,6 +656,17 @@ function handleChats(msg) {
     }
     case 'copyId':
       if (typeof msg.id === 'string' && msg.id) clipboard.writeText(msg.id);
+      return true;
+    case 'openFolder':
+      return openFolder();
+    case 'unpin':
+      chatlist.unpin(String(msg.cwd || ''));
+      break;
+    // One of the app's terminals in a folder: its window comes to the front, or it ends (as its End button does).
+    case 'showTerminal':
+      return chats.has(msg.id) && terminals.has(msg.id) && showChat(msg.id);
+    case 'endTerminal':
+      if (chats.has(msg.id)) endTerminal(msg.id);
       return true;
     case 'favorite':
       chatlist.toggleFavorite(String(msg.id || ''));
@@ -642,6 +755,34 @@ function showDashboard() {
   if (!chatsView.webContents.isFocused()) dashView.webContents.focus();
 }
 
+// ---------- Source Control's editor: files from the terminals, new files ----------
+// A file in Source Control's editor, in a tab of its own (or the one it has), at `line`; `cwd`: the folder its path is
+// shown from (the terminal's).
+function showFileInEditor(p, line, column, cwd) {
+  const spec = { path: p, cwd: cwd || path.dirname(p), home: os.homedir() };
+  if (line) spec.line = line;
+  if (column) spec.column = column;
+  showDashboard();
+  pageOf(dashView)?.focus();
+  run(dashView, `window.GitView && GitView.openFile(${JSON.stringify(spec)})`);
+}
+
+// A path Ctrl-clicked in a terminal: a text file in Source Control's editor, as VS Code opens one; anything else in its
+// app (a program shown in its folder instead).
+function openTerminalFile(target, cwd) {
+  if (!target) return;
+  if (!files.canOpen(target.path)) return files.openOutside(target.path);
+  files.allow(target.path);
+  showFileInEditor(target.path, target.line, target.column, cwd);
+}
+
+// Ctrl+N: a new file in Source Control's editor (VS Code's Untitled-1), from any window.
+function newFile() {
+  showDashboard();
+  pageOf(dashView)?.focus();
+  run(dashView, 'window.GitView && GitView.newFile()');
+}
+
 // ---------- the dashboard's requests (the "radar" handler) ----------
 function handleRadar(msg) {
   switch (msg.type) {
@@ -654,7 +795,13 @@ function handleRadar(msg) {
       pushTerminals(true);
       toDash(`runaways(${runaways.json()})`);
       pushActiveSession(true);
+      pushPower(true);
       return true;
+    // Power save: the switch on the map, and Settings' "on by itself at low battery".
+    case 'powerSave':
+      return power.choose(msg.on === true), true;
+    case 'powerSaveAuto':
+      return power.setAuto(msg.on === true), true;
     case 'open':
       return openSession(msg.sid, false);
     case 'fork':
@@ -674,6 +821,18 @@ function handleRadar(msg) {
     // the way meanwhile, as on the Mac.
     case 'modal':
       return stepAside(msg.open === true);
+    // Two chats began (or stopped) writing the same file (files.heat): the corner's notice, as a chat that needs you.
+    case 'clash': {
+      const key = typeof msg.key === 'string' ? msg.key : '';
+      if (!key) return true;
+      const str = (v) => (typeof v === 'string' ? v : '');
+      const notice = { key, file: str(msg.file), path: str(msg.path), chats: Array.isArray(msg.chats) ? msg.chats.map(String) : [] };
+      toNotices(`clash && __messages.clash(${JSON.stringify(notice)})`);
+      return true;
+    }
+    case 'clashOver':
+      if (typeof msg.key === 'string') toNotices(`clashOver && __messages.clashOver(${JSON.stringify(msg.key)})`);
+      return true;
     case 'log':
       console.log('dashboard page:', msg.msg);
       return true;
@@ -781,7 +940,7 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     ...(PROBE ? { x: -32000, y: -32000, frame: false } : {}),
     webPreferences: webPrefs(),
   });
-  bootFor(win.webContents);
+  bootFor(win.webContents, { termFont: termFontSize() });
   const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
   chats.set(id, c);
   win.on('focus', () => touchTerminal(id));
@@ -796,9 +955,13 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     pinToDash(win);
     win.show();
     win.focus();
+    touchTerminal(id);
     pushWinOpen();
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
+  });
   // A window pinned above the dashboard is its child, and Windows minimizes an owned window to a bar on the desktop
   // rather than the taskbar: it lets go of the dashboard on its way to the taskbar and pins again when it comes back,
   // as on the Mac.
@@ -820,11 +983,21 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     c.steppedAside = false;
     win.setParentWindow(null);
     win.hide();
+    if (activeTerminalId === id) {
+      activeTerminalId = null;
+      pushActiveSession();
+    }
     pushWinOpen();
+    pushTerminals();
+    pushChats();
   });
   win.on('closed', () => {
     if (chats.get(id)?.win === win) {
       chats.delete(id);
+      if (activeTerminalId === id) {
+        activeTerminalId = null;
+        pushActiveSession();
+      }
       pushWinOpen();
     }
   });
@@ -842,6 +1015,9 @@ function showChat(id) {
   c.win.focus();
   touchTerminal(id);
   pushWinOpen();
+  // The chats list's terminal rows say which windows show.
+  pushTerminals();
+  pushChats();
   return true;
 }
 
@@ -963,6 +1139,8 @@ let terminalsJSON = '';
 const ending = new Map(); // pid -> until when it's an ended terminal's process, not a car left behind
 function pushTerminals(force) {
   const live = engine.live(), list = [], jobs = [];
+  // The chats list shows them too, each in the folder it was opened in, with what runs in it and whether its window shows.
+  const rows = [];
   for (const [pid, until] of ending) if (until < Date.now()) ending.delete(pid);
   for (const t of terminals.list()) {
     const c = chats.get(t.id);
@@ -974,20 +1152,27 @@ function pushTerminals(force) {
     if (job) jobs.push(job.pid);
     // The folder the job runs in (PowerShell's cd doesn't move the shell's own), else the one the terminal opened in.
     const cwd = (job && job.cwd) || c.cwd || os.homedir();
+    const cmd = job ? commandLabel(job.cmd || job.name) : '';
     list.push({
-      id: t.id, cwd: tildify(cwd), dir: path.basename(cwd) || cwd, cmd: job ? commandLabel(job.cmd || job.name) : '', running: !!job,
+      id: t.id, cwd: tildify(cwd), dir: path.basename(cwd) || cwd, cmd, running: !!job,
       cpu: Math.round(runaways.busy(kids.map((k) => k.pid))),
     });
+    const home = c.cwd || os.homedir();
+    const shown = !!c.win && !c.win.isDestroyed() && c.win.isVisible() && !c.win.isMinimized();
+    rows.push({ id: t.id, cwd: home, title: path.basename(home) || home, job: cmd, shown });
   }
-  for (const l of runaways.left()) {
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  chatlist.setTerms(rows);
+  for (const l of runaways.left(live)) {
     if (ending.has(l.pid)) continue;
     list.push({
       id: `left:${l.pid}:${l.started}`, cwd: tildify(l.cwd), dir: l.cwd ? path.basename(l.cwd) || l.cwd : l.name, cmd: commandLabel(l.cmd),
       running: true, cpu: Math.round(l.cpu), left: true, pid: l.pid, started: l.started,
     });
   }
-  // Their folders come with the next reading, and the AI tools' (the title of their session).
-  runaways.want([...jobs, ...runaways.ais().map((a) => a.pid)]);
+  // Their folders come with the next reading, and the AI tools' (the title of their session), and the terminals' shells'
+  // own (a relative path Ctrl-clicked in a terminal is from there).
+  runaways.want([...jobs, ...runaways.ais().map((a) => a.pid), ...terminals.pids()]);
   list.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const json = JSON.stringify(list);
   if (json === terminalsJSON && !force) return;
@@ -1026,7 +1211,9 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
 ipcMain.on('term:input', (e, data) => {
   const found = chatOf(e);
   if (found) {
-    touchTerminal(found[0]);
+    // The shell's focus reports (ESC[I, ESC[O, which xterm.js sends as the window gains or loses focus) aren't the user
+    // at it: a window losing focus, or closed, would take the chats list's "active window" back from the one in front.
+    if (data !== '\x1b[I' && data !== '\x1b[O') touchTerminal(found[0]);
     terminals.write(found[0], data);
   }
 });
@@ -1042,8 +1229,38 @@ ipcMain.on('term:copy', (e, text) => {
   if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);
 });
 ipcMain.on('term:dashboard', () => showDashboard());
+// The folder a terminal's relative paths are from: its shell's (or Claude's) own, else the one it started in.
+function termCwd(id, c) {
+  const pid = terminals.list().find((t) => t.id === id)?.pid;
+  return (pid && runaways.cwd(pid)) || c.cwd || os.homedir();
+}
+// Which of a line's pieces name files, as the pointer goes over it (a Ctrl-click opens one): [{ path, line, column }
+// or null], one for each of `q.links` ({ text, start }) in `q.rows[q.at]`.
+ipcMain.handle('term:paths', (e, q) => {
+  const found = chatOf(e);
+  if (!found || !q || !Array.isArray(q.links)) return [];
+  const cwd = termCwd(...found);
+  return q.links.slice(0, 40).map((l) => linkTarget({ ...l, rows: q.rows, at: q.at }, cwd, os.homedir()));
+});
+// A path Ctrl-clicked (worked out again here), or a file:// link the program printed (OSC 8).
+ipcMain.on('term:openFile', (e, q) => {
+  const found = chatOf(e);
+  if (!found || !q) return;
+  const cwd = termCwd(...found);
+  if (typeof q.url === 'string') {
+    let p = null;
+    try {
+      p = /^file:/i.test(q.url) ? fileURLToPath(q.url) : null;
+    } catch {}
+    if (p && fs.existsSync(p)) openTerminalFile({ path: path.resolve(p), line: null, column: null }, cwd);
+    return;
+  }
+  openTerminalFile(linkTarget(q, cwd, os.homedir()), cwd);
+});
 ipcMain.on('term:open', (_e, uri) => {
-  if (/^https?:\/\//.test(uri)) shell.openExternal(uri);
+  if (typeof uri !== 'string') return;
+  const clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
+  if (/^https?:\/\//i.test(clean)) shell.openExternal(clean).catch(() => {});
 });
 
 // ---------- the overlay: the shortcut wheel and the new-terminal folder picker, over the whole screen ----------
@@ -1092,12 +1309,22 @@ ipcMain.on('atl:wheel', () => showShortcuts());
 // Each chat panel's intended bounds: on a scaled display (125%, 150%) Electron's getBounds() rounds up by a pixel, so
 // reading it back on every drag step would grow the panel as it moves.
 const panelBounds = new WeakMap();
+// A level-up or a new badge takes the screen (the notices' takeover): keys do nothing while it plays (as long as the page
+// asks, 4 s at most), then a key ends it (a badge's reveal jumps to its burst), as on the Mac (Messages.swift holds).
+const takeover = { on: false, lockedUntil: 0 };
 function panelWindow(role, friend) {
   const win = new BrowserWindow({
     width: 380, height: 140, frame: false, transparent: true, resizable: false, show: false, skipTaskbar: role === 'notices',
     alwaysOnTop: role === 'notices', hasShadow: false, backgroundColor: '#00000000', webPreferences: webPrefs(),
   });
   bootFor(win.webContents, { role, friend });
+  if (role === 'notices') {
+    win.webContents.on('before-input-event', (e, input) => {
+      if (input.type !== 'keyDown' || !(takeover.on || Date.now() < takeover.lockedUntil)) return;
+      e.preventDefault();
+      if (Date.now() >= takeover.lockedUntil) run(win, 'window.__messages && __messages.skip && __messages.skip()');
+    });
+  }
   panelWaiting.set(win, []);
   win.webContents.on('render-process-gone', () => {
     panelWaiting.set(win, []);
@@ -1274,6 +1501,11 @@ function handleMessages(win, body) {
       // every page of the app's), the window is that many times larger.
       const z = win.webContents.getZoomFactor() || 1;
       const w = Math.round((body.w || 0) * z), h = Math.round((body.h || 0) * z);
+      // The takeover's keys: held while it's on screen, free once the panel is a notice again (or gone).
+      if (role === 'notices') {
+        takeover.on = body.place === 'screen' && w >= 1 && h >= 1;
+        if (!takeover.on) takeover.lockedUntil = 0;
+      }
       if (w < 1 || h < 1) {
         if (role === 'notices') win.setIgnoreMouseEvents(false);
         win.steppedAside = false;
@@ -1366,8 +1598,17 @@ function handleMessages(win, body) {
       return runaways.end(body.pid, body.started);
     case 'openWait':
       return openWait(body.sid);
+    // The "same file" notice: the dashboard in front, on its panels (files.heat names the file).
+    case 'openClash':
+      showDashboard();
+      toDash('openView("dash")');
+      return true;
     case 'openChat':
       return openFriendChat(body.id);
+    // The takeover's lock on the keys (ms; 0 frees them).
+    case 'lock':
+      if (role === 'notices') takeover.lockedUntil = Date.now() + Math.min(Math.max(Number(body.ms) || 0, 0), 4000);
+      return true;
     case 'showing': {
       const entry = [...panels.chats.entries()].find(([, w]) => w === win);
       if (!entry) return true;
@@ -1572,8 +1813,16 @@ ipcMain.handle('atl:post', async (e, name, body) => {
     switch (name) {
       case 'radar':
         return handleRadar(body);
+      // The spend panel's history tabs (web/app.js), from the engine's ledger (ledger.js).
+      case 'spend':
+        if (body.type !== 'history') throw new Error('unknown request');
+        return engine.spendHistory(body.range);
       case 'git':
         return await git.handle(body);
+      // Source Control's editor reads and writes files: the dashboard's page only, as on the Mac.
+      case 'files':
+        if (e.sender !== pageOf(dashView)) throw new Error('not this page');
+        return await files.handle(body);
       case 'theme':
         return themes.handle(body);
       case 'messages':
@@ -1599,6 +1848,13 @@ ipcMain.handle('atl:post', async (e, name, body) => {
         if (body.type === 'updateRightAway') return updates.setRightAway(body.on), cloudState();
         if (body.type === 'openChat') return openFriendChat(body.id);
         if (body.type === 'state') return cloudState();
+        if (body.type === 'openSignIn') return openSignIn(body.url);
+        if (body.type === 'terminalFont') return terminalFont(body.size);
+        if (body.type === 'refresh') return await cloud.handle(body), cloudState();
+        if (body.type === 'signOut' || body.type === 'deleteAccount') {
+          const r = await cloud.handle(body);
+          return { error: r.error, state: cloudState() };
+        }
         return await cloud.handle(body);
       case 'chats':
         return await handleChats(body);
@@ -1628,7 +1884,10 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Terminal…', accelerator: 'CmdOrCtrl+N', click: () => showOverlay('Overlay.newTerminal()') },
+        // VS Code's: Ctrl+N a new file in Source Control's editor, Ctrl+Shift+N a new window (here a terminal), as the
+        // Mac's ⌘N and ⇧⌘N.
+        { label: 'New File', accelerator: 'CmdOrCtrl+N', click: () => newFile() },
+        { label: 'New Terminal…', accelerator: 'CmdOrCtrl+Shift+N', click: () => showOverlay('Overlay.newTerminal()') },
         { label: 'Shortcut Wheel', accelerator: 'CmdOrCtrl+K', click: () => showShortcuts() },
         // No key of its own: Ctrl+0 is Actual Size's (the text size, ⌘0 on the Mac), and two items on one key leave only
         // one of them working.
@@ -1663,7 +1922,10 @@ function buildMenu() {
         // The page that has the keys: the dashboard window's two are views, which the role doesn't reach.
         { label: 'Toggle Developer Tools', accelerator: 'CmdOrCtrl+Shift+I', click: (_i, _w, wc) => wc && wc.toggleDevTools() },
         { type: 'separator' },
-        { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { type: 'separator' }, { role: 'togglefullscreen' },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => zoom(1) },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoom(-1) },
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoom(0) },
+        { type: 'separator' }, { role: 'togglefullscreen' },
       ],
     },
     {
@@ -1703,6 +1965,7 @@ app.whenReady().then(() => {
   // The orbit's cinematic camera waits for minutes without input; the terminals ride the orbit as cars.
   setInterval(() => {
     toDash(`idle(${powerMonitor.getSystemIdleTime().toFixed(1)})`);
+    noteToolsAtWork();
     pushTerminals();
     // A chat window opened or ended between the engine's states: the list says "in a window" or stops saying it.
     pushWinOpen();
@@ -1712,6 +1975,9 @@ app.whenReady().then(() => {
   savers.autoStart();
   if (!PROBE) aiColors.autoStart();
   powerMonitor.on('resume', () => cloud.kick());
+  // Power save comes on by itself on a low battery (power.js), and goes off again on the adapter.
+  powerMonitor.on('on-battery', () => power.update());
+  powerMonitor.on('on-ac', () => power.update());
   // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
   // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.
   terminals.restore().then((found) => {
@@ -1720,8 +1986,10 @@ app.whenReady().then(() => {
   if (PROBE) probe();
 });
 
+let savingFiles = false;
 app.on('before-quit', (e) => {
   if (quitting) return;
+  if (savingFiles) return e.preventDefault();
   // Only chats running in the app itself stop: the session host's go on, and come back at the next launch.
   const running = [...chats.entries()].filter(([id, c]) => c.claude && terminals.local(id)).length;
   if (running && !PROBE) {
@@ -1732,12 +2000,31 @@ app.on('before-quit', (e) => {
     });
     if (r !== 0) return e.preventDefault();
   }
+  // A file edited in the last second is saved first (Source Control's editor saves a second after a change), as on the
+  // Mac: the quit goes on once the page says so, 2 s at most (a page that doesn't answer).
+  const wc = !PROBE && pageOf(dashView);
+  if (wc) {
+    e.preventDefault();
+    savingFiles = true;
+    const saved = wc.executeJavaScript('window.FileEditor ? FileEditor.flush() : true').catch(() => {});
+    Promise.race([saved, new Promise((r) => setTimeout(r, 2000))]).then(() => {
+      savingFiles = false;
+      leave();
+      app.quit();
+    });
+    return;
+  }
+  leave();
+});
+
+// Quitting for good: the chats running in the session host go on, the parts stop.
+function leave() {
   quitting = true;
   terminals.detachAll();
   engine.stop();
   runaways.stop();
   cloud.stop();
-});
+}
 
 app.on('window-all-closed', () => {
   if (!quitting) app.quit();

@@ -58,7 +58,9 @@ function createThemes({ webDir, settings, onChange, onScale, ai }) {
       // terminal draws on a canvas, so its text blooms through terminal.html's filter instead.
       (current.glow ? 'body{text-shadow:0 0 1px rgba(255,255,255,0.3),0 0 5px currentColor,0 0 12px rgba(var(--accent-rgb),0.5)}' +
         '.xterm-screen canvas{filter:url(#atl-neon)}' : '') +
-      (uiFont().css ? `:root:root{--font:${uiFont().css}}` : '');
+      // A font picked in Settings is the text font too, where the monospace leaves names to a sans (style.css
+      // --font-sans: the leaderboard, friends), as Themes.swift sets it.
+      (uiFont().css ? `:root:root{--font:${uiFont().css};--font-sans:${uiFont().css}}` : '');
   };
 
   const show = (id) => {

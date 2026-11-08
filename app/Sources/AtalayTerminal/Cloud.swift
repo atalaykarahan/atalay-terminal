@@ -203,7 +203,8 @@ final class Cloud {
     private func heartbeat(_ token: String) async {
         struct Answer: Decodable { let hackerName: String; let tag: Int; let online: Int; let update: Release?; let xp: XP?; let xpPaused: Bool? }
         // The theme too: the leaderboard shows someone's card in their theme, and anyone can take it.
-        let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60, "theme": ThemeStore.shared.chosenId]
+        let work: [String: Any] = ["active": Activity.active, "tz": TimeZone.current.secondsFromGMT() / 60, "theme": ThemeStore.shared.chosenId,
+                                   "tools": Activity.tools]
         do {
             let a: Answer = try await call("POST", "v1/heartbeat", body: client.merging(work) { $1 }, token: token)
             var name = a.hackerName, tag = a.tag
@@ -273,6 +274,54 @@ final class Cloud {
         } catch {
             state.reachable = false
         }
+    }
+
+    /// Settings → Account (account.js): this Mac leaves the account and goes on as a guest, under the same name with a
+    /// new tag; the account stays on the server, to sign in to again. The new token comes straight here, never to the
+    /// page. Nil when done, else why not.
+    func signOut() async -> String? {
+        guard let token else { return "signed_out" }
+        struct Answer: Decodable { let token: String; let hackerName: String; let tag: Int }
+        do {
+            let a: Answer = try await call("POST", "v1/account/signout", body: [:], token: token)
+            self.token = a.token
+            var s = state
+            s.hackerName = a.hackerName
+            s.tag = a.tag
+            state = s
+            await heartbeat(a.token)
+            Social.shared.kick()
+            return nil
+        } catch let Failure.status(_, code) {
+            return code.isEmpty ? "failed" : code
+        } catch {
+            return "offline"
+        }
+    }
+
+    /// Settings → Account: everything of the account is deleted on the server, on all its computers; this Mac starts
+    /// over as on its first launch (the page asks for a name again).
+    func deleteAccount() async -> String? {
+        guard let token else { return "signed_out" }
+        struct Answer: Decodable { let deleted: Bool }
+        do {
+            let _: Answer = try await call("DELETE", "v1/account", token: token)
+        } catch let Failure.status(_, code) {
+            return code.isEmpty ? "failed" : code
+        } catch {
+            return "offline"
+        }
+        self.token = nil
+        pendingName = nil
+        UserDefaults.standard.removeObject(forKey: "xp")
+        var s = state
+        s.registered = false
+        s.hackerName = nil
+        s.tag = nil
+        s.xp = nil
+        state = s
+        await identify()
+        return nil
     }
 
     func register(_ name: String) async -> Outcome {
@@ -552,10 +601,10 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
                 cloud.setUpdateRightAway(body["on"] as? Bool ?? false)
                 replyHandler(cloud.json, nil)
             case "social":
-                // Only the friends, messages, notifications and feedback endpoints; the page never reaches anything else
-                // with the token.
+                // Only the friends, messages, notifications, feedback, Roadmap, account, sign-in and settings-sync
+                // endpoints; the page never reaches anything else with the token.
                 let path = body["path"] as? String ?? ""
-                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap", "v1/account", "v1/auth", "v1/settings", "v1/badges"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
                       !path.contains("..") else {
                     replyHandler(["error": "bad_path"], nil)
                     return
@@ -564,6 +613,30 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
             case "openChat":
                 MessagePanel.openChat(friend: body["id"] as? String ?? "")
                 replyHandler(true, nil)
+            // Signing in with GitHub happens in the browser (Settings → Account); only GitHub's sign-in page opens.
+            case "openSignIn":
+                guard let s = body["url"] as? String, s.hasPrefix("https://github.com/login/oauth/authorize?"), let url = URL(string: s) else {
+                    return replyHandler(false, nil)
+                }
+                NSWorkspace.shared.open(url)
+                replyHandler(true, nil)
+            // The account changed (signed in, merged): its name and XP now, not at the next minute's heartbeat.
+            case "refresh":
+                await cloud.beat()
+                replyHandler(cloud.json, nil)
+            // Signing out on this Mac, and deleting the account: the token changes here, the page gets the new state.
+            case "signOut":
+                let error = await cloud.signOut()
+                replyHandler(["error": error.map { $0 as Any } ?? NSNull(), "state": cloud.json], nil)
+            case "deleteAccount":
+                let error = await cloud.deleteAccount()
+                replyHandler(["error": error.map { $0 as Any } ?? NSNull(), "state": cloud.json], nil)
+            // The terminals' text size, for Settings sync: read it, or set one from another computer.
+            case "terminalFont":
+                guard let main = MainWindowController.shared else { return replyHandler(nil, nil) }
+                if let size = (body["size"] as? NSNumber)?.doubleValue { main.setFont(CGFloat(size)) }
+                let font = main.terminalFont
+                replyHandler(["size": Double(font.size), "chosen": font.chosen], nil)
             default:
                 replyHandler(nil, "unknown message")
             }
