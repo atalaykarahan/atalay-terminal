@@ -9,8 +9,10 @@ struct StatusDot: View {
     var hollow = false
 
     var body: some View {
+        // The layer is bigger than the light by its glow's room, and takes only the light's place in the row.
         StatusDotLayer(status: status, size: size, hollow: hollow)
-            .frame(width: size, height: size)
+            .frame(width: size + 2 * StatusDotLayer.margin, height: size + 2 * StatusDotLayer.margin)
+            .padding(-StatusDotLayer.margin)
             // Clicks, hover and the context menu stay the row's, as with the SwiftUI circle the light was.
             .allowsHitTesting(false)
     }
@@ -21,12 +23,14 @@ struct StatusDotLayer: NSViewRepresentable {
     let status: String?
     let size: CGFloat
     let hollow: Bool
+    /// Room for the glow (radius 5) around the light inside the view: a view clips to its bounds (on macOS 13 always,
+    /// later after AppKit's first update of its own backing layer), which cut the glow off at the light's edge.
+    static let margin: CGFloat = 10
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        // A layer of our own (a layer-hosting view): AppKit's backing layer turned clipping back on after the first
-        // update, which cut off the glow past the light's 7 pt. A shape, so a hollow light's ring sits on the circle's
-        // edge as SwiftUI's stroke did (a border would sit inside it, a point smaller).
+        // A shape layer of our own (a layer-hosting view), so a hollow light's ring sits on the circle's edge as
+        // SwiftUI's stroke did (a border would sit inside it, a point smaller).
         view.layer = CAShapeLayer()
         view.wantsLayer = true
         return view
@@ -41,7 +45,7 @@ struct StatusDotLayer: NSViewRepresentable {
     /// opacity 0.35 to 1, back and forth.
     static func style(_ layer: CAShapeLayer, status: String?, size: CGFloat, hollow: Bool) {
         let color = NSColor(hex: Theme.statusHex[status ?? ""] ?? Theme.endedHex).cgColor
-        layer.path = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: size, height: size), transform: nil)
+        layer.path = CGPath(ellipseIn: CGRect(x: margin, y: margin, width: size, height: size), transform: nil)
         layer.fillColor = hollow ? nil : color
         layer.strokeColor = hollow ? color : nil
         layer.lineWidth = 1
