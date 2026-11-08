@@ -3,6 +3,12 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.19.1
+
+- Security fixes, found and fixed by @EmirCobanOfficial on GitHub (EmirMac#7124 in the app): live events reach the pages only as data, a page can no longer sign this computer out, and on Windows a Markdown link never runs a script and a network share's path is never looked up
+- Terminals: after ⌘D, a click on a pane lets you type in it, and a right-click's Paste and Split act on the pane clicked. Thanks to @kwa0x2 on GitHub
+- Sidebar: a working chat's status light pulses through Core Animation, about 31% of a core down to 7% with a chat working. Thanks to @EmirCobanOfficial on GitHub
+
 ## 0.19.0
 
 - Accounts: sign in if you like, with GitHub or a 6-digit code by e-mail (Settings → ACCOUNT, or the account icon at the activity bar's foot, your GitHub picture once signed in). Your Macs and Windows PCs join one account: XP and hours add up (time on two at once counts once), friends and messages come together, and settings follow you as VS Code's Settings Sync. Sign out, take a computer off, or delete everything after a warning
