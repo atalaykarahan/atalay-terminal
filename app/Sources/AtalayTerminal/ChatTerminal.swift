@@ -26,7 +26,16 @@ final class ChatTerminalView: LocalProcessTerminalView {
     /// selects on the terminal, ⌘-click still opens a link.
     private(set) var mouseToProgram = false
 
+    /// A click, or a right-click for the menu, gives this pane the keyboard, as in iTerm2. The window doesn't do it by
+    /// itself: the click lands on SwiftTerm's Metal view inside the terminal, which doesn't take the keyboard
+    /// (MTKView.acceptsFirstResponder is false), so after ⌘D the pane left behind could be clicked but not typed into.
+    private func takeKeyboard() {
+        guard let window, window.firstResponder !== self else { return }
+        window.makeFirstResponder(self)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        takeKeyboard()
         // ⌥ (as in iTerm2) or ⇧ (SwiftTerm's) with the drag: the terminal's own selection.
         mouseToProgram = event.modifierFlags.intersection([.command, .option]).isEmpty && claudeInFront && (engine.map { $0.mouseMode != .off } ?? false)
         if mouseToProgram {
@@ -82,8 +91,11 @@ final class ChatTerminalView: LocalProcessTerminalView {
         }
     }
 
-    /// Right-click, as in iTerm2: copy, paste, find, clear, split.
+    /// Right-click, as in iTerm2: copy, paste, find, clear, split. The pane clicked takes the keyboard first, so its
+    /// Split and Paste act on it rather than on the pane that had the keyboard.
     override func menu(for event: NSEvent) -> NSMenu? {
+        takeKeyboard()
+        onFocus?()
         let menu = NSMenu()
         func item(_ title: String, _ action: Selector, _ target: AnyObject?, tag: Int = 0) {
             let i = NSMenuItem(title: title, action: action, keyEquivalent: "")

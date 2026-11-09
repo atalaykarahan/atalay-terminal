@@ -23,7 +23,7 @@ const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
 const { createPowerSaver } = require('./power');
 const { createDiscord } = require('./discord');
-const { createFiles, linkTarget } = require('./files');
+const { createFiles, linkTarget, fileFromURL } = require('./files');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
@@ -1270,11 +1270,8 @@ ipcMain.on('term:openFile', (e, q) => {
   if (!found || !q) return;
   const cwd = termCwd(...found);
   if (typeof q.url === 'string') {
-    let p = null;
-    try {
-      p = /^file:/i.test(q.url) ? fileURLToPath(q.url) : null;
-    } catch {}
-    if (p && fs.existsSync(p)) openTerminalFile({ path: path.resolve(p), line: null, column: null }, cwd);
+    const p = fileFromURL(q.url);
+    if (p) openTerminalFile({ path: p, line: null, column: null }, cwd);
     return;
   }
   openTerminalFile(linkTarget(q, cwd, os.homedir()), cwd);

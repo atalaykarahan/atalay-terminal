@@ -7,12 +7,17 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { fileURLToPath } = require('node:url');
 
 // The largest file the editor opens; a bigger one opens in its app.
 const LARGEST = 10 << 20;
 
 // The same file however it was written: Windows' names don't care about case or "/" against "\".
 const keyOf = (p) => path.resolve(p).toLowerCase();
+
+// \\host\share\… (or //host/share/…): on Windows merely looking one up is an SMB request, which hands the host the
+// user's NTLM hash; a path a terminal printed or a page sent never gets that far.
+const isUnc = (p) => typeof p === 'string' && /^[\\/]{2}/.test(p);
 
 // A file's text when it's one the editor shows: UTF-8 (its BOM kept aside), no NUL byte in its first 8 KB (not a
 // binary file), at most 10 MB.
@@ -87,6 +92,7 @@ function existingFile(text, cwd, home) {
   if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) p = path.join(home, p.slice(1));
   // Git Bash's way of writing C:\…: /c/…
   else if (/^\/[a-z]\//i.test(p)) p = `${p[1]}:${p.slice(2)}`;
+  if (isUnc(p)) return null;
   if (!path.win32.isAbsolute(p)) {
     if (!cwd) return null;
     p = path.resolve(cwd, p);
@@ -151,7 +157,9 @@ function linkTarget(q, cwd, home) {
 // Files Windows would run rather than show when opened in "their app": shown in File Explorer instead, so a Ctrl-click
 // on a path in a terminal never starts a program.
 const RUNS = new Set(['exe', 'com', 'scr', 'pif', 'msi', 'msp', 'msix', 'appx', 'appxbundle', 'lnk', 'url', 'cpl', 'hta',
-  'jar', 'reg', 'application', 'gadget', 'scf', 'inf', 'sys', 'dll', 'ocx', 'appref-ms', 'settingcontent-ms', 'library-ms']);
+  'jar', 'reg', 'application', 'gadget', 'scf', 'inf', 'sys', 'dll', 'ocx', 'appref-ms', 'settingcontent-ms', 'library-ms',
+  // Scripts too: one that isn't valid UTF-8 text isn't shown in the editor, so it would come here and run.
+  'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'msc', 'chm', 'py', 'rb', 'sh']);
 
 // - shell: Electron's (openPath, showItemInFolder, openExternal); dialog(options): showSaveDialog over the dashboard
 // - appName(path): the app a file opens in otherwise, for the page's "Open in …" (VS Code, for most), or ''
@@ -172,7 +180,7 @@ function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {} 
   async function handle(body) {
     const b = body && typeof body === 'object' ? body : {};
     if (b.type === 'saveAs') return saveAs(b);
-    const p = typeof b.path === 'string' && b.path ? path.resolve(b.path) : '';
+    const p = typeof b.path === 'string' && b.path && !isUnc(b.path) ? path.resolve(b.path) : '';
     switch (b.type) {
       case 'read': {
         const file = mine(p) ? textOf(p) : null;
@@ -244,4 +252,13 @@ function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {} 
   return { handle, allow, canOpen, openOutside };
 }
 
-module.exports = { createFiles, canOpen, linkTarget, LARGEST };
+// A file:// link a program printed (OSC 8) as the local file it names, if there is one; never a share's (file://host/…).
+function fileFromURL(url) {
+  let p = null;
+  try {
+    p = /^file:/i.test(url) ? fileURLToPath(url) : null;
+  } catch {}
+  return p && !isUnc(p) && fs.existsSync(p) ? path.resolve(p) : null;
+}
+
+module.exports = { createFiles, canOpen, linkTarget, fileFromURL, LARGEST };

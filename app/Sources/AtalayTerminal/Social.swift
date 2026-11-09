@@ -56,6 +56,15 @@ final class Social {
         }
     }
 
+    /// A live event as the pages may have it: they run it as code (radar.push, __messages.event), so only JSON goes on,
+    /// as JSONSerialization writes it, and a line that isn't JSON (broken, or not the API's) is dropped.
+    static func pageJSON(_ text: String) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.fragmentsAllowed, .withoutEscapingSlashes])
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     private func receive(_ t: URLSessionWebSocketTask) {
         t.receive { [weak self] result in
             Task { @MainActor in
@@ -63,7 +72,7 @@ final class Social {
                 switch result {
                 case let .success(.string(text)):
                     self.delay = 2
-                    self.onEvent?(text)
+                    if let json = Self.pageJSON(text) { self.onEvent?(json) }
                     self.receive(t)
                 case .success:
                     self.receive(t)

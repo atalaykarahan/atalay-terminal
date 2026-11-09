@@ -1043,14 +1043,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// What Source Control's editor hasn't saved yet goes to disk (the app quits), then `done`, always later: at the
     /// latest in 2 s (a page that doesn't answer).
     func flushFiles(_ done: @escaping () -> Void) {
+        // Through the run loop, never the main queue: a quit asked for from a main-queue job (an update's restart, from a
+        // Task) waits in a run loop nested in that job, where the main queue runs nothing, so a reply sent there never
+        // came and the app hung on "restarting". The run loop's common modes include the one that wait runs in.
         var finished = false
         let finish = {
             guard !finished else { return }
             finished = true
-            DispatchQueue.main.async(execute: done)
+            RunLoop.main.perform(inModes: [.common], block: done)
         }
         radar.flushFiles { finish() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish() }
+        RunLoop.main.add(Timer(timeInterval: 2, repeats: false) { _ in finish() }, forMode: .common)
     }
 
     func terminateAll() {

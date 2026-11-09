@@ -578,6 +578,22 @@ extension Cloud {
 /// The dashboard page's hacker name, settings and update screens reach Cloud through this ("cloud" handler, with replies).
 @MainActor
 final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
+    /// The endpoints the page may reach with the token. Never signing out, whose answer carries this Mac's new token
+    /// (only Cloud.signOut calls it, so the token stays here), as Windows keeps it from its pages (cloud.js, isPrivate);
+    /// checked on the path as the API reads it (decoded, any case, slashes squeezed), with no "." or ".." segment to
+    /// walk it elsewhere, and a path that doesn't decode refused.
+    static func pageMayCall(_ path: String) -> Bool {
+        let routes = ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"]
+        let trees = ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap", "v1/account", "v1/auth",
+                     "v1/settings", "v1/badges"]
+        guard routes.contains(path) || trees.contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
+              let read = path.removingPercentEncoding?.lowercased().replacingOccurrences(of: "\\", with: "/")
+                  .replacingOccurrences(of: "/+", with: "/", options: .regularExpression) else { return false }
+        let segments = (read.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first ?? "").split(separator: "/")
+        return !read.contains("..") && !segments.contains(".")
+            && !(read == "v1/account/signout" || read.hasPrefix("v1/account/signout/") || read.hasPrefix("v1/account/signout?"))
+    }
+
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         let body = message.body as? [String: Any] ?? [:]
@@ -604,8 +620,7 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
                 // Only the friends, messages, notifications, feedback, Roadmap, account, sign-in and settings-sync
                 // endpoints; the page never reaches anything else with the token.
                 let path = body["path"] as? String ?? ""
-                guard ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"].contains(path) || ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap", "v1/account", "v1/auth", "v1/settings", "v1/badges"].contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
-                      !path.contains("..") else {
+                guard Self.pageMayCall(path) else {
                     replyHandler(["error": "bad_path"], nil)
                     return
                 }

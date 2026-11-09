@@ -621,20 +621,20 @@ function createCloud(opts = {}) {
       });
   }
 
-  // Each event goes to main.js as the API sent it (the dashboard, the notices and the chat panels hear every one).
-  // Your own XP changing (the daily bonus, a new level) also updates the state, so the top bar shows it at once.
+  // Each event goes to main.js (the dashboard, the notices and the chat panels hear every one) as JSON.stringify writes
+  // it, not as it came: main.js runs it in the pages as code (`social(${text})`), so a line that isn't JSON never gets
+  // there. Your own XP changing (the daily bonus, a new level) also updates the state, so the top bar shows it at once.
   function event(text) {
-    try {
-      onSocial(text);
-    } catch (e) {
-      console.error('cloud: onSocial', e);
-    }
-    if (!text.includes('"type":"xp"')) return;
     let e;
     try {
       e = JSON.parse(text);
     } catch {
       return;
+    }
+    try {
+      onSocial(JSON.stringify(e));
+    } catch (err) {
+      console.error('cloud: onSocial', err);
     }
     if (e && e.type === 'xp' && e.xp && typeof e.xp === 'object') set({ xp: e.xp });
   }
