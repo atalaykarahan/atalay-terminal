@@ -11,6 +11,7 @@
 #                                      terminals, an icon with a STAGING sash, the next version's number, the local API
 set -euo pipefail
 cd "$(dirname "$0")"
+[[ " $* " == *" --staging "* ]] && STAGING=1 || true
 
 # Released builds sign their API calls (Sources/AtalayTerminal/ClientKey.swift) with a key that never enters the
 # repository: ~/.atalay-terminal/client-key (scripts/client-key.sh makes it), client-key-staging for STAGING=1. It's
@@ -115,4 +116,8 @@ if [[ " $* " == *" --install "* ]] && [ "$APP" != "$HOME/Applications/$NAME.app"
   cp -R "$APP" "$HOME/Applications/"
   echo "installed ~/Applications/$NAME.app"
 fi
-if [[ " $* " == *" --open "* ]]; then open "$APP"; fi
+if [[ " $* " == *" --open "* ]]; then
+  pkill -f "$APP/Contents/MacOS/atalay-terminal" 2>/dev/null || true
+  sleep 0.3
+  open "$APP"
+fi

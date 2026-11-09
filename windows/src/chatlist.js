@@ -84,9 +84,10 @@ function createChatList({ settings }) {
     const known = new Set(items.map((i) => i.id));
     const all = items.slice();
     for (const b of live) {
-      if (!b.cwd || known.has(b.sessionId)) continue;
+      if (!b.cwd || known.has(b.sessionId) || (b.convId && known.has(b.convId))) continue;
       known.add(b.sessionId);
-      all.push({ id: b.sessionId, cwd: b.cwd, mtime: Infinity, size: 0, title: b.title || `new chat · ${b.name}`, lastPrompt: '' });
+      const tool = b.name === 'Antigravity' ? 'antigravity' : b.name === 'Codex' ? 'codex' : 'claude';
+      all.push({ id: b.sessionId, cwd: b.cwd, mtime: Infinity, size: 0, title: b.title || `new chat · ${b.name}`, lastPrompt: '', tool });
     }
     return all.sort((a, b) => (a.mtime === b.mtime ? 0 : a.mtime > b.mtime ? -1 : 1));
   }
@@ -140,7 +141,7 @@ function createChatList({ settings }) {
     /** What the list shows of the live sessions changed: true. */
     setLive(list) {
       live = list || [];
-      const key = JSON.stringify(live.map((b) => [b.sessionId, b.cwd, b.status, b.host, b.name, b.title]));
+      const key = JSON.stringify(live.map((b) => [b.sessionId, b.convId, b.cwd, b.status, b.host, b.name, b.title]));
       if (key === liveKey) return false;
       liveKey = key;
       return true;
@@ -231,7 +232,11 @@ function createChatList({ settings }) {
 
     /** The page's list: the chats that aren't archived, each with its live status, and the folders' labels. */
     snapshot() {
-      const status = new Map(live.map((b) => [b.sessionId, b]));
+      const status = new Map();
+      for (const b of live) {
+        status.set(b.sessionId, b);
+        if (b.convId) status.set(b.convId, b);
+      }
       const rows = [];
       const shown = new Map(); // folder key -> its path as the newest chat there has it
       for (const i of everything()) {
@@ -241,7 +246,8 @@ function createChatList({ settings }) {
         const fav = favorites.has(i.id);
         rows.push({
           id: i.id, cwd: i.cwd, key, mtime: i.mtime, size: i.size, title: titles.get(i.id) || i.title, lastPrompt: i.lastPrompt, fav,
-          status: b ? b.status : null, host: b ? b.host : null, open: open.has(i.id),
+          tool: i.tool || 'claude', status: b ? b.status : null, host: b ? b.host : null,
+          open: open.has(i.id) || (b ? open.has(b.sessionId) : false),
         });
         if (!fav && !shown.has(key)) shown.set(key, i.cwd);
       }

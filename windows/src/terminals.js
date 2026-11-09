@@ -156,7 +156,8 @@ function createTerminals({ onData, onExit, host, extraPath }) {
      */
     spawn({ id, cwd, claudeArgs, cols = 100, rows = 30, title }) {
       const dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
-      const args = claudeArgs ? shell.run(['claude', ...claudeArgs].map((a, i) => (i ? quote(a) : a)).join(' ')) : shell.args;
+      const cmdParts = claudeArgs ? (claudeArgs[0] === 'agy' ? claudeArgs : ['claude', ...claudeArgs]) : null;
+      const args = cmdParts ? shell.run(cmdParts.map((a, i) => (i ? quote(a) : a)).join(' ')) : shell.args;
       const t = { cwd: dir, claude: !!claudeArgs, title, pid: null, startedAt: Date.now(), lastIO: Date.now(), pty: null };
       all.set(id, t);
       return ready.then(async () => {

@@ -111,6 +111,7 @@ button { display: flex; align-items: center; padding: 0; border: 0; background: 
 /* A chat's name edited in place (Rename…). */
 .ren { width: 100%; padding: 1px 4px; border: 1px solid var(--accent); border-radius: 3px; outline: 0; background: rgba(var(--accent-rgb), 0.08); color: var(--hi); font: inherit; font-size: 11px; }
 .t.live { color: var(--hi); }
+.tool-badge { margin-left: 5px; padding: 0 3px; border-radius: 2px; background: rgba(var(--accent-rgb), 0.14); color: var(--accent-soft); font-size: 8px; font-weight: 600; vertical-align: 1px; }
 .m { color: var(--dim); font-size: 9px; }
 .m.warn { color: var(--warn); }
 /* Its star and archive button show on hover (a starred one keeps its star); laid out always, so nothing moves. */

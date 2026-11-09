@@ -85,8 +85,12 @@ final class OtherAI: Track {
     var call: (id: String, p: Pending)?
     /// Its own record says it waits for the user (Antigravity's step WAITING: a permission).
     var waitsForUser = false
-    /// Antigravity's: the tool calls of its last reply, and whether its steps tell which of them runs (its database read).
+    /// Antigravity's: the conversation id in conversation_summaries.db, the tool calls of its last reply, and whether its
+    /// steps tell which of them runs (its database read).
+    var convId: String?
     var plan: AgyPlan?, stepsKnown = false
+    var transcriptOpen = false, userStepIdx = 0
+    var runningBgTasks = Set<String>()
     var title = ""
     /// Its subagents (Antigravity's child conversations), as Claude's are shown: the dashboard's workers, its drones. One
     /// of them waiting for the user's permission makes the session wait.
@@ -98,6 +102,7 @@ final class OtherAI: Track {
     var prompt = "", effort = "", ctx = 0, ctxMax = 0.0
     /// Codex's turns in its log so far (each turn's prompt is named by its turn), and Antigravity's cli.log as it was when
     /// its model was last read (size and mtime).
+    var codexTokenTotal: [String: Int]?
     var turns = 0, modelMark = ""
     /// Its records already in its counts (calls, prompts, replies, tokens: `counted`), and its calls whose result is.
     var counted = Set<String>(), resulted = Set<String>()
@@ -213,6 +218,8 @@ struct SessionBrief: Equatable {
     let host: String?
     /// Id of the in-app chat window running this session, if any.
     let tab: String?
+    /// Antigravity's saved conversation id (conversation_summaries.db), when this live session is an Antigravity chat.
+    var convId: String?
     var model = ""
     var effort = ""
     var ctx = 0
@@ -254,4 +261,6 @@ struct ChatItem: Identifiable, Equatable {
     var size: Int
     var title: String
     var lastPrompt: String
+    /// "claude" for Claude Code transcripts, "antigravity" for Antigravity conversations. Defaults to "claude".
+    var tool: String = "claude"
 }

@@ -76,11 +76,12 @@
   function row(r) {
     const st = r.status || 'ended';
     const isActive = r.id === activeId;
+    const badge = r.tool === 'antigravity' ? '<span class="tool-badge">agy</span>' : r.tool === 'codex' ? '<span class="tool-badge">codex</span>' : '';
     return `<div class="row${r.open ? ' open' : ''}${isActive ? ' active is-active' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
       `<span class="dot s-${esc(st)}${r.status ? '' : ' hollow'}"></span>` +
       (r.id === renaming
         ? `<span class="txt"><input class="ren" value="${esc(r.title || r.lastPrompt)}" spellcheck="false" maxlength="120">`
-        : `<span class="txt"><span class="t${r.status ? ' live' : ''}">${esc(r.title || r.lastPrompt)}</span>`) +
+        : `<span class="txt"><span class="t${r.status ? ' live' : ''}">${esc(r.title || r.lastPrompt)}${badge}</span>`) +
       `<span class="m${st === 'waiting' ? ' warn' : ''}">${esc(meta(r))}</span></span>` +
       `<button type="button" class="star${r.fav ? ' on' : ''}" data-act="star" title="${r.fav ? 'Remove from favorites' : 'Add to favorites: it stays at the top'}">${ICON.star}</button>` +
       `<button type="button" data-act="archive" title="Archive: out of the list (Settings lists it)">${ICON.archive}</button></div>`;
@@ -247,7 +248,7 @@
           { id: 'archive', title: 'Archive' },
           { separator: true },
           { id: 'open', title: 'Open in a Window' },
-          { id: 'fork', title: 'Open a Copy (fork)' },
+          ...(item.tool !== 'claude' ? [] : [{ id: 'fork', title: 'Open a Copy (fork)' }]),
           { id: 'new', title: 'New Terminal in This Folder' },
           { separator: true },
           { id: 'reveal', title: 'Show Folder in Explorer' },

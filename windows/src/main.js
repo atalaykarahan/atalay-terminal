@@ -506,8 +506,8 @@ function createDashboard() {
   };
   dashView.webContents.once('did-finish-load', show);
   setTimeout(show, 4000);
-  const visibility = () => toDash(`visibility(${win.isVisible() && !win.isMinimized()}, ${win.isFocused()})`);
-  for (const ev of ['focus', 'blur', 'minimize', 'restore', 'show', 'hide']) win.on(ev, visibility);
+  const visibility = () => toDash(`visibility(${win.isVisible() && !win.isMinimized()}, ${!!BaseWindow.getFocusedWindow()})`);
+  for (const ev of ['focus', 'blur', 'minimize', 'restore', 'show', 'hide']) win.on(ev, () => setImmediate(visibility));
   for (const ev of ['focus', 'restore', 'show']) win.on(ev, pinAllToDash);
   // The level-up waits for the app to be in front (the notices' "focus"): the app's focus events are BrowserWindows'.
   win.on('focus', tellFocus);
@@ -1053,7 +1053,10 @@ function revealOutside(pid) {
 
 function openSession(sid, fork) {
   if (!sid) return false;
-  const live = engine.live().find((s) => s.sessionId === sid);
+  const liveList = engine.live();
+  const liveAgy = !fork && liveList.find((s) => s.convId === sid);
+  if (liveAgy) return openSession(liveAgy.sessionId, false);
+  const live = liveList.find((s) => s.sessionId === sid);
   // Another AI tool (Codex…) has no conversation to resume or copy: a click shows the window it runs in, ours, or else
   // the terminal's outside the app (Windows Terminal, VS Code…), the first of its parents with a window.
   if (sid.startsWith('ai:')) {
@@ -1072,6 +1075,11 @@ function openSession(sid, fork) {
   if (!cwd || !fs.existsSync(cwd)) {
     dialog.showMessageBox(dash || undefined, { type: 'warning', message: 'Project folder not found', detail: cwd || "Couldn't tell which folder this chat started in." });
     return false;
+  }
+  if (engine.sessionTool(sid) === 'antigravity') {
+    if (fork) return false;
+    openChatWindow({ cwd, claudeArgs: ['agy', '--conversation', sid], sessionId: sid, title: (live && live.name) || sid.slice(0, 8) });
+    return true;
   }
   // A chat running in another terminal can't be resumed twice: it opens as a copy, as "Open a Copy" does on the Mac.
   const copy = fork || !!live;
@@ -1335,7 +1343,9 @@ function panelWindow(role, friend) {
 
 // The level-up waits for the app to be in front (the notices' "focus"), as on the Mac.
 function tellFocus() {
-  toNotices(`focus(${!!BaseWindow.getFocusedWindow()})`);
+  const focused = !!BaseWindow.getFocusedWindow();
+  toNotices(`focus(${focused})`);
+  if (dash && !dash.isDestroyed()) toDash(`visibility(${dash.isVisible() && !dash.isMinimized()}, ${focused})`);
 }
 app.on('browser-window-focus', tellFocus);
 // Going from one of the app's windows to another blurs the first before the second has focus.

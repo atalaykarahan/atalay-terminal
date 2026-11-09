@@ -160,13 +160,19 @@ final class SidebarModel: ObservableObject {
         return order.compactMap { map[$0] }.filter { q.isEmpty || !$0.items.isEmpty || !$0.terms.isEmpty }
     }
 
+    /// The live brief matching a chat row (either by session id for Claude, or by convId for Antigravity).
+    func brief(for item: ChatItem) -> SessionBrief? {
+        briefs[item.id] ?? briefs.values.first { $0.convId == item.id }
+    }
+
     /// Every chat, newest first; live sessions without a saved title too.
     private var everything: [ChatItem] {
         var all = items
         let known = Set(items.map(\.id))
-        for b in briefs.values where b.live && !known.contains(b.id) && !b.cwd.isEmpty {
+        for b in briefs.values where b.live && !known.contains(b.id) && (b.convId.map { !known.contains($0) } ?? true) && !b.cwd.isEmpty {
+            let tool = b.name == "Antigravity" ? "antigravity" : b.name == "Codex" ? "codex" : "claude"
             all.append(ChatItem(id: b.id, path: "", cwd: b.cwd, mtime: Date().timeIntervalSince1970 * 1000, size: 0,
-                                title: b.title.isEmpty ? "new chat · \(b.name)" : b.title, lastPrompt: ""))
+                                title: b.title.isEmpty ? "new chat · \(b.name)" : b.title, lastPrompt: "", tool: tool))
         }
         return all.sorted { $0.mtime > $1.mtime }
     }
@@ -367,7 +373,9 @@ struct SidebarView: View {
     private func folderCard(_ card: FolderCard, label: String) -> some View {
         let shut = model.folded.contains(SidebarModel.folderKey(card.cwd)) && model.query.isEmpty
         let expanded = model.expanded.contains(card.cwd) || !model.query.isEmpty
-        let live = card.terms.contains(where: \.shown) || card.items.contains { model.openInTabs.contains($0.id) }
+        let live = card.terms.contains(where: \.shown) || card.items.contains {
+            model.openInTabs.contains($0.id) || (model.brief(for: $0).map { model.openInTabs.contains($0.id) } ?? false)
+        }
         return VStack(alignment: .leading, spacing: 1) {
             header(card, label: label, shut: shut)
             if !shut {
@@ -450,12 +458,15 @@ struct SidebarView: View {
 
     private func row(_ item: ChatItem) -> some View {
         let favorite = model.favorites.contains(item.id), archived = model.isArchived(item)
+        let b = model.brief(for: item)
+        let inTab = model.openInTabs.contains(item.id) || (b.map { model.openInTabs.contains($0.id) } ?? false)
+        let isActive = model.activeSessionId == item.id || (b != nil && model.activeSessionId == b?.id)
         return ChatRow(item: item, title: model.title(of: item), renaming: model.renaming == item.id,
                        onRename: { name in
                            if let name { model.rename(item.id, to: name) } else { model.renaming = nil }
                        },
-                       brief: model.briefs[item.id], inTab: model.openInTabs.contains(item.id),
-                       isActive: model.activeSessionId == item.id, favorite: favorite,
+                       brief: b, inTab: inTab,
+                       isActive: isActive, favorite: favorite,
                        archived: archived,
                        onStar: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleFavorite(item) } },
                        onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleArchived(item) } })
@@ -470,7 +481,9 @@ struct SidebarView: View {
                 }
                 Divider()
                 Button("Open in a Window") { actions.open(item.id) }
-                Button("Open a Copy (fork)") { actions.fork(item.id) }
+                if item.tool == "claude" {
+                    Button("Open a Copy (fork)") { actions.fork(item.id) }
+                }
                 Button("New Terminal in This Folder") { actions.newTerminal(item.cwd) }
                 Divider()
                 Button("Show Folder in Finder") { actions.reveal(item.cwd) }
@@ -677,6 +690,7 @@ private struct ChatRow: View {
     var body: some View {
         let live = brief?.live == true
         let status = live ? brief?.status : nil
+        let isAgy = item.tool == "antigravity"
         HStack(spacing: 8) {
             StatusDot(status: status ?? "ended", size: 7, hollow: !live)
                 .id(status ?? "ended")
@@ -697,10 +711,20 @@ private struct ChatRow: View {
                         .padding(.horizontal, 3)
                         .background(RoundedRectangle(cornerRadius: 3).stroke(Theme.cAccent, lineWidth: 1))
                 } else {
-                    Text(title)
-                        .font(.mono(11, isActive ? .semibold : .regular))
-                        .foregroundColor(isActive || live ? Theme.cHi : Theme.cText)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(title)
+                            .font(.mono(11, isActive ? .semibold : .regular))
+                            .foregroundColor(isActive || live ? Theme.cHi : Theme.cText)
+                            .lineLimit(1)
+                        if isAgy || item.tool == "codex" {
+                            Text(isAgy ? "agy" : "codex")
+                                .font(.mono(8, .medium))
+                                .foregroundColor(Theme.cAccent.opacity(0.8))
+                                .padding(.horizontal, 3)
+                                .padding(.vertical, 1)
+                                .background(RoundedRectangle(cornerRadius: 2).fill(Theme.cAccent.opacity(0.12)))
+                        }
+                    }
                 }
                 Text(meta(live: live, status: status))
                     .font(.mono(9))
