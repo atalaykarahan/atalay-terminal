@@ -209,7 +209,10 @@ private struct HUDRow: View {
                 if !b.model.isEmpty {
                     Text([b.model, b.effort].filter { !$0.isEmpty }.joined(separator: " · ")).foregroundColor(Theme.cDim)
                 }
-                Text(fmtUsd(b.cost)).foregroundColor(Theme.cAmber).fontWeight(.semibold)
+                // Only Claude's is priced: another AI tool ("ai:…") would show a $0 it didn't cost.
+                if !b.id.hasPrefix("ai:") {
+                    Text(fmtUsd(b.cost)).foregroundColor(Theme.cAmber).fontWeight(.semibold)
+                }
                 Counts(b: b)
                 if !b.actionName.isEmpty {
                     ActionLabel(b: b, now: now)

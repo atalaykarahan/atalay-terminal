@@ -102,7 +102,6 @@ const sessName = (sid) => NAMES.get(sid) || String(sid || '?').slice(0, 6);
 
 // ---------- live data ----------
 let STATE = null;
-let ACTIVE_SID = null;
 const lastStatus = new Map();
 
 function handleInit(d) {
@@ -177,12 +176,10 @@ for (const [ev, show] of [['mouseenter', true], ['focus', true], ['mouseleave', 
     $('pwr-tip').classList.toggle('show', show);
   });
 }
-function setActiveSession(sid) {
-  ACTIVE_SID = sid || null;
-  if (STATE) renderTop();
-}
+// The top bar is every AI's, whichever chat is in front: the Windows app still reports that chat, and nothing here
+// follows it.
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, activeSession: setActiveSession, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, activeSession: () => {}, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
 }
 
@@ -488,107 +485,81 @@ function renderAll() {
 }
 
 function renderTop() {
-  const active = activeTopSession();
-  if (active) {
-    renderActiveTop(active);
-    return;
-  }
   const T = STATE.totals;
-  setTopLabels(['sessions live', 'agents running', 'tools/min', 'tokens/min', 'today · api-eq', 'cache hit', 'web calls', 'tool ok']);
   setNum('k-sessions', T.live, (v) => String(Math.round(v)));
   setText($('k-sessions-sub'), `${T.sessionsToday} today`);
   setNum('k-agents', T.runningAgents, (v) => String(Math.round(v)));
   setText($('k-agents-sub'), `${T.agentsToday} today`);
   setNum('k-tpm', T.toolsPerMin, (v) => v.toFixed(1));
-  setText($('k-tpm-sub'), 'last 5 min');
   setNum('k-tokm', T.tokPerMin, fmtTok);
-  setText($('k-tokm-sub'), 'incl. cache');
   setNum('k-cost', T.cost, fmtUsd);
   setText($('k-burn'), `${fmtUsd(T.costPerHour)}/h burn`);
   setNum('k-cache', T.cacheHit * 100, (v) => v.toFixed(1) + '%');
   setText($('k-saved'), `saved ${fmtUsd(T.saved)}`);
   setNum('k-web', T.web, (v) => String(Math.round(v)));
-  setText($('k-web-sub'), 'today');
   setNum('k-ok', T.okRate * 100, (v) => v.toFixed(1) + '%');
   setText($('k-err'), `${T.errors} failed`);
   renderLimits();
 }
 
-function activeTopSession() {
-  return STATE?.sessions.find((s) => s.id === ACTIVE_SID && s.live) || null;
+// ---------- usage limits ----------
+// What is left of every AI's usage limits, all at once: a column per AI in a fixed order (Claude, Codex, Antigravity),
+// its 5-hour window over its weekly one, each a bar and the % left (and when it fills again, once under half), as each
+// tool reports them; Antigravity a column per group of models it draws on (agy argon, agy claude…). The same whichever
+// chat is in front. A window a column doesn't have (Argon's 5 hours) or no number yet draws no bar: an empty bar reads as
+// used up.
+const LIMIT_ROWS = [['fiveHour', '5h', '5-hour'], ['week', 'week', 'weekly']];
+// The engine's list. The Windows app's engine still sends Claude's limits apart and Codex's on its chats.
+function limitsByAI() {
+  if (STATE.limitsByAI) return STATE.limitsByAI;
+  const list = [];
+  if (STATE.limits) list.push({ id: 'claude', name: 'claude', tool: 'Claude Code', ...STATE.limits });
+  const codex = STATE.sessions.find((s) => s.tool === 'Codex' && s.limits)?.limits;
+  if (codex) list.push({ id: 'codex', name: 'codex', tool: 'Codex', ...codex });
+  return list;
 }
-
-function setTopLabels(labels) {
-  ['sessions', 'agents', 'tpm', 'tokm', 'cost', 'cache', 'web', 'ok'].forEach((id, i) => setText($(`kl-${id}`), labels[i]));
+function limitLeft(w) {
+  // A passed reset only voids the measurement (usage elsewhere may already be eating the next window): no number until
+  // the tool reports again.
+  if (!w || !Number.isFinite(w.pct) || (w.resetsAt && w.resetsAt <= Date.now())) return null;
+  return 100 - Math.max(0, Math.min(100, w.pct));
 }
-function setKpiText(id, value) {
-  nums.delete(id);
-  setText($(id), value);
+const limitClass = (left) => (left === null ? 'na' : left >= 50 ? 'ok' : left >= 20 ? 'warn' : 'hot');
+// When a window fills again, as a clock time, as the tools themselves show it (and it doesn't tick): "19:42" within the
+// day, a weekday after that ("fri"; "fri 18:00" in full).
+function resetAt(at, full) {
+  if (!at) return '';
+  if (at - Date.now() < 20 * 3600_000) return new Date(at).toTimeString().slice(0, 5);
+  return new Date(at).toLocaleString('en-GB', full ? { weekday: 'short', hour: '2-digit', minute: '2-digit' } : { weekday: 'short' }).toLowerCase();
 }
-function renderActiveTop(s) {
-  const tool = s.tool || s.name || 'AI';
-  const tok = s.tok || {};
-  const cache = (tok.cr || 0) + (tok.cw || 0);
-  const total = (tok.in || 0) + (tok.out || 0) + cache;
-  const cacheBase = (tok.in || 0) + cache;
-  const running = s.agentsRunning || 0;
-  const okRate = s.tools ? Math.max(0, (s.tools - s.errors) / s.tools) : 1;
-  const ctxPct = s.ctxMax ? Math.min(100, (s.ctx / s.ctxMax) * 100) : 0;
-  setTopLabels(['active ai', 'model', 'context', 'session tokens', 'session · api-eq', 'cache hit', 'web calls', 'tool ok']);
-  setKpiText('k-sessions', tool);
-  setText($('k-sessions-sub'), `${STATUS[s.status]?.label || s.status || 'LIVE'} · ${clipT(s.title || s.cwd, 28)}`);
-  setKpiText('k-agents', s.model || '—');
-  setText($('k-agents-sub'), running ? `${running} agents running` : (s.effort || 'no subagents'));
-  setNum('k-tpm', ctxPct, (v) => s.ctxMax ? `${v.toFixed(1)}%` : '—');
-  setText($('k-tpm-sub'), `${fmtTok(s.ctx)} / ${s.ctxMax ? fmtTok(s.ctxMax) : '—'}`);
-  setNum('k-tokm', total, fmtTok);
-  setText($('k-tokm-sub'), `${fmtTok(tok.out)} out · ${fmtTok(cache)} cache`);
-  if (tool === 'Claude Code') setNum('k-cost', s.cost || 0, fmtUsd);
-  else setKpiText('k-cost', '—'); // No price estimate is available for the other CLIs.
-  setText($('k-burn'), `${s.prompts || 0} prompts`);
-  setNum('k-cache', cacheBase ? cache / cacheBase * 100 : 0, (v) => v.toFixed(1) + '%');
-  setText($('k-saved'), `${fmtTok(cache)} cached`);
-  setNum('k-web', s.web || 0, (v) => String(Math.round(v)));
-  setText($('k-web-sub'), 'this session');
-  setNum('k-ok', okRate * 100, (v) => v.toFixed(1) + '%');
-  setText($('k-err'), `${s.errors || 0} failed · ${s.tools || 0} calls`);
-  renderLimits(s);
-}
-
-// Usage limits from Claude Code's status line: used % of the 5-hour and the weekly window, and when each resets. Until
-// the status line has reported them (a new install), they stay out of the top bar.
-function renderLimits(active = activeTopSession()) {
-  const L = active ? (active.tool === 'Codex' ? active.limits : active.tool === 'Claude Code' ? STATE?.limits : null) : STATE?.limits;
-  const source = active?.tool || 'Claude Code';
-  for (const [id, w, long] of [['lim-5h', L?.fiveHour, false], ['lim-week', L?.week, true]]) {
-    const el = $(id);
-    if (!el) continue;
-    const minutes = w?.windowMinutes;
-    const duration = minutes > 0 ? (minutes === 10080 ? 'week' : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`) : long ? 'week' : '5h';
-    setText(el.querySelector('label'), `${source.toLowerCase()} · ${duration} left`);
-    el.title = `${source} remaining limit for the ${long ? 'weekly' : 'current 5-hour'} window`;
-    el.style.display = w ? '' : 'none';
-    // Both CLIs report percentage used. A passed reset only invalidates that measurement: usage elsewhere may already
-    // have consumed the next window, so never invent 100% remaining without a fresh report from the CLI.
-    const resetPassed = !!(w?.resetsAt && w.resetsAt <= Date.now());
-    const used = w && !resetPassed && Number.isFinite(w.pct) ? Math.max(0, Math.min(100, w.pct)) : null;
-    const left = used === null ? null : 100 - used;
-    el.classList.toggle('ok', left !== null && left >= 50);
-    el.classList.toggle('warn', left !== null && left >= 20 && left < 50);
-    el.classList.toggle('hot', left !== null && left < 20);
-    setText(el.querySelector('b'), left === null ? '—' : `${Math.round(left)}%`);
-    setText(el.querySelector('small'), !w ? 'no data yet' : resetPassed ? 'awaiting update' : w.resetsAt ? `resets ${resetLabel(w.resetsAt, long)}` : '');
-    el.querySelector('.lim-bar i').style.width = `${left ?? 0}%`;
+let limitMinute = 0;
+function renderLimits() {
+  limitMinute = Math.floor(Date.now() / 60_000);
+  const box = $('limits');
+  const list = limitsByAI();
+  box.hidden = !list.length;
+  if (!list.length) return;
+  let html = '<span class="lim-h"></span>' + LIMIT_ROWS.map(([, short]) => `<span class="lim-h">${short}</span>`).join('');
+  for (const a of list) {
+    const wins = LIMIT_ROWS.map(([key, , long]) => ({ w: a[key], left: limitLeft(a[key]), long, none: !!a.windows && !a.windows.includes(key) }));
+    const tip = [
+      `${a.tool}${a.group ? ` · ${a.group}` : ''}`,
+      ...wins.map(({ w, left, long, none }) =>
+        none ? `no ${long} limit` : !w ? `${long}: no data yet` : left === null ? `${long}: waiting for ${a.tool} to report again` : `${long}: ${Math.round(left)}% left, fills again ${resetAt(w.resetsAt, true)}`,
+      ),
+    ];
+    if (a.at) tip.push(`as of ${hhmmss(a.at).slice(0, 5)}`);
+    const title = esc(tip.join('\n'));
+    html +=
+      `<span class="lim-n" title="${title}">${esc(a.name)}</span>` +
+      wins
+        .map(
+          ({ w, left }) =>
+            `<span class="lim-c ${limitClass(left)}" title="${title}">${left === null ? '<i></i>' : `<i class="lim-b"><i style="width:${left}%"></i></i>`}<b>${left === null ? '—' : Math.round(left) + '%'}</b>${left !== null && left < 50 && w.resetsAt ? `<small>↻${resetAt(w.resetsAt)}</small>` : ''}</span>`,
+        )
+        .join('');
   }
-}
-function resetLabel(at, long) {
-  const ms = at - Date.now();
-  if (ms <= 0) return 'now';
-  if (!long || ms < 24 * 3600_000) {
-    const m = Math.round(ms / 60_000);
-    return m < 60 ? `in ${m}m` : `in ${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
-  }
-  return new Date(at).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' }).toLowerCase();
+  setHTML(box, html);
 }
 
 function actionHTML(s) {
@@ -720,7 +691,7 @@ function updateCard(el, s) {
   setText(q('.wb'), s.web);
   setText(q('.er'), s.errors);
   q('.er').classList.toggle('red', s.errors > 0);
-  setText(q('.cost'), fmtUsd(s.cost));
+  setText(q('.cost'), s.tool && s.tool !== 'Claude Code' ? '' : fmtUsd(s.cost)); // the others have no price list
   setHTML(q('.spark'), sparkBars(s.spark, col));
   setText(q('.ag'), s.agents.length ? `⤷ ${s.agentsRunning} running · ${s.agents.length} subagents (15 min)` : '');
   const clash = CLASH.get(s.id);
@@ -1034,6 +1005,10 @@ function spendLabel(key, unit, full) {
   return `${d} ${MONTHS[m - 1]}`;
 }
 
+// The AIs in spend.ledger's rows, in this order; Claude Code's limits and spend are the Claude account's.
+const AI_ORDER = ['Claude Code', 'Codex', 'Antigravity'];
+const aiName = (tool) => (tool === 'Claude Code' ? 'claude' : String(tool).toLowerCase());
+
 // The rows' and the bars' colour: the sessions' hues, "other" dim.
 const spendColor = (p, i) => (p.id === '*' ? 'var(--dim2)' : `var(--hue${i % 10})`);
 
@@ -1137,8 +1112,6 @@ function renderSpend() {
   for (const b of tabs) b.classList.toggle('on', b.dataset.r === spendRange);
   box.classList.toggle('hist', spendRange !== 'today');
   if (spendRange !== 'today') return renderSpendHistory();
-  // Today's models are the rows themselves.
-  setHTML($('spend-models'), '');
   const c = clearedOf('p-spend');
   let T = STATE.totals, models = STATE.byModel;
   const spark = sparkSince(STATE.costSpark, c);
@@ -1160,12 +1133,39 @@ function renderSpend() {
   setNum('spend-big', T.cost, fmtUsd);
   setText($('spend-sub'), `${c ? since(c) : 'today'} · ${fmtTok(T.tok.out)} out · ${fmtTok(T.tok.cr)} cache read · ${fmtTok(T.tok.cw)} cache write`);
   setHTML($('spend-chart'), areaChart(spark, 'var(--amber)', 300, 34));
+  // A row per AI, always in the same order; the Windows app's engine doesn't name the AI of a model yet.
+  const byAI = new Map();
+  for (const m of models) {
+    const tool = m.tool || (m.priced ? 'Claude Code' : 'other');
+    const a = byAI.get(tool) || { tool, calls: 0, out: 0, cost: 0, priced: false };
+    a.calls += m.calls;
+    a.out += m.tok.out;
+    a.cost += m.cost;
+    a.priced = a.priced || m.priced;
+    byAI.set(tool, a);
+  }
+  const rank = (t) => (AI_ORDER.includes(t) ? AI_ORDER.indexOf(t) : AI_ORDER.length);
   setHTML(
     $('spend-rows'),
-    models
-      .slice(0, 3)
-      .map((m) => `<div class="sr"><span><b>${esc(m.model)}</b> · ${m.calls} calls</span><span>${fmtTok(m.tok.out)} out</span><span class="c">${m.priced ? fmtUsd(m.cost) : 'no price'}</span></div>`)
+    [...byAI.values()]
+      .sort((a, b) => rank(a.tool) - rank(b.tool) || a.tool.localeCompare(b.tool))
+      .map(
+        (a) =>
+          `<div class="sr"><span><b>${esc(aiName(a.tool))}</b> · ${a.calls} calls</span><span>${fmtTok(a.out)} out</span>${a.priced ? `<span class="c">${fmtUsd(a.cost)}</span>` : '<span class="c na" title="No price list for this AI">no price</span>'}</div>`,
+      )
       .join(''),
+  );
+  const total = models.reduce((x, m) => x + m.cost, 0) || 1;
+  setHTML(
+    $('spend-models'),
+    models.length
+      ? '<span class="lbl">models</span>' +
+          models
+            .slice(0, 4)
+            .map((m) => `<span title="${m.calls} calls · ${fmtTok(m.tok.out)} out"><b>${esc(m.model)}</b> ${m.cost > 0 ? `${fmtUsd(m.cost)} <i>${Math.round((m.cost / total) * 100)}%</i>` : `${fmtTok(m.tok.out)} out`}</span>`)
+            .join('') +
+          (models.length > 4 ? `<span title="${esc(models.slice(4).map((m) => `${m.model} ${m.cost > 0 ? fmtUsd(m.cost) : fmtTok(m.tok.out) + ' out'}`).join(' · '))}">+${models.length - 4} more</span>` : '')
+      : '',
   );
   setHTML(
     $('spend-kv'),
@@ -1253,7 +1253,7 @@ function sessionTip(s) {
     (s.lastPrompt ? `<div class="d">› ${esc(clipT(s.lastPrompt, 170))}</div>` : '') +
     `<div class="d">${esc(s.cwd)}${s.branch ? ' ⎇ ' + esc(s.branch) : ''}</div>` +
     (sys ? `<div class="d">${esc(sys)}</div>` : '') +
-    `<div class="r">ctx ${fmtTok(s.ctx)}${pct} · ${fmtUsd(s.cost)} · ${s.tools} tools · ${s.web} web · ${s.errors} err · ${s.prompts} prompts</div>` +
+    `<div class="r">ctx ${fmtTok(s.ctx)}${pct}${s.tool && s.tool !== 'Claude Code' ? '' : ` · ${fmtUsd(s.cost)}`} · ${s.tools} tools · ${s.web} web · ${s.errors} err · ${s.prompts} prompts</div>` +
     (p ? `<div class="r" style="color:${CAT[p.c]?.color}">▸ ${esc(p.n)} ${esc(p.l)} · ${fmtDur(Date.now() - p.t)}</div>` : '') +
     '<div class="d">click → open its chat window · drag to move it</div>'
   );
@@ -1321,7 +1321,7 @@ window.RADAR = { CAT, CATS, STATUS, FONT, MAPQ, sessColor, colorIndex, sessName,
 // ---------- start ----------
 setInterval(() => {
   setText($('clock'), new Date().toTimeString().slice(0, 8));
-  if (STATE) renderLimits(); // Refresh the selected AI's countdown, including when only Codex has limits.
+  if (STATE && Math.floor(Date.now() / 60_000) !== limitMinute) renderLimits(); // a reset that has passed voids its number
 }, 1000);
 connect();
 

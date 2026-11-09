@@ -146,20 +146,28 @@ body::after {
 .kpis { display: flex; flex: 0 1 auto; gap: 16px; min-width: 0; overflow: hidden; }
 .kpis.clip { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent); }
 .brand, .clock, .topbtn { flex: none; }
-.kpi { display: flex; flex-direction: column; min-width: 58px; line-height: 1.12; }
+.kpi { display: flex; flex: none; flex-direction: column; min-width: 58px; line-height: 1.12; }
 .kpi label { color: var(--dim); font-size: 0.78em; letter-spacing: 0.04em; white-space: nowrap; }
 .kpi b { color: var(--hi); font-size: 1.28em; font-weight: 700; white-space: nowrap; }
 .kpi small { color: var(--dim); font-size: 0.74em; white-space: nowrap; }
 .kpi.hot b { color: var(--amber); text-shadow: 0 0 12px rgba(var(--amber-rgb), 0.35); }
-/* usage limits: used % of the 5-hour and weekly windows, coloured by how close they are */
-.kpi.lim { position: relative; padding-bottom: 4px; }
-.kpi.lim .lim-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255, 255, 255, 0.08); }
-.kpi.lim .lim-bar i { display: block; height: 100%; width: 0; background: currentColor; transition: width 0.6s ease; }
-.kpi.lim.ok { color: var(--green); }
-.kpi.lim.warn { color: var(--amber); }
-.kpi.lim.hot { color: var(--red); }
-.kpi.lim b { color: inherit; }
-.kpi.lim.hot b { text-shadow: 0 0 12px rgba(var(--red-rgb), 0.45); }
+/* usage limits, every AI's at once (app.js renderLimits): the rows' names, then a column per AI (its name, its 5-hour and
+   weekly window). The bars share one scale and one starting edge, so they compare at a glance; colour follows what's
+   left. Out of .kpis: a narrow window fades the counters, never the limits. */
+.limits { flex: none; display: grid; grid-auto-flow: column; grid-template-rows: repeat(3, auto); column-gap: 10px; row-gap: 2px; align-items: center; line-height: 1.12; }
+.limits[hidden] { display: none; }
+.limits .lim-h, .limits .lim-n { color: var(--dim); font-size: 0.78em; letter-spacing: 0.04em; white-space: nowrap; }
+.limits .lim-n { color: var(--txt2); }
+.limits .lim-c { display: grid; grid-template-columns: 24px 2.3em auto; align-items: center; column-gap: 5px; font-size: 0.94em; white-space: nowrap; }
+.limits .lim-b { position: relative; height: 4px; background: rgba(var(--dim2-rgb), 0.9); }
+.limits .lim-b i { position: absolute; inset: 0 auto 0 0; background: currentColor; transition: width 0.6s ease; }
+.limits .lim-c b { color: inherit; font-weight: 700; text-align: right; }
+.limits .lim-c small { opacity: 0.85; font-size: 0.84em; }
+.limits .ok { color: var(--green); }
+.limits .warn { color: var(--amber); }
+.limits .hot { color: var(--red); }
+.limits .hot b { text-shadow: 0 0 10px rgba(var(--red-rgb), 0.5); }
+.limits .na { color: var(--dim); }
 .bump { animation: bump 0.6s ease-out; }
 .marquee {
   flex: 1;
@@ -386,6 +394,7 @@ body::after {
 .spend-rows .sr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; color: var(--dim); font-size: 0.9em; }
 .spend-rows .sr b { color: var(--txt); }
 .spend-rows .sr .c { color: var(--accent-soft); text-align: right; }
+.spend-rows .sr .c.na { color: var(--dim); }
 .spend-kv { display: flex; flex-wrap: wrap; gap: 0 12px; margin-top: 4px; color: var(--dim); font-size: 0.9em; }
 .spend-tabs { display: flex; align-items: center; gap: 1px; padding-right: 4px; }
 .spend-tabs button { height: 15px; padding: 0 5px; border: 0; background: none; color: inherit; font: inherit; line-height: 15px; opacity: 0.6; cursor: pointer; }

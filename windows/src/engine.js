@@ -1054,6 +1054,83 @@ function parseLimits(file, mtime) {
   return { fiveHour: window(rl.five_hour), week: window(rl.seven_day), at: mtime };
 }
 
+// The last limits another tool reported (Codex's, Antigravity's), kept so they still show while it isn't running and
+// after a restart.
+function saveLimits(dir, tool, value) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `limits-${tool}.json`), tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(value));
+    fs.renameSync(tmp, file);
+  } catch {}
+}
+function loadLimits(dir, tool) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, `limits-${tool}.json`), 'utf8'));
+    return isObj(j) ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+// Antigravity's usage limits, as its CLI reports them (`agy -p /usage --output-format json`: no agent turn, and with
+// --log-file NUL no log file left behind). Its models come in groups (Gemini, Claude and GPT, Gemini 4 Argon…), each with
+// its own 5-hour and weekly window. `{groups: [{name, models, fiveHour: {pct, resetsAt}, week}], at}`, pct used, or null.
+function parseAgyUsage(text) {
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const groups = isObj(j) && isObj(j.command) && isObj(j.command.data) ? j.command.data.groups : null;
+  if (!Array.isArray(groups)) return null;
+  const list = groups.filter(isObj).map((g) => {
+    // "Models within this group: Gemini Flash, Gemini Pro"
+    const about = typeof g.description === 'string' ? g.description : '';
+    const item = { name: String(g.name || ''), models: about.startsWith('Models within this group:') ? about.slice(25).trim() : '' };
+    for (const b of Array.isArray(g.buckets) ? g.buckets : []) {
+      const key = b && b.window === '5h' ? 'fiveHour' : b && b.window === 'weekly' ? 'week' : '';
+      if (!key || typeof b.remaining_fraction !== 'number') continue;
+      item[key] = { pct: Math.max(0, Math.min(100, (1 - b.remaining_fraction) * 100)), resetsAt: parseISO(b.reset_time) };
+    }
+    return item;
+  });
+  return list.length ? { groups: list, at: Date.now() } : null;
+}
+
+// The groups the top bar shows, a column each in the CLI's order: the one the model in use draws on (the group listing
+// it: "Gemini 4 Argon", "Claude Opus"), and any other under half; one nobody uses, at 100%, would only take room. With no
+// model known (or one no group lists), every group used at all. Each has only the windows it has: Argon's is weekly only
+// (Google: "a separate weekly-only Argon quota for Pro"), and Argon's work doesn't move Gemini's 5 hours.
+function agyPools(usage, model) {
+  const groups = isObj(usage) && Array.isArray(usage.groups) ? usage.groups : [];
+  const id = String(model || '').toLowerCase();
+  const wordsOf = (s) => String(s).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  // A name lists the model when each of its words is in the model's id or name ("Gemini 4 Argon", "Claude Opus").
+  const lists = (g) => [g.name, ...String(g.models || '').split(',')].some((name) => {
+    const words = wordsOf(name);
+    return words.length > 0 && words.every((w) => id.includes(w));
+  });
+  // What's left, while its reset hasn't passed (after it, the number says nothing until the CLI reports again).
+  const left = (w) => (isObj(w) && typeof w.pct === 'number' && !(w.resetsAt > 0 && w.resetsAt <= Date.now()) ? 100 - w.pct : null);
+  const mine = id ? groups.filter(lists) : [];
+  const out = [];
+  for (const g of groups) {
+    const windows = ['fiveHour', 'week'].filter((k) => g[k]);
+    const lefts = windows.map((k) => left(g[k])).filter((v) => v !== null);
+    const inUse = mine.length ? mine.some((m) => m.name === g.name) : lefts.some((v) => v < 100);
+    if (!inUse && !lefts.some((v) => v < 50)) continue;
+    // Its short name: a family's first word ("Gemini Models": gemini), a single model's last ("Gemini 4 Argon": argon).
+    const words = wordsOf(g.name);
+    const short = (g.models ? words[0] : words[words.length - 1]) || 'agy';
+    const pool = { id: `agy-${short}`, name: `agy ${short}`, group: g.models ? `${g.name}: ${g.models}` : g.name, windows, at: usage.at };
+    for (const k of windows) pool[k] = g[k];
+    out.push(pool);
+  }
+  return out;
+}
+
 // ---------- processes ----------
 // process.kill(pid, 0) checks without signalling, on Windows too; EPERM means it runs as someone else.
 function alive(pid) {
@@ -1243,9 +1320,20 @@ class RadarEngine {
     this.others = new Map();
     this.otherSeen = new Set();
     this.otherCalls = new Map();
-    // Account-wide Codex limits fetched from its authenticated app-server, not rollout history.
-    this.codexUsage = null;
+    // Account-wide Codex limits fetched from its authenticated app-server, not rollout history. The last one read is kept
+    // on disk, so the top bar shows them while no Codex runs too.
+    this.limitsDir = this.limitsFile ? path.dirname(this.limitsFile) : path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'atalay-terminal');
+    this.codexUsage = loadLimits(this.limitsDir, 'codex');
     this.codexUsagePending = false;
+    // Antigravity's limits by group of models (agyPools), kept the same way, and the model its chats used last: the group
+    // that binds.
+    this.agyUsage = loadLimits(this.limitsDir, 'antigravity');
+    this.agyUsagePending = false;
+    this.agyWasRunning = false;
+    this.agyModel = (this.agyUsage && this.agyUsage.model) || '';
+    // Their chats and subagents that worked today (the top bar's "today" counts), by id.
+    this.otherChatsToday = new Set();
+    this.otherAgentsToday = new Set();
     this.agents = new Map();
     this.cursors = new Map();
     this.seenMsg = new Set();
@@ -1443,6 +1531,7 @@ class RadarEngine {
     this.startWatch();
     this.lastScan = Date.now();
     this.refreshCodexUsage();
+    this.refreshAgyUsage();
     for (const k of ['registry', 'recent', 'scan']) this.lastRun[k] = Date.now();
     // The watches deliver transcript and registry changes as they happen; these timers are only safety nets, and the
     // way changes arrive where a watch couldn't start or broke (then at the old server's pace).
@@ -1459,7 +1548,10 @@ class RadarEngine {
       this.startWatch();
     });
     this.every(120, () => this.scanHistory(false));
-    this.every(60, () => this.refreshCodexUsage());
+    this.every(60, () => {
+      this.refreshCodexUsage();
+      this.refreshAgyUsage();
+    });
     this.scheduleLedger();
     this.every(3600, () => this.readLedger());
   }
@@ -1499,8 +1591,9 @@ class RadarEngine {
 
   // Read Codex's current account snapshot through the same local app-server protocol used by its own clients.
   // The subprocess is isolated from the running chat and uses the user's existing Codex login. Only while a Codex runs:
-  // its limits show for no other session, and here each read starts cmd.exe, Node and Codex itself, every minute, on a PC
-  // that may not even have Codex. No --stdio: stdio is the default, and older Codex (0.104) refuses the flag and exits.
+  // here each read starts cmd.exe, Node and Codex itself, every minute, on a PC that may not even have Codex; in between
+  // the last one read shows, with its time (the page drops a window's number once its reset has passed). No --stdio:
+  // stdio is the default, and older Codex (0.104) refuses the flag and exits.
   refreshCodexUsage() {
     if (this.codexUsagePending || this.stopped || !this.codexRunning()) return;
     this.codexUsagePending = true;
@@ -1520,10 +1613,12 @@ class RadarEngine {
       settled = true;
       clearTimeout(timeout);
       this.codexUsagePending = false;
-      // Do not leave a previous snapshot on screen after a failed live request.
-      this.codexUsage = value;
-      this.stateDirty = true;
-      this.publishState();
+      if (value) {
+        this.codexUsage = value;
+        saveLimits(this.limitsDir, 'codex', value);
+        this.stateDirty = true;
+        this.publishState();
+      }
       // With shell on Windows, kill() only ends cmd.exe; the closed stdin is what ends codex itself.
       try { child.stdin.end(); } catch {}
       if (!child.killed) child.kill();
@@ -1573,6 +1668,47 @@ class RadarEngine {
 
   codexRunning() {
     for (const O of this.others.values()) if (O.tool === 'Codex' && O.endedAt === 0) return true;
+    return false;
+  }
+
+  // Antigravity's limits, the same way: only while an Antigravity chat runs, each read a run of its CLI (~3 s), which
+  // runaways.js knows for no chat of the user's.
+  refreshAgyUsage() {
+    if (this.agyUsagePending || this.stopped || !this.agyRunning()) return;
+    this.agyUsagePending = true;
+    const child = spawn('agy -p "/usage" --output-format json --log-file NUL', [], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      shell: true,
+      env: process.env,
+    });
+    let out = '';
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      this.agyUsagePending = false;
+      const value = parseAgyUsage(out);
+      if (!value) return;
+      this.agyUsage = value;
+      saveLimits(this.limitsDir, 'antigravity', { ...value, model: this.agyModel });
+      this.stateDirty = true;
+      this.publishState();
+    };
+    child.stdout.on('data', (chunk) => {
+      out += chunk.toString('utf8');
+    });
+    child.on('error', finish);
+    child.on('close', finish);
+    const timeout = setTimeout(() => {
+      try { child.kill(); } catch {}
+      finish();
+    }, 20_000);
+  }
+
+  agyRunning() {
+    for (const O of this.others.values()) if (O.tool === 'Antigravity' && O.endedAt === 0) return true;
     return false;
   }
 
@@ -1741,6 +1877,8 @@ class RadarEngine {
     for (const A of this.agents.values()) A.resetCounters();
     this.otherSeen.clear();
     this.otherCalls.clear();
+    this.otherChatsToday.clear();
+    this.otherAgentsToday.clear();
     for (const O of this.others.values()) resetOther(O);
   }
 
@@ -1925,7 +2063,7 @@ class RadarEngine {
         G.saved += savedOf(model, u);
         const mk = shortModel(model) || '?';
         let bm = G.byModel.get(mk);
-        if (!bm) G.byModel.set(mk, (bm = { model: mk, priced: priceFor(model) !== null, tokIn: 0, tokOut: 0, tokCr: 0, tokCw: 0, cost: 0, calls: 0 }));
+        if (!bm) G.byModel.set(mk, (bm = { model: mk, tool: 'Claude Code', priced: priceFor(model) !== null, tokIn: 0, tokOut: 0, tokCr: 0, tokCw: 0, cost: 0, calls: 0 }));
         bm.tokIn += i; bm.tokOut += o; bm.tokCr += r; bm.tokCw += w;
         bm.cost += c;
         bm.calls += 1;
@@ -2504,10 +2642,18 @@ class RadarEngine {
         this.stateDirty = true;
       }
     }
-    // A Codex just started has its limits at once, not at the next minute's read.
+    // A Codex or an Antigravity just started has its limits at once, not at the next minute's read.
     const codex = this.codexRunning();
     if (codex && !this.codexWasRunning) this.refreshCodexUsage();
     this.codexWasRunning = codex;
+    const agyModel = [...this.others.values()].filter((O) => O.tool === 'Antigravity' && O.model).sort((a, b) => b.lastTs - a.lastTs)[0]?.model;
+    if (agyModel && agyModel !== this.agyModel) {
+      this.agyModel = agyModel;
+      this.stateDirty = true;
+    }
+    const agy = this.agyRunning();
+    if (agy && !this.agyWasRunning) this.refreshAgyUsage();
+    this.agyWasRunning = agy;
     this.matchTabs();
     this.publishState();
   }
@@ -2639,9 +2785,10 @@ class RadarEngine {
     G.tokIn += i;
     G.tokOut += o;
     G.tokCr += r;
-    const mk = O.model || O.tool;
-    let bm = G.byModel.get(mk);
-    if (!bm) G.byModel.set(mk, (bm = { model: mk, priced: false, tokIn: 0, tokOut: 0, tokCr: 0, tokCw: 0, cost: 0, calls: 0 }));
+    // Its own row in spend.ledger: keyed by the tool too, as another tool may name a model the same way.
+    const mk = O.model || O.tool, row = `${O.tool}|${mk}`;
+    let bm = G.byModel.get(row);
+    if (!bm) G.byModel.set(row, (bm = { model: mk, tool: O.tool, priced: false, tokIn: 0, tokOut: 0, tokCr: 0, tokCw: 0, cost: 0, calls: 0 }));
     bm.tokIn += i;
     bm.tokOut += o;
     bm.tokCr += r;
@@ -3170,7 +3317,6 @@ class RadarEngine {
         byCat: O.byCat, pending: running ? [running] : [], spark, flags, agents, agentsRunning: nRun,
         waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
         tab: typeof O.hostTab === 'string' ? O.hostTab : null,
-        limits: this.codexUsage || null,
         ...(running && { last: running }),
       });
     }
@@ -3218,6 +3364,14 @@ class RadarEngine {
       if (A.lastTs >= this.day0 && A.tools > 0) agentsToday++;
       agentCost += A.cost;
     }
+    // The other AI tools' chats and subagents count too, also once they're gone from the list.
+    for (const O of this.others.values()) {
+      if (!(O.lastTs >= this.day0 && (O.tools > 0 || O.prompts > 0))) continue;
+      this.otherChatsToday.add(O.id);
+      for (const a of O.agents || []) if (a.lastTs >= this.day0 && a.tools > 0) this.otherAgentsToday.add(`${O.id}:${a.id}`);
+    }
+    sessionsToday += this.otherChatsToday.size;
+    agentsToday += this.otherAgentsToday.size;
     const totals = {
       live: list.filter((s) => s.live).length, sessionsToday, agentsToday,
       runningAgents, cost: G.cost, saved: G.saved,
@@ -3235,7 +3389,7 @@ class RadarEngine {
       byCat: G.byCat, lastByCat: G.lastByCat, pendingByCat, catSpark,
       toolSpark, tokSpark, costSpark,
       byModel: [...G.byModel.values()].sort((a, b) => b.cost - a.cost).map((m) => ({
-        model: m.model, priced: m.priced, cost: m.cost, calls: m.calls,
+        model: m.model, tool: m.tool, priced: m.priced, cost: m.cost, calls: m.calls,
         tok: { in: m.tokIn, out: m.tokOut, cr: m.tokCr, cw: m.tokCw },
       })),
       research: G.research.slice(-30).reverse(),
@@ -3245,6 +3399,12 @@ class RadarEngine {
     };
     const limits = this.readLimits();
     if (limits) out.limits = limits;
+    // Every AI's usage limits for the top bar, in its order, whichever chat is in front: Claude's from its status line,
+    // Codex's and Antigravity's as last read, Antigravity's a column per group in use (agyPools). One not heard from in a
+    // week is left out.
+    const pools = [['Claude Code', limits && { ...limits, id: 'claude', name: 'claude' }], ['Codex', this.codexUsage && { ...this.codexUsage, id: 'codex', name: 'codex' }],
+      ...(this.agyUsage ? agyPools(this.agyUsage, this.agyModel) : []).map((p) => ['Antigravity', p])];
+    out.limitsByAI = pools.filter(([, v]) => v && now - (Number(v.at) || 0) < 7 * 24 * 3_600_000).map(([tool, v]) => ({ ...v, tool }));
     return out;
   }
 

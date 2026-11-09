@@ -18,9 +18,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var briefs: [String: SessionBrief] = [:]
     private var lastStatus: [String: String] = [:]
     private var lastWinOpen = ""
-    /// The terminal window/pane the user touched last; its AI owns the dashboard's top bar until another is touched.
+    /// The terminal window/pane the user touched last: its chat is the one the sidebar marks.
     private var activeTerminalWindow: String?
-    private var lastActiveSession = ""
     private var split: ThemedSplitView!
     private var sidebarHost: NSView!
     /// The chat list's narrowest width and the width it opens at (the one it had when it closed).
@@ -217,7 +216,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             terminalsJSON = ""
             pushTerminals()
             radar.push("runaways", runaways.json)
-            pushActiveSession(force: true)
         // Power save: the switch on the map, and Settings' "on by itself at low battery".
         case "powerSave": PowerSaver.shared.choose(msg["on"] as? Bool == true)
         case "powerSaveAuto": PowerSaver.shared.setAuto(msg["on"] as? Bool == true)
@@ -367,7 +365,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         pushActiveSession()
     }
 
-    private func pushActiveSession(force: Bool = false) {
+    /// Marks in the sidebar the chat of the terminal touched last. The dashboard's top bar shows every AI at once and
+    /// follows no chat.
+    private func pushActiveSession() {
         let chat = activeChat ?? activeTerminalWindow.flatMap { chats[$0] }
         let shell = chat?.focusedShellPid ?? 0
         var best: (brief: SessionBrief, distance: Int)?
@@ -387,10 +387,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let sid = best?.brief.id ?? chat?.sessionId ?? ""
         let chatSid = (best?.brief.id).flatMap({ $0.hasPrefix("ai:") ? nil : $0 }) ?? chat?.sessionId ?? (sid.isEmpty ? nil : sid)
         if sidebar.activeSessionId != chatSid { sidebar.activeSessionId = chatSid }
-        guard force || sid != lastActiveSession else { return }
-        lastActiveSession = sid
-        let json = sid.isEmpty ? "null" : "\"\(sid)\""
-        radar.push("activeSession", json)
     }
 
     // MARK: terminals, the orbit's flying cars

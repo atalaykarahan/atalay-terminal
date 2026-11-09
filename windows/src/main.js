@@ -75,7 +75,7 @@ const settings = (() => {
 let dash = null, dashView = null, chatsView = null;
 const boots = new Map(); // webContents id -> what its preload asks for before the page loads
 const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt, steppedAside }
-let activeTerminalId = null, lastActiveSession;
+let activeTerminalId = null;
 const panels = { notices: null, chats: new Map(), showing: new Set() }; // the messages panels: the corner's notices, friends' chats
 
 // The AI tools in the theme's colours (Settings · INTERFACE): Claude Code, Codex and Antigravity on their themes that use
@@ -338,8 +338,9 @@ function runPanel(win, js) {
 const toDash = (call) => run(dashView, `window.__radar && window.__radar.${call}`);
 const toNotices = (call) => runPanel(panels.notices, `window.__messages && __messages.${call}`);
 
-// The AI in the terminal window touched last owns the top bar. Prefer a working/waiting nested AI (Codex, etc.) over
-// the parent Claude process if both happen to be under the same shell.
+// The chat of the terminal window touched last is the one the chat list marks. Prefer a working/waiting nested AI (Codex,
+// etc.) over the parent Claude process if both happen to be under the same shell. The dashboard's top bar shows every AI
+// at once and follows no chat.
 function touchTerminal(id) {
   // Every key typed comes here: only a change of terminal has anything to tell (a change of what runs in it comes with
   // the engine's state).
@@ -358,9 +359,6 @@ function pushActiveSession(force = false) {
   if (chatlist.setActive(chatSid) || force) {
     run(chatsView, `window.__chats && __chats.active(${JSON.stringify(chatSid)})`);
   }
-  if (!force && sid === lastActiveSession) return;
-  lastActiveSession = sid;
-  toDash(`activeSession(${JSON.stringify(sid)})`);
 }
 
 // The page's Cloud state, with the Windows app's own updates in it (they come from GitHub releases, not the API).

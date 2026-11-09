@@ -81,4 +81,17 @@ enum Limits {
         }
         return ["fiveHour": window("five_hour"), "week": window("seven_day"), "at": mtime]
     }
+
+    /// The last limits another tool reported (Codex's, Antigravity's), kept so they still show while it isn't running and
+    /// after a restart.
+    static func save(_ value: [String: Any], as tool: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: value) else { return }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? data.write(to: dir.appendingPathComponent("limits-\(tool).json"), options: .atomic)
+    }
+
+    static func load(_ tool: String) -> [String: Any]? {
+        guard let data = FileManager.default.contents(atPath: dir.appendingPathComponent("limits-\(tool).json").path) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
 }

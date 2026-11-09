@@ -174,11 +174,13 @@ final class Minute {
 }
 
 final class ModelAgg {
-    let model: String, priced: Bool
+    /// `tool`: the AI it ran in (Claude Code, Codex, Antigravity…), spend.ledger's row.
+    let model: String, priced: Bool, tool: String
     var tokIn = 0, tokOut = 0, tokCr = 0, tokCw = 0, cost = 0.0, calls = 0
-    init(model: String, priced: Bool) {
+    init(model: String, priced: Bool, tool: String = "Claude Code") {
         self.model = model
         self.priced = priced
+        self.tool = tool
     }
 }
 

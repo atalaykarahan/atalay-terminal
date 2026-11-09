@@ -61,9 +61,17 @@ final class RadarEngine {
     /// What of their records today's counts already have (otherOnce), and their calls by name, for their results.
     private var otherSeen = Set<String>()
     private var otherCalls: [String: (p: Pending, done: Bool)] = [:]
-    /// Fresh account-wide Codex limits, read from Codex app-server rather than inferred from a rollout file.
-    private var codexUsage: [String: Any]?
+    /// Their chats and subagents that worked today (the top bar's "today" counts), by id.
+    private var otherChatsToday = Set<String>(), otherAgentsToday = Set<String>()
+    /// Fresh account-wide Codex limits, read from Codex app-server rather than inferred from a rollout file. The last one
+    /// read is kept on disk, so the top bar shows them while no Codex runs too.
+    private var codexUsage: [String: Any]? = Limits.load("codex")
     private var codexUsagePending = false, codexWasRunning = false
+    /// Antigravity's limits by group of models (AgyUsage), kept the same way, and the model its chats used last: the group
+    /// that binds.
+    private var agyUsage: [String: Any]? = Limits.load("antigravity")
+    private var agyUsagePending = false, agyWasRunning = false
+    private var agyModel = Limits.load("antigravity")?["model"] as? String ?? ""
     /// Spend by day and project past today (the spend panel's history); read on the engine's queue only.
     private lazy var ledger = Ledger()
 
@@ -133,6 +141,7 @@ final class RadarEngine {
         startWatch()
         lastScan = nowMs()
         refreshCodexUsage()
+        refreshAgyUsage()
         // FSEvents delivers transcript and registry changes as they happen; these timers are only
         // slow safety nets. Their leeway lets macOS batch the wake-ups with other work.
         every(5) { self.pollRegistry() }
@@ -149,7 +158,10 @@ final class RadarEngine {
             for fp in self.collectFiles(since: since) { self.pump(fp) }
         }
         every(120) { self.scanHistory(force: false) }
-        every(60) { self.refreshCodexUsage() }
+        every(60) {
+            self.refreshCodexUsage()
+            self.refreshAgyUsage()
+        }
         every(60) { self.maybeNewDay() }
         every(1) { self.publishState() }
         scheduleLedger()
@@ -166,7 +178,8 @@ final class RadarEngine {
 
     /// Codex app-server reads the authenticated account's current server-side rate limits. Keep this off the
     /// transcript/indexing queue: starting the local app-server and waiting for its response can take a moment.
-    /// Only while a Codex runs: its limits show for no other session, and each read starts Codex itself.
+    /// Only while a Codex runs, as each read starts Codex itself; in between the last one read shows, with its time (the
+    /// page drops a window's number once its reset has passed).
     private func refreshCodexUsage() {
         guard !codexUsagePending, codexRunning else { return }
         codexUsagePending = true
@@ -174,8 +187,9 @@ final class RadarEngine {
             let fresh = CodexUsage.read()
             self.queue.async {
                 self.codexUsagePending = false
-                // A failed request clears the display rather than presenting an old snapshot as current.
+                guard let fresh else { return }
                 self.codexUsage = fresh
+                Limits.save(fresh, as: "codex")
                 self.stateDirty = true
                 self.publishState()
             }
@@ -183,6 +197,25 @@ final class RadarEngine {
     }
 
     private var codexRunning: Bool { others.values.contains { $0.tool == "Codex" && $0.endedAt == 0 } }
+
+    /// Antigravity's limits, the same way: only while an Antigravity chat runs, each read a run of its CLI (~3 s).
+    private func refreshAgyUsage() {
+        guard !agyUsagePending, agyRunning else { return }
+        agyUsagePending = true
+        DispatchQueue.global(qos: .utility).async {
+            let fresh = AgyUsage.read()
+            self.queue.async {
+                self.agyUsagePending = false
+                guard let fresh else { return }
+                self.agyUsage = fresh
+                Limits.save(fresh.merging(["model": self.agyModel]) { $1 }, as: "antigravity")
+                self.stateDirty = true
+                self.publishState()
+            }
+        }
+    }
+
+    private var agyRunning: Bool { others.values.contains { $0.tool == "Antigravity" && $0.endedAt == 0 } }
 
     private func registryChanged() {
         guard !regPending else { return }
@@ -240,6 +273,8 @@ final class RadarEngine {
         for A in agents.values { A.resetCounters() }
         otherSeen.removeAll()
         otherCalls.removeAll()
+        otherChatsToday.removeAll()
+        otherAgentsToday.removeAll()
         for O in others.values { O.resetCounters() }
     }
 
@@ -994,9 +1029,16 @@ final class RadarEngine {
             O.busy = false
             stateDirty = true
         }
-        // A Codex just started has its limits at once, not at the next minute's read.
+        // A Codex or an Antigravity just started has its limits at once, not at the next minute's read.
         if codexRunning, !codexWasRunning { refreshCodexUsage() }
         codexWasRunning = codexRunning
+        if let model = others.values.filter({ $0.tool == "Antigravity" && !$0.model.isEmpty }).max(by: { $0.lastTs < $1.lastTs })?.model,
+           model != agyModel {
+            agyModel = model
+            stateDirty = true
+        }
+        if agyRunning, !agyWasRunning { refreshAgyUsage() }
+        agyWasRunning = agyRunning
         let before = others.count
         others = others.filter { $0.value.endedAt == 0 || ms - $0.value.endedAt < 120_000 }
         if others.count != before { stateDirty = true }
@@ -1128,11 +1170,12 @@ final class RadarEngine {
         stateDirty = true
         guard all else { return }
         G.tokIn += i; G.tokOut += o; G.tokCr += r
+        // Its own row in spend.ledger: keyed by the tool too, as another tool may name a model the same way.
         let mk = O.model.isEmpty ? O.tool : O.model
-        let bm = G.byModel[mk] ?? ModelAgg(model: mk, priced: false)
+        let bm = G.byModel["\(O.tool)|\(mk)"] ?? ModelAgg(model: mk, priced: false, tool: O.tool)
         bm.tokIn += i; bm.tokOut += o; bm.tokCr += r
         bm.calls += 1
-        G.byModel[mk] = bm
+        G.byModel["\(O.tool)|\(mk)"] = bm
         minute(ts).tok += i + o + r
     }
 
@@ -1927,9 +1970,6 @@ final class RadarEngine {
             item["pid"] = Int(O.pid)
             item["host"] = orNull(host)
             item["tab"] = orNull(O.hostTab)
-            // Codex limits are account-wide and come live from Codex app-server. Rollout logs only feed
-            // conversation token/model statistics; they may be stale or belong to a resumed session elsewhere.
-            item["limits"] = orNull(codexUsage)
             list.append(item)
             var brief = SessionBrief(id: O.id, name: O.tool, title: !O.title.isEmpty ? O.title : O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
                                      cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab)
@@ -1990,8 +2030,15 @@ final class RadarEngine {
             }
 
         let promptTok = Double(G.tokIn + G.tokCr + G.tokCw)
-        let sessionsToday = sessions.values.filter { $0.lastTs >= day0 && ($0.tools > 0 || $0.prompts > 0) }.count
-        let agentsToday = agents.values.filter { $0.lastTs >= day0 && $0.tools > 0 }.count
+        // The other AI tools' chats and subagents count too, also once they're gone from the list.
+        for O in others.values where O.lastTs >= day0 && (O.tools > 0 || O.prompts > 0) {
+            otherChatsToday.insert(O.id)
+            for a in O.agents where (a["lastTs"] as? Double ?? 0) >= day0 && (a["tools"] as? Int ?? 0) > 0 {
+                otherAgentsToday.insert("\(O.id):\(a["id"] as? String ?? "")")
+            }
+        }
+        let sessionsToday = sessions.values.filter { $0.lastTs >= day0 && ($0.tools > 0 || $0.prompts > 0) }.count + otherChatsToday.count
+        let agentsToday = agents.values.filter { $0.lastTs >= day0 && $0.tools > 0 }.count + otherAgentsToday.count
         let agentCost = agents.values.reduce(0) { $0 + $1.cost }
         let totals: [String: Any] = [
             "live": list.filter { ($0["live"] as? Bool) == true }.count, "sessionsToday": sessionsToday, "agentsToday": agentsToday,
@@ -2010,7 +2057,7 @@ final class RadarEngine {
             "byCat": G.byCat, "lastByCat": G.lastByCat, "pendingByCat": pendingByCat, "catSpark": catSpark,
             "toolSpark": toolSpark, "tokSpark": tokSpark, "costSpark": costSpark,
             "byModel": G.byModel.values.sorted { $0.cost > $1.cost }.map {
-                ["model": $0.model, "priced": $0.priced, "cost": $0.cost, "calls": $0.calls,
+                ["model": $0.model, "tool": $0.tool, "priced": $0.priced, "cost": $0.cost, "calls": $0.calls,
                  "tok": ["in": $0.tokIn, "out": $0.tokOut, "cr": $0.tokCr, "cw": $0.tokCw]] as [String: Any]
             },
             "research": Array(G.research.suffix(30).reversed()),
@@ -2025,6 +2072,19 @@ final class RadarEngine {
             limits = (-1, nil)
         }
         out["limits"] = limits.json ?? NSNull()
+        // Every AI's usage limits for the top bar, in its order, whichever chat is in front: Claude's from its status
+        // line, Codex's and Antigravity's as last read, Antigravity's a column per group in use (AgyUsage.pools). One not
+        // heard from in a week is left out.
+        var limitsByAI: [[String: Any]] = []
+        var pools: [(tool: String, value: [String: Any]?)] = [("Claude Code", limits.json?.merging(["id": "claude", "name": "claude"]) { $1 }),
+                                                             ("Codex", codexUsage?.merging(["id": "codex", "name": "codex"]) { $1 })]
+        pools += (agyUsage.map { AgyUsage.pools($0, model: agyModel) } ?? []).map { ("Antigravity", $0) }
+        for (tool, value) in pools {
+            guard var v = value, now - ((v["at"] as? NSNumber)?.doubleValue ?? 0) < 7 * 24 * 3_600_000 else { continue }
+            v["tool"] = tool
+            limitsByAI.append(v)
+        }
+        out["limitsByAI"] = limitsByAI
         return (out, briefs)
     }
 

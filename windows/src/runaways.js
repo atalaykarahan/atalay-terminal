@@ -470,6 +470,8 @@ function createRunaways({ onChange, onRead, onPower }) {
         // `codex app-server` serves a program, no one at a keyboard: the engine's own reader of Codex's limits, under a
         // cmd.exe that would pass for a terminal, flew as a Codex planet (and stayed two minutes as an ended one).
         if (/\bapp-server\b/.test(p.cmd || '')) continue;
+        // Nor `agy -p /usage`: the engine's reader of Antigravity's limits, once a minute while an Antigravity chat runs.
+        if (/(^|\s)-p\s+"?\/usage\b/.test(p.cmd || '')) continue;
         const tool = aiTool(p);
         if (tool) found.set(p.pid, tool);
       }
