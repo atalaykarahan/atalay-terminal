@@ -171,7 +171,9 @@ function createBridge({ dir, start, team = () => [] }) {
             res.writeHead(code, { 'content-type': 'application/json' });
             res.end(JSON.stringify(obj));
           };
-          if (req.method !== 'POST' || req.headers['x-token'] !== token) return out(401, { error: 'bad token' });
+          // Compared in constant time, so the token can't be guessed a character at a time.
+          const given = Buffer.from(String(req.headers['x-token'] || '')), want = Buffer.from(token);
+          if (req.method !== 'POST' || given.length !== want.length || !crypto.timingSafeEqual(given, want)) return out(401, { error: 'bad token' });
           try {
             const a = JSON.parse(body || '{}');
             const h = Object.hasOwn(handlers, a.cmd) && handlers[a.cmd];
