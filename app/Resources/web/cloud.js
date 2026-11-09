@@ -347,6 +347,13 @@ window.Cloud = (() => {
             ${window.__powerSave ? `<div class="hk-h">POWER</div>
             <div class="hk-row"><span>power save on by itself at low battery<small>below ${window.__powerSave.threshold}% on battery, and in ${window.__powerSave.saver || 'Low Power Mode'}, the map draws fewer and smaller frames · the switch on the map turns it off again</small></span>
               <button type="button" class="hk-sw pwr-auto" role="switch" aria-checked="true" title="Power save on by itself at low battery"><i></i></button></div>` : ''}
+            ${window.__discord ? `<div class="hk-h">DISCORD</div>
+            <div class="hk-row"><span>show what I'm doing on Discord<small class="dc-note">…</small></span>
+              <button type="button" class="hk-sw dc-on" role="switch" aria-checked="false" title="Show what I'm doing on Discord"><i></i></button></div>
+            <div class="hk-row"><span>show the project's name<small>the folder of the session at work, as atalay-terminal +2 when more are at work · off: only how many sessions run and the AI tools at work</small></span>
+              <button type="button" class="hk-sw dc-proj" role="switch" aria-checked="false" title="Show the project's name on Discord"><i></i></button></div>
+            <div class="hk-row"><span>show my active time<small>today's, as your XP counts it, as 4h 12m today</small></span>
+              <button type="button" class="hk-sw dc-act" role="switch" aria-checked="true" title="Show my active time on Discord"><i></i></button></div>` : ''}
             <div class="hk-h">APP</div>
             <div class="hk-info"></div>
           </section>
@@ -376,6 +383,10 @@ window.Cloud = (() => {
     window.Account?.mount(q('.acct-host'));
     const pwr = q('.hk-sw.pwr-auto');
     if (pwr) pwr.onclick = () => window.webkit.messageHandlers.radar.postMessage({ type: 'powerSaveAuto', on: !window.__powerSave?.auto });
+    const dcOn = q('.hk-sw.dc-on'), dcProj = q('.hk-sw.dc-proj'), dcAct = q('.hk-sw.dc-act');
+    if (dcOn) dcOn.onclick = () => window.webkit.messageHandlers.radar.postMessage({ type: 'discordPresence', on: !window.__discord?.on });
+    if (dcProj) dcProj.onclick = () => window.webkit.messageHandlers.radar.postMessage({ type: 'discordProject', on: !window.__discord?.project });
+    if (dcAct) dcAct.onclick = () => window.webkit.messageHandlers.radar.postMessage({ type: 'discordActive', on: !window.__discord?.active });
     q('.mn-copy').onclick = () => copyHandle();
     q('.mn-status').onclick = (e) => {
       e.stopPropagation();
@@ -393,6 +404,7 @@ window.Cloud = (() => {
     renderProfile();
     renderActivity();
     renderPower();
+    renderDiscord();
     renderSocial();
     // Whatever changed while you weren't looking (a missed live event, another device) shows when the menu opens.
     Social.load();
@@ -1103,6 +1115,28 @@ window.Cloud = (() => {
     if (!sw || !s) return;
     sw.classList.toggle('on', s.auto);
     sw.setAttribute('aria-checked', String(s.auto));
+  }
+
+  // Settings · DISCORD: your Discord profile shows what you're doing, as the app keeps it (DiscordPresence.swift, the
+  // Windows app's discord.js).
+  function renderDiscord() {
+    const on = modal === 'menu' && q('.hk-sw.dc-on');
+    const s = window.__discord;
+    if (!on || !s) return;
+    const proj = q('.hk-sw.dc-proj'), act = q('.hk-sw.dc-act');
+    for (const [sw, value] of [[on, s.on], [proj, s.project], [act, s.active !== false]]) {
+      sw.classList.toggle('on', value);
+      sw.setAttribute('aria-checked', String(value));
+    }
+    on.disabled = !s.available;
+    proj.disabled = act.disabled = !s.available || !s.on;
+    q('.dc-note').textContent = !s.available
+      ? 'this build has no Discord application id'
+      : !s.on
+        ? 'on your profile as a game: how many sessions run and the AI tools at work · never prompts, code or file names'
+        : s.connected
+          ? 'on your profile now · how many sessions run and the AI tools at work, never prompts, code or file names'
+          : 'waiting for Discord · open the Discord app on this Mac';
   }
 
   async function toggleBoard() {
@@ -1824,5 +1858,5 @@ window.Cloud = (() => {
   refresh();
   Social.loadNotes();
 
-  return { render, openMenu, openSettings: () => openMenu('settings'), openProfile, openUpdate, openFeedback, showView, renderPower, close };
+  return { render, openMenu, openSettings: () => openMenu('settings'), openProfile, openUpdate, openFeedback, showView, renderPower, renderDiscord, close };
 })();

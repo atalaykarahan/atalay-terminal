@@ -22,6 +22,7 @@ const { createTerminals, which } = require('./terminals');
 const { createOverlay } = require('./overlay');
 const { createRunaways } = require('./runaways');
 const { createPowerSaver } = require('./power');
+const { createDiscord } = require('./discord');
 const { createFiles, linkTarget } = require('./files');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
@@ -168,6 +169,10 @@ const limits = createLimits({
   claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
 });
 
+// Discord presence (discord.js, the Mac's DiscordPresence): your Discord profile shows what you're doing, on unless
+// Settings · DISCORD turns it off. Made before the engine and Cloud, whose changes it hears.
+const discord = createDiscord({ settings, xp: () => cloud.json().xp, onChange: () => pushDiscord() });
+
 const engine = createEngine({
   claudeDir: path.join(os.homedir(), '.claude'),
   limitsFile: limits.file,
@@ -187,6 +192,7 @@ const engine = createEngine({
     updateWaits();
     pushWinOpen();
     pushChats();
+    discord.update(engine.live());
   },
   onEvents: (json) => toDash(`events(${json})`),
   // The saved conversations, for the chats list.
@@ -247,6 +253,7 @@ const cloud = createCloud({
   onChange(state) {
     pushCloud();
     if (state && state.xp) toNotices(`xp(${JSON.stringify(state.xp)})`);
+    discord.refresh();
   },
   onSocial(text) {
     toDash(`social(${text})`);
@@ -379,6 +386,13 @@ function pushPower(force = false) {
   }
   toDash(`powerSave(${power.json()})`);
 }
+
+// Settings · DISCORD shows its switches and whether Discord answers (discord.js). It starts here, after toDash, as it
+// tells the page at once.
+function pushDiscord() {
+  toDash(`discord(${discord.json()})`);
+}
+discord.start();
 
 // Signing in with GitHub happens in the browser (Settings → Account, account.js): only GitHub's sign-in page opens.
 const SIGN_IN = 'https://github.com/login/oauth/authorize?';
@@ -796,12 +810,20 @@ function handleRadar(msg) {
       toDash(`runaways(${runaways.json()})`);
       pushActiveSession(true);
       pushPower(true);
+      pushDiscord();
       return true;
     // Power save: the switch on the map, and Settings' "on by itself at low battery".
     case 'powerSave':
       return power.choose(msg.on === true), true;
     case 'powerSaveAuto':
       return power.setAuto(msg.on === true), true;
+    // Settings · DISCORD: what you're doing on your Discord profile, the project's name and today's active time in it.
+    case 'discordPresence':
+      return discord.setEnabled(msg.on === true), true;
+    case 'discordProject':
+      return discord.setShowProject(msg.on === true), true;
+    case 'discordActive':
+      return discord.setShowActive(msg.on === true), true;
     case 'open':
       return openSession(msg.sid, false);
     case 'fork':
