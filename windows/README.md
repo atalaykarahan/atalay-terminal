@@ -75,6 +75,7 @@ in `src/main.js` and pushes to them with `window.__radar.*`, `window.__messages.
 | `src/aicolors.js` | the AI tools in the theme's colours: Claude Code, Codex and Antigravity on their themes that use the terminal's 16 colours, each one's own given back when it's turned off | AIColors.swift |
 | `src/runaways.js` | the process list: what burns a core where nobody sees it (DANGER), what closed terminals left running (amber cars), what runs in the app's terminals (their cars), the AI tools besides Claude running in a terminal (Codex, Gemini…: planets) | Runaways, MainWindowController, RadarEngine |
 | `src/savers.js` | the token savers, rtk and caveman, on for Claude Code, Codex and Antigravity (`scripts/fetch-rtk.js` gets rtk for the build) | TokenSavers |
+| `src/codexteam.js`, `src/codexbridge.js` | the Codex team (Settings · CODEX, off until turned on): Codex sessions opened in the app's terminals come back after a restart as `codex resume`, and `atalay-codex` lets a Claude session message them (below) | |
 | `src/limits.js` | Claude's 5-hour and weekly limits for the top bar: a script of the app's as Claude Code's status line, a status line of the user's own run through it | Limits |
 | `src/overlay.js` | the shortcut wheel's and the folder picker's folders (overlay.html) | Overlay.swift |
 | `src/chatlist.js`, `pages/chats.*` | the chats list beside the dashboard (a view of its own in the dashboard window): every saved chat by project, each folder a card with the app's terminals in it, folders opened from the list, favourites, the archive (Settings lists it) | Sidebar.swift |
@@ -90,6 +91,23 @@ kept. It runs outside the app's folder because an update's installer ends everyt
 itself once its last session has and no app is connected, and uninstalling ends it (`build/installer.nsh`). The
 installed app and a development run (`npm start`) each have their own. Without it (it couldn't be built or started) the
 chats run in the app, through node-pty, and end with it.
+
+### The Codex team
+
+Off until Settings · CODEX turns it on (Windows only). A Codex run in one of the app's terminals is remembered by its
+thread (from its log in `CODEX_HOME\sessions`), with its folder and the options on its command line as they were typed
+(`-m`, `-c model_reasoning_effort=…`, `-s`, `-a`, `-c sandbox_mode=…`, `--dangerously-bypass-approvals-and-sandbox`…;
+nothing the user didn't give): `codexTeamSessions` in the app's settings.json, which can be edited by hand. At a launch,
+each one the session host no longer has (the PC restarted) opens again, hidden as the chats that come back, as
+`codex resume <thread> <its options>`. Quitting Codex in its terminal, or End Session, forgets it.
+
+For Claude, the app puts `atalay-codex` next to its rtk (on the app's terminals' PATH; it needs Node, as npm's Codex
+does): `atalay-codex send <thread> "text"` starts a turn on that thread, or steers the one running; `status` lists the
+team; `events <thread>` prints what the thread did since the app joined it (`codex-bridge\events.jsonl` in
+`%LOCALAPPDATA%talay-terminal`). At its first request the app starts Codex's shared background server if it isn't
+running (`codex app-server daemon start`, as `codex resume` does) and joins it with `codex app-server proxy`, so the
+terminal's Codex and the bridge are on the same thread in one process. It listens on 127.0.0.1 with a token in a file
+of the user's; nothing is sent anywhere else.
 
 ## Not like the Mac app (yet)
 

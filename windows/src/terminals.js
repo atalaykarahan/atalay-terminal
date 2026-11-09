@@ -151,19 +151,21 @@ function createTerminals({ onData, onExit, host, extraPath }) {
     },
     /**
      * A terminal for window `id` in `cwd`. With `claudeArgs` ([] for a new chat, ['--resume', id] …) Claude runs first
-     * and the shell stays when it exits; without, it's a plain terminal. `title` goes with it, for its window after a
-     * restart. Known at once (`has`); its process a moment later.
+     * and the shell stays when it exits; without, it's a plain terminal. `command` (['codex', 'resume', …]) runs another
+     * program first the same way, and `codex`, the thread it resumes, stays with the session (codexteam.js). `title` goes
+     * with it, for its window after a restart. Known at once (`has`); its process a moment later.
      */
-    spawn({ id, cwd, claudeArgs, cols = 100, rows = 30, title }) {
+    spawn({ id, cwd, claudeArgs, command, codex, cols = 100, rows = 30, title }) {
       const dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
-      const args = claudeArgs ? shell.run(['claude', ...claudeArgs].map((a, i) => (i ? quote(a) : a)).join(' ')) : shell.args;
-      const t = { cwd: dir, claude: !!claudeArgs, title, pid: null, startedAt: Date.now(), lastIO: Date.now(), pty: null };
+      const first = claudeArgs ? ['claude', ...claudeArgs] : command;
+      const args = first ? shell.run(first.map((a, i) => (i ? quote(a) : a)).join(' ')) : shell.args;
+      const t = { cwd: dir, claude: !!claudeArgs, codex: codex || null, title, pid: null, startedAt: Date.now(), lastIO: Date.now(), pty: null };
       all.set(id, t);
       return ready.then(async () => {
         if (!link) return spawnHere(id, t, args, cols, rows);
         const r = await link.request({
           t: 'spawn', id, cmd: commandLine(shell.file, args), cwd: dir, env: childEnvironment(extraPath), cols, rows,
-          meta: JSON.stringify({ cwd: dir, claude: t.claude, title }),
+          meta: JSON.stringify({ cwd: dir, claude: t.claude, title, ...(t.codex && { codex: t.codex }) }),
         });
         if (r.t !== 'spawned') {
           all.delete(id);
@@ -183,7 +185,7 @@ function createTerminals({ onData, onExit, host, extraPath }) {
         try {
           meta = JSON.parse(s.meta || '{}');
         } catch {}
-        const t = { cwd: meta.cwd || os.homedir(), claude: !!meta.claude, title: meta.title, pid: s.pid, startedAt: s.startedAt || Date.now(), lastIO: Date.now(), pty: null };
+        const t = { cwd: meta.cwd || os.homedir(), claude: !!meta.claude, codex: meta.codex || null, title: meta.title, pid: s.pid, startedAt: s.startedAt || Date.now(), lastIO: Date.now(), pty: null };
         all.set(s.id, t);
         found.push({ id: s.id, ...t });
       }

@@ -341,6 +341,9 @@ window.Cloud = (() => {
               <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
             <div class="hk-row ts-row"><span>caveman · short answers from Claude Code, Codex and Antigravity<small class="ts-note" data-which="caveman">…</small></span>
               <button type="button" class="hk-sw ts" data-which="caveman" role="switch" aria-checked="false" title="Turn caveman on or off"><i></i></button></div>` : ''}
+            ${CODEX ? `<div class="hk-h">CODEX</div>
+            <div class="hk-row"><span>codex team · Codex sessions come back after a restart, and Claude can message them<small class="cx-note">…</small></span>
+              <button type="button" class="hk-sw cx" role="switch" aria-checked="false" title="Turn the Codex team on or off"><i></i></button></div>` : ''}
             ${ARCHIVE() ? `<div class="hk-h">CHATS</div>
             <div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
               <button type="button" class="arc-btn arc-open">manage</button></div>` : ''}
@@ -483,6 +486,7 @@ window.Cloud = (() => {
     if (which === 'keys') renderKeys();
     if (which === 'settings') {
       renderSaver();
+      renderCodex();
       renderUI();
     }
   }
@@ -616,6 +620,28 @@ window.Cloud = (() => {
         showSavers(await saversCall({ type: 'set', which, on }).catch(() => null));
       };
     });
+  }
+
+  // ---------- the Codex team ----------
+  // Windows only (codexteam.js, codexbridge.js): Codex sessions opened in the app's terminals come back after a restart
+  // with the options they were started with, and `atalay-codex send <thread> "text"` reaches them from a Claude session.
+  const CODEX = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.codex);
+  function showCodex(st) {
+    const sw = q('.hk-sw.cx'), note = q('.cx-note');
+    if (!st || !sw || !note) return;
+    sw.setAttribute('aria-checked', st.on ? 'true' : 'false');
+    sw.disabled = false;
+    note.textContent = !st.on ? 'off · Codex sessions end with a restart'
+      : `on · ${st.sessions === 1 ? '1 session' : `${st.sessions} sessions`} kept · atalay-codex send|status|events in the app's terminals`;
+  }
+  async function renderCodex() {
+    const sw = q('.hk-sw.cx');
+    if (!CODEX || !sw) return;
+    showCodex(await window.webkit.messageHandlers.codex.postMessage({ type: 'state' }).catch(() => null));
+    sw.onclick = async () => {
+      sw.disabled = true;
+      showCodex(await window.webkit.messageHandlers.codex.postMessage({ type: 'set', on: sw.getAttribute('aria-checked') !== 'true' }).catch(() => null));
+    };
   }
 
   // ---------- shortcuts ----------

@@ -450,7 +450,7 @@ function createRunaways({ onChange, onRead, onPower }) {
     /**
      * The other AI tools running in a terminal (aiTool, TERMINAL_RE), each once: a launcher's child that's the same tool
      * (Codex's Node script starts its own codex.exe) isn't another, nor one Claude runs. Its CPU is all it runs: the
-     * launcher only waits while its child works. [{ pid, started, tool, cwd, pct, chain (its parents) }]
+     * launcher only waits while its child works. [{ pid, started, tool, cwd, cmd, pct, chain (its parents) }]
      */
     ais() {
       const found = new Map();
@@ -469,7 +469,7 @@ function createRunaways({ onChange, onRead, onPower }) {
         for (let q = !p.orphan && table.get(p.ppid); q && chain.length < 12; q = !q.orphan && table.get(q.ppid)) chain.push(q);
         if (chain.some((q) => /^claude$/i.test(q.name)) || !chain.some((q) => TERMINAL_RE.test(q.name))) continue;
         const shell = shellCommand(pid);
-        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', pct: busy([pid]), chain: chain.map((q) => q.pid), command: shell && shell.line, commandStarted: shell && shell.started });
+        out.push({ pid, started: p.started, tool, cwd: p.cwd || '', cmd: p.cmd || '', pct: busy([pid]), chain: chain.map((q) => q.pid), command: shell && shell.line, commandStarted: shell && shell.started });
       }
       return out;
     },

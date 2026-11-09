@@ -11,6 +11,8 @@ const handlers = {};
 for (const name of ['radar', 'cloud', 'git', 'theme', 'overlay', 'messages', 'savers', 'chats', 'archive', 'spend', 'files']) {
   handlers[name] = { postMessage: (body) => ipcRenderer.invoke('atl:post', name, body) };
 }
+// Settings' Codex team (codexteam.js): Windows only, so the Mac's Settings never shows it.
+if (process.platform === 'win32') handlers.codex = { postMessage: (body) => ipcRenderer.invoke('atl:post', 'codex', body) };
 contextBridge.exposeInMainWorld('webkit', { messageHandlers: handlers });
 // The pages name the computer and the command key by it ("this PC", Ctrl+).
 contextBridge.exposeInMainWorld('__platform', process.platform);
