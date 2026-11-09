@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
+const { execFile, exec, spawn } = require('child_process');
 const { fileURLToPath } = require('url');
 
 const { createEngine } = require('./engine');
@@ -26,6 +26,8 @@ const { createFiles, linkTarget, fileFromURL } = require('./files');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
+const { createCodexTeam } = require('./codexteam');
+const { createBridge, installCLI } = require('./codexbridge');
 
 let autoUpdater = null;
 try {
@@ -118,6 +120,43 @@ const savers = createSavers({
   which,
   usable: process.platform === 'win32' && !PROBE,
 });
+
+// The Codex team and Claude's line to it (codexteam.js, codexbridge.js), Windows only and off until Settings · CODEX
+// turns it on: Codex sessions come back after a restart, and `atalay-codex send` (in the app's bin, next to rtk) sends
+// a Claude session's text to a Codex thread.
+const codexTeam = createCodexTeam({ settings });
+const codexUsable = process.platform === 'win32' && !PROBE;
+const codexBridge = createBridge({
+  dir: path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'atalay-terminal', 'codex-bridge'),
+  team: () => codexTeam.list(),
+  // Codex's shared background server, where `codex resume` runs its threads: started if it isn't running yet (it's
+  // Codex's own, and goes on without the app), then joined. Only at the bridge's first request.
+  start: () => new Promise((resolve) => {
+    exec('codex app-server daemon start', { windowsHide: true, timeout: 60_000 }, () => {
+      const child = spawn('codex app-server proxy', [], { shell: true, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+      child.on('error', () => {});
+      resolve(child);
+    });
+  }),
+});
+function codexStart() {
+  if (!codexUsable || !codexTeam.on()) return;
+  try {
+    installCLI(savers.binDir);
+  } catch (e) {
+    console.error('codex team:', e.message);
+  }
+  codexBridge.listen().catch((e) => console.error('codex bridge:', e.message));
+}
+/** Each process reading: the Codex sessions in the app's terminals, for the team to remember (or forget). */
+function codexSeen() {
+  if (!codexUsable || !codexTeam.on()) return;
+  const ais = runaways.ais();
+  const running = engine.live().filter((s) => s.ai && s.name === 'Codex' && s.tab && chats.has(s.tab)).map((s) => ({
+    tab: s.tab, log: s.log, cwd: s.cwd, title: chats.get(s.tab).title, cmd: (ais.find((a) => a.pid === s.pid) || {}).cmd,
+  }));
+  codexTeam.seen(running, [...chats.keys()].filter((id) => terminals.has(id)));
+}
 
 const terminals = createTerminals({
   extraPath: savers.binDir,
@@ -301,7 +340,10 @@ const power = createPowerSaver({ settings, onBattery: () => powerMonitor.isOnBat
 // Processes left burning a core where nobody sees them: the dashboard sounds the alarm (DANGER).
 const runaways = createRunaways({
   // Each reading: the AI tools running besides Claude (Codex, Antigravity…), sessions on the orbit.
-  onRead: () => engine.setOthers(runaways.ais()),
+  onRead: () => {
+    engine.setOthers(runaways.ais());
+    codexSeen();
+  },
   // And the battery's charge and Energy Saver, which Electron doesn't tell.
   onPower: (r) => power.read(r),
   onChange: (json) => {
@@ -930,7 +972,7 @@ const samePath = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.
  * that outlived the app attaches to it instead (`claude`: whether it was started as a chat), hidden unless `show`.
  */
 let chatCascade = 0;
-function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!claudeArgs, sessionId, title, show = true }) {
+function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, command, codex, claude = !!claudeArgs, sessionId, title, show = true }) {
   const home = chatHome(), area = home.workArea;
   const cascade = (chatCascade++ % 6) * 28;
   const place = wholeOnDisplay({ x: area.x + 120 + cascade, y: area.y + 80 + cascade, width: 960, height: 640 }, home);
@@ -941,7 +983,7 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     webPreferences: webPrefs(),
   });
   bootFor(win.webContents, { termFont: termFontSize() });
-  const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
+  const c = { win, sessionId, cwd, claude, claudeArgs, command, codex, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
   chats.set(id, c);
   win.on('focus', () => touchTerminal(id));
   win.loadFile(path.join(__dirname, '..', 'pages', 'terminal.html'));
@@ -1100,6 +1142,7 @@ function endTerminal(id) {
     engine.dismiss(c.sessionId, live && live.pid);
   }
   toDash(`terminalGone(${JSON.stringify(id)})`);
+  codexTeam.forget(id);
   if (c) {
     if (c.win && !c.win.isDestroyed()) c.win.destroy();
     chats.delete(id);
@@ -1203,7 +1246,7 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
   if (terminals.has(id)) terminals.attach(id, cols, rows);
   else {
     terminals
-      .spawn({ id, cwd: c.cwd, claudeArgs: c.claudeArgs, cols, rows, title: c.title })
+      .spawn({ id, cwd: c.cwd, claudeArgs: c.claudeArgs, command: c.command, codex: c.codex, cols, rows, title: c.title })
       .catch((err) => send(c.win, 'term:data', `\r\n\x1b[31m${err.message}\x1b[0m\r\n`));
   }
   send(c.win, 'term:info', chatInfo(id, c));
@@ -1865,6 +1908,15 @@ ipcMain.handle('atl:post', async (e, name, body) => {
           return await savers.state();
         }
         throw new Error('unknown request');
+      // Settings' Codex team: on or off, and how many sessions it keeps.
+      case 'codex':
+        if (!codexUsable) throw new Error('not on this computer');
+        if (body.type === 'set') {
+          codexTeam.set(body.on === true);
+          if (codexTeam.on()) codexStart();
+          else codexBridge.close();
+        }
+        return { on: codexTeam.on(), sessions: codexTeam.list().length };
       default:
         return null;
     }
@@ -1978,8 +2030,14 @@ app.whenReady().then(() => {
   // Chats and terminals that outlived the last launch come back hidden, as on the Mac, so a launch doesn't throw windows
   // on screen: a chat is on the orbit, a terminal a car, and a click opens its window.
   terminals.restore().then((found) => {
-    for (const s of found) openChatWindow({ id: s.id, cwd: s.cwd, claude: s.claude, title: s.title, show: false });
+    for (const s of found) openChatWindow({ id: s.id, cwd: s.cwd, claude: s.claude, codex: s.codex, title: s.title, show: false });
+    // The Codex team's sessions the session host doesn't have any more (the PC restarted) start again, hidden as well.
+    if (!codexUsable || !codexTeam.on()) return;
+    for (const e of codexTeam.missing(found)) {
+      codexTeam.placed(e.thread, openChatWindow({ cwd: e.cwd, command: codexTeam.command(e), codex: e.thread, title: e.title, show: false }));
+    }
   });
+  codexStart();
   if (PROBE) probe();
 });
 
@@ -2018,6 +2076,7 @@ app.on('before-quit', (e) => {
 function leave() {
   quitting = true;
   terminals.detachAll();
+  codexBridge.close();
   engine.stop();
   runaways.stop();
   cloud.stop();

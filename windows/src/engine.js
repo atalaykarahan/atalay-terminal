@@ -1381,6 +1381,8 @@ class RadarEngine {
       out.push({
         sessionId: O.id, pid: O.pid, cwd: O.cwd, status, waitingFor: waiting, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
         host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
+        // Codex's log, which names its thread (codexteam.js).
+        log: O.log || null,
       });
     }
     return out;
