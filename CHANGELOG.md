@@ -154,6 +154,8 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
+- Sounds: a chat that finishes its turn has a sound of its own (a click into a soft bell) instead of the sound switch's two notes, a turn quicker than a state update too. From PR #23, thanks to @farukiskender on GitHub (Mac and Windows)
+- Windows: folders whose names have Turkish or other non-English letters (Geliştirme, ü, ğ…) are read right, so their chats fill the panels again; a Codex or Antigravity chat's turn shows (and chimes) within a second, not at the next process scan. Thanks to @farukiskender on GitHub (PR #23)
 - Discord: your Discord profile shows you're in Atalay's Terminal, the AI tools at work and today's active time (Settings · DISCORD: on, the project's name off by default; never prompts or code). Thanks to @kwa0x2 on GitHub (Mac and Windows)
 - Profiles: your own picture and links to your other pages (GitHub, Instagram, LinkedIn, X, YouTube, a website) on your card, where friends and the leaderboard see them, set in Settings → PROFILE once signed in; anyone's picture opens big with a click. Thanks to @Mur-47 on GitHub (Mac and Windows)
 - Themes: Faruk İskender (teal on near-black). Thanks to @farukiskender on GitHub (from PR #35)

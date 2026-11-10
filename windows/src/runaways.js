@@ -64,6 +64,7 @@ function aiTool(p) {
 
 const SHELLS = '^(pwsh|powershell|cmd|bash|sh|zsh|fish|node|python[0-9.]*|ruby|perl|php|java|deno|bun|claude)(\\.exe)?$';
 const SHELL_RE = new RegExp(SHELLS, 'i');
+const AI_NAMES = `^(${Object.keys(AI_TOOLS).join('|')})(\\.exe)?$`;
 // An AI tool counts when it runs in a terminal, as the Mac's has a tty: a shell or a terminal app among its parents.
 // One an editor runs in the background (the Codex extension's codex.exe in VS Code) is no session of anyone's.
 const TERMINAL_RE = /^(pwsh|powershell|cmd|bash|sh|zsh|fish|nu|WindowsTerminal|wezterm-gui|alacritty|mintty|ConEmuC?(64)?|tabby|hyper|warp)$/i;
@@ -191,6 +192,7 @@ function createRunaways({ onChange, onRead, onPower }) {
   function startWindows() {
     const script = [
       '$ErrorActionPreference = "SilentlyContinue"',
+      'try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}',
       '$me = (Get-Process -Id $PID).SessionId',
       `try { Add-Type -TypeDefinition @'\n${CWD_READER}\n'@ } catch {}`,
       '$pm = $null; try { $pm = [Windows.System.Power.PowerManager,Windows.System.Power,ContentType=WindowsRuntime] } catch {}',
@@ -207,7 +209,7 @@ function createRunaways({ onChange, onRead, onPower }) {
       // A parent gone, or a later process that took its number: an orphan.
       '    $orphan = (-not $born.ContainsKey($pp)) -or ($born[$pp] -gt $p.CreationDate)',
       '    $cwd = ""',
-      `    if ($want.ContainsKey($id) -or $p.Name -match '^claude(\\.exe)?$' -or ($orphan -and $p.Name -match '${SHELLS}')) { try { $cwd = [AtlCwd]::Of($id) } catch {} }`,
+      `    if ($want.ContainsKey($id) -or $p.Name -match '^claude(\\.exe)?$' -or $p.Name -match '${AI_NAMES}' -or ($orphan -and $p.Name -match '${SHELLS}')) { try { $cwd = [AtlCwd]::Of($id) } catch {} }`,
       '    $c = [string]$p.CommandLine; if ($c.Length -gt 400) { $c = $c.Substring(0, 400) }',
       '    $t = [DateTimeOffset]::new($p.CreationDate).ToUnixTimeMilliseconds()',
       // Whole milliseconds: a fraction would be written with the PC's own decimal sign.

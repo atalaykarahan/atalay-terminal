@@ -103,6 +103,7 @@ const sessName = (sid) => NAMES.get(sid) || String(sid || '?').slice(0, 6);
 // ---------- live data ----------
 let STATE = null;
 const lastStatus = new Map();
+const lastPrompts = new Map();
 
 function handleInit(d) {
     STATE = d.state;
@@ -110,6 +111,7 @@ function handleInit(d) {
       NAMES.set(s.id, s.name);
       colorIndex(s.id);
       lastStatus.set(s.id, s.status);
+      lastPrompts.set(s.id, s.prompts || 0);
     }
     $('log').innerHTML = '';
     LOGEL.clear();
@@ -212,6 +214,7 @@ function onEvent(ev) {
 function transitions(next) {
   for (const s of next.sessions) {
     const prev = lastStatus.get(s.id);
+    const prevPrompts = lastPrompts.get(s.id);
     if (prev === undefined) {
       logState(s, `● session online · ${s.cwd}`, 'state');
     } else if (prev !== s.status) {
@@ -222,7 +225,7 @@ function transitions(next) {
         Hooks.pulse('session-status', { value: s.status, sid: s.id });
         logState(s, `⚠ needs you · ${s.waitingFor || 'waiting'}`, 'err');
       } else if (s.status === 'idle') {
-        ping('idle');
+        if (prev === 'busy' || prev === 'waiting') ping('done');
         Hooks.pulse('session-status', { value: s.status, sid: s.id });
         logState(s, '◆ turn finished · your move', 'state');
       } else if (s.status === 'ended') {
@@ -230,8 +233,13 @@ function transitions(next) {
       } else if (s.status === 'busy' && prev === 'waiting') {
         logState(s, '▶ unblocked · working again', 'state');
       }
+    } else if (s.status === 'idle' && prevPrompts !== undefined && (s.prompts || 0) > prevPrompts) {
+      // A fast turn that started and finished between two state snapshots still announces its completion.
+      ping('done');
+      logState(s, '◆ turn finished · your move', 'state');
     }
     lastStatus.set(s.id, s.status);
+    lastPrompts.set(s.id, s.prompts || 0);
   }
 }
 
@@ -241,27 +249,71 @@ try {
   soundOn = localStorage.getItem('radar.sound') === '1';
 } catch {}
 let audio = null;
-// The audio context is suspended between pings: a running one keeps a real-time audio thread busy.
+let audioOut = null;
 let audioIdle = 0;
 function ping(kind) {
   if (!soundOn || Hooks.sound('ping-' + kind)) return;
   try {
-    audio = audio || new AudioContext();
-    if (audio.state === 'suspended') audio.resume();
+    if (!audio) {
+      audio = new AudioContext();
+      const delay = audio.createDelay(1), fb = audio.createGain(), wet = audio.createGain();
+      audioOut = audio.createGain();
+      delay.delayTime.value = 0.11;
+      fb.gain.value = 0.18;
+      wet.gain.value = 0.2;
+      audioOut.gain.value = 0.81;
+      audioOut.connect(audio.destination);
+      audioOut.connect(delay);
+      delay.connect(fb).connect(delay);
+      delay.connect(wet).connect(audio.destination);
+    }
+    const play = (delaySec) => {
+      const t0 = audio.currentTime + delaySec;
+      if (kind === 'done') {
+        // Turn finished (your move): crisp mechanical switch (450 -> 900 Hz) into a C6 bell chime at 85% level.
+        const sw = audio.createOscillator(), sg = audio.createGain();
+        sw.type = 'triangle';
+        sw.frequency.setValueAtTime(450, t0);
+        sw.frequency.exponentialRampToValueAtTime(900, t0 + 0.03 * 0.6);
+        sg.gain.setValueAtTime(0.0001, t0);
+        sg.gain.exponentialRampToValueAtTime(0.11, t0 + 0.004);
+        sg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.03);
+        sw.connect(sg).connect(audioOut);
+        sw.start(t0);
+        sw.stop(t0 + 0.05);
+        const tb = t0 + 0.038, dur = 0.32;
+        for (const [mult, level] of [[1, 1], [2, 0.35]]) {
+          const o = audio.createOscillator(), gn = audio.createGain();
+          o.type = 'sine';
+          o.frequency.value = 1046.5 * mult;
+          gn.gain.setValueAtTime(0.0001, tb);
+          gn.gain.exponentialRampToValueAtTime(0.125 * level, tb + 0.003);
+          gn.gain.exponentialRampToValueAtTime(0.0001, tb + dur * (mult === 1 ? 1 : 0.55));
+          o.connect(gn).connect(audioOut);
+          o.start(tb);
+          o.stop(tb + dur + 0.04);
+        }
+      } else {
+        const tones = kind === 'waiting' ? [880, 660, 880] : [523, 784];
+        tones.forEach((f, i) => {
+          const o = audio.createOscillator(), gn = audio.createGain(), t = t0 + i * 0.16;
+          o.type = 'sine';
+          o.frequency.value = f;
+          gn.gain.setValueAtTime(0.0001, t);
+          gn.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
+          gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+          o.connect(gn).connect(audio.destination);
+          o.start(t);
+          o.stop(t + 0.16);
+        });
+      }
+    };
+    // A running context keeps a real-time audio thread busy (the battery): it rests 1.5 s after the last ping, and a ping
+    // waits for it to wake before it starts (Windows' audio swallowed the start of a note otherwise).
     clearTimeout(audioIdle);
     audioIdle = setTimeout(() => audio.state === 'running' && audio.suspend(), 1500);
-    const tones = kind === 'waiting' ? [880, 660, 880] : [523, 784];
-    tones.forEach((f, i) => {
-      const o = audio.createOscillator(), gn = audio.createGain(), t = audio.currentTime + i * 0.16;
-      o.type = 'sine';
-      o.frequency.value = f;
-      gn.gain.setValueAtTime(0.0001, t);
-      gn.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
-      gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
-      o.connect(gn).connect(audio.destination);
-      o.start(t);
-      o.stop(t + 0.16);
-    });
+    if (audio.state === 'suspended') audio.resume().then(() => play(0.06)).catch(() => {});
+    else play(0.01);
   } catch {}
 }
 function paintSound() {

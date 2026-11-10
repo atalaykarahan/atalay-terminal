@@ -1596,6 +1596,7 @@ class RadarEngine {
       if (this.due('registry', w.registry ? 5000 : 1000)) this.pollRegistry();
       if (this.due('recent', w.projects ? 10_000 : 2000)) this.pumpRecent();
       if (this.due('scan', w.projects ? 60_000 : 10_000)) this.scanNew();
+      this.pollOthers();
       this.publishState();
     });
     this.every(3, () => this.pollProcesses());
@@ -2846,6 +2847,23 @@ class RadarEngine {
     this.agyWasRunning = agy;
     this.matchTabs();
     this.publishState();
+  }
+
+  // Reads Codex's and Antigravity's own records every second between the 5 s process readings so a fast turn (or a turn
+  // ending) shows and chimes without waiting for the next process scan.
+  pollOthers() {
+    const now = Date.now();
+    for (const O of this.others.values()) {
+      if (O.endedAt > 0 || !O.cwd) continue;
+      if (O.tool === 'Codex') this.readCodexLog(O, O.cwd, O.firstTs, now);
+      if (O.tool === 'Antigravity') this.readAntigravity(O, O.cwd, now);
+      const shown = this.otherStatus(O, now).status;
+      if (shown !== O.shown) {
+        O.shown = shown;
+        O.statusSince = now;
+        this.stateDirty = true;
+      }
+    }
   }
 
   // Its status: ended, or what its records say (over is the user's turn, unless its subagents still work, as Claude's
