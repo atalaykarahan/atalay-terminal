@@ -347,7 +347,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         WaitNotifier.shared.update(live)
         DiscordPresence.shared.update(list)
         if sidebar.briefs != briefs { sidebar.briefs = briefs }
-        let open = Set(chats.values.compactMap(\.sessionId))
+        var open = Set(chats.values.compactMap(\.sessionId))
+        for sid in open {
+            if let cid = briefs[sid]?.convId { open.insert(cid) }
+        }
         if sidebar.openInTabs != open { sidebar.openInTabs = open }
         pushWinOpen()
         pushActiveSession()
@@ -396,7 +399,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         let sid = best?.brief.id ?? chat?.sessionId ?? ""
-        let chatSid = (best?.brief.id).flatMap({ $0.hasPrefix("ai:") ? nil : $0 }) ?? chat?.sessionId ?? (sid.isEmpty ? nil : sid)
+        let chatSid = best?.brief.convId ?? (best?.brief.id).flatMap({ $0.hasPrefix("ai:") ? nil : $0 }) ?? chat?.sessionId ?? (sid.isEmpty ? nil : sid)
         if sidebar.activeSessionId != chatSid { sidebar.activeSessionId = chatSid }
     }
 
@@ -549,7 +552,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @objc private func dashboardVisibilityChanged() {
         guard let w = window else { return }
         let visible = w.isVisible && w.occlusionState.contains(.visible) && !w.isMiniaturized && !NSApp.isHidden
-        let focused = visible && NSApp.isActive && w.isKeyWindow
+        let focused = visible && NSApp.isActive
         let state = "\(visible),\(focused)"
         guard state != lastVisibility else { return }
         lastVisibility = state
@@ -651,6 +654,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             c.focusPane(hosting: pid)
             return
         }
+        if !fork, let liveAgy = briefs.values.first(where: { $0.live && $0.convId == sid }) {
+            return openSession(liveAgy.id)
+        }
         if !fork {
             if let b = brief, b.live, let pid = b.pid {
                 // A live chat opens the window its process runs in. Another window here can hold an older copy of the
@@ -681,6 +687,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         let title = [brief?.title, item?.title, item?.lastPrompt, brief?.name].compactMap { $0 }.first(where: { !$0.isEmpty }) ?? String(sid.prefix(8))
+        if item?.tool == "antigravity" {
+            guard !fork else { return }
+            return makeChat(cwd: cwd, claudeArgs: ["agy", "--conversation", sid], sessionId: sid, title: title)
+        }
         let resume = ["--resume", sid]
         if fork {
             // A copy of a Claude running in iTerm2 ends that original when it ends.

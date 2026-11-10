@@ -1865,6 +1865,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             let title = brief.title.isEmpty ? brief.name : brief.title
             if window?.title != title { window?.title = title }
         }
+        if hud.terminalDir != nil, brief?.live != true { sessionId = nil }
         border.setStatus(hud.status)
     }
 

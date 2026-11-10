@@ -49,6 +49,7 @@ final class RadarEngine {
     /// Registry file name -> what it said last time, so unchanged files are not re-read.
     private var regCache: [String: (mtime: Double, sid: String, pid: Int32, chat: Bool)] = [:]
     private var regPending = false
+    private var agyPending = false
     private var historyPending = false
     private var flushPending = false
     private var stateDirty = true
@@ -67,11 +68,21 @@ final class RadarEngine {
     /// read is kept on disk, so the top bar shows them while no Codex runs too.
     private var codexUsage: [String: Any]? = Limits.load("codex")
     private var codexUsagePending = false, codexWasRunning = false
+    /// Codex approvals the user hasn't answered yet (CodexHooks), by Codex session id, and when each Codex last logged a
+    /// tool's output (an answer to them), by its id.
+    private var codexWaits: [String: (command: String, since: Double)] = [:]
+    private var codexOutputAt: [String: Double] = [:]
+    private var codexWaitPending = false
     /// Antigravity's limits by group of models (AgyUsage), kept the same way, and the model its chats used last: the group
     /// that binds.
     private var agyUsage: [String: Any]? = Limits.load("antigravity")
     private var agyUsagePending = false, agyWasRunning = false
     private var agyModel = Limits.load("antigravity")?["model"] as? String ?? ""
+    /// Each Antigravity CLI's own log, read on, by its session id: the confirmation or question it shows right now (the
+    /// step it asks about, the tool, since when), and its turn as the log tells it (working, or idle since when) with the
+    /// conversation it sent the user's message to.
+    private var agyConfirms: [String: (log: String, offset: UInt64, pending: (step: Int, tool: String, since: Double)?)] = [:]
+    private var agyTurns: [String: (working: Bool?, since: Double, conversation: String?)] = [:]
     /// Spend by day and project past today (the spend panel's history); read on the engine's queue only.
     private lazy var ledger = Ledger()
 
@@ -88,6 +99,7 @@ final class RadarEngine {
     /// Everything after it runs at utility priority, which macOS keeps on the efficiency cores.
     func start() {
         Limits.installScript()
+        CodexHooks.install()
         let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated], reason: "Indexing Claude Code transcripts")
         queue.async(qos: .userInitiated) {
             self.boot()
@@ -200,7 +212,9 @@ final class RadarEngine {
 
     /// Antigravity's limits, the same way: only while an Antigravity chat runs, each read a run of its CLI (~3 s).
     private func refreshAgyUsage() {
-        guard !agyUsagePending, agyRunning else { return }
+        // Not while an Antigravity turn works: each `agy -p /usage` writes the conversation's summary back as idle.
+        guard !agyUsagePending, agyRunning, !others.values.contains(where: { $0.tool == "Antigravity" && $0.endedAt == 0 && $0.turnOpen == true })
+        else { return }
         agyUsagePending = true
         DispatchQueue.global(qos: .utility).async {
             let fresh = AgyUsage.read()
@@ -217,12 +231,62 @@ final class RadarEngine {
 
     private var agyRunning: Bool { others.values.contains { $0.tool == "Antigravity" && $0.endedAt == 0 } }
 
+    /// Codex's approval requests still waiting for the user: its hook's, less those its own log says were answered.
+    private func refreshCodexWaits() {
+        var waits = CodexHooks.waiting()
+        for (session, wait) in waits where CodexHooks.answered(session: session, since: wait.since) {
+            waits[session] = nil
+            CodexHooks.drop(session: session, since: wait.since)
+        }
+        codexWaits = waits
+    }
+
+    /// A Codex asked for an approval, or its answer came: its planet waits, or works again, now.
+    private func codexWaitChanged() {
+        guard !codexWaitPending else { return }
+        codexWaitPending = true
+        queue.asyncAfter(deadline: .now() + 0.05) {
+            self.codexWaitPending = false
+            self.refreshCodexWaits()
+            let ms = nowMs()
+            for O in self.others.values where O.tool == "Codex" && O.endedAt == 0 {
+                let shown = self.otherStatus(O, ms).status
+                if shown != O.shown {
+                    O.shown = shown
+                    O.statusSince = ms
+                    self.stateDirty = true
+                }
+            }
+            self.publishState()
+        }
+    }
+
     private func registryChanged() {
         guard !regPending else { return }
         regPending = true
         queue.asyncAfter(deadline: .now() + 0.05) {
             self.regPending = false
             self.pollRegistry()
+            self.publishState()
+        }
+    }
+
+    private func agyChanged() {
+        guard !agyPending else { return }
+        agyPending = true
+        queue.asyncAfter(deadline: .now() + 0.05) {
+            self.agyPending = false
+            let ms = nowMs()
+            let agyList = self.others.values.filter { $0.tool == "Antigravity" && $0.endedAt == 0 && !$0.cwd.isEmpty }.sorted { $0.firstTs < $1.firstTs }
+            for O in agyList {
+                self.readAntigravity(O, cwd: O.cwd)
+                let shown = self.otherStatus(O, ms).status
+                if shown != O.shown {
+                    O.shown = shown
+                    O.statusSince = ms
+                    self.stateDirty = true
+                }
+            }
             self.publishState()
         }
     }
@@ -236,23 +300,69 @@ final class RadarEngine {
         }
     }
 
+    private var codexPending = false
+    private static var codexSessionsRoot: String {
+        (ProcessInfo.processInfo.environment["CODEX_HOME"] ?? HOME + "/.codex") + "/sessions"
+    }
+
+    private func codexChanged() {
+        guard !codexPending else { return }
+        codexPending = true
+        queue.asyncAfter(deadline: .now() + 0.1) {
+            self.codexPending = false
+            let ms = nowMs()
+            for O in self.others.values where O.tool == "Codex" && O.endedAt == 0 {
+                self.readCodexLog(O, cwd: O.cwd, since: O.firstTs / 1000, now: ms)
+                let shown = self.otherStatus(O, ms).status
+                if shown != O.shown {
+                    O.shown = shown
+                    O.statusSince = ms
+                    self.stateDirty = true
+                }
+            }
+            self.publishState()
+        }
+    }
+
     private func startWatch() {
+        let agyRoot = HOME + "/.gemini/antigravity-cli"
         var ctx = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
         let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
             guard let info else { return }
             let engine = Unmanaged<RadarEngine>.fromOpaque(info).takeUnretainedValue()
+            let agyDir = HOME + "/.gemini/antigravity-cli"
             let list = unsafeBitCast(paths, to: NSArray.self)
             for case let p as String in list {
-                if p.hasSuffix(".jsonl") {
+                if p.hasPrefix(RadarEngine.codexSessionsRoot + "/") {
+                    if p.hasSuffix(".jsonl") { engine.codexChanged() }
+                } else if p.hasPrefix(HOME + "/.codex/") {
+                    // Codex's own log database: the user's answer to a request waiting on screen lands there.
+                    if p.hasPrefix(CodexHooks.logDatabase), !engine.codexWaits.isEmpty { engine.codexWaitChanged() }
+                } else if p.hasPrefix(agyDir) {
+                    engine.agyChanged()
+                    if p.hasSuffix("conversation_summaries.db") || p.hasSuffix("conversation_summaries.db-wal") || p.hasSuffix("transcript.jsonl") {
+                        engine.historyChanged()
+                    }
+                } else if p.hasSuffix(".jsonl") {
                     if engine.cursors[p] == nil { engine.historyChanged() }
                     engine.pump(p)
                 } else if p.hasPrefix(engine.registry) {
                     engine.registryChanged()
+                } else if p.hasPrefix(CodexHooks.dir + "/") {
+                    engine.codexWaitChanged()
                 }
             }
         }
         let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagNoDefer)
-        guard let s = FSEventStreamCreate(nil, callback, &ctx, [projects, registry] as CFArray,
+        // Also watch ~/.gemini/antigravity-cli so conversation_summaries.db and step changes arrive immediately.
+        var watched: [String] = [projects, registry]
+        if FileManager.default.fileExists(atPath: Self.codexSessionsRoot) { watched.append(Self.codexSessionsRoot) }
+        if FileManager.default.fileExists(atPath: agyRoot) { watched.append(agyRoot) }
+        // And Codex's approval requests (CodexHooks), the moment its hook writes or drops one, and its own log, where the
+        // user's answer to one lands.
+        if FileManager.default.fileExists(atPath: CodexHooks.dir) { watched.append(CodexHooks.dir) }
+        if FileManager.default.fileExists(atPath: HOME + "/.codex") { watched.append(HOME + "/.codex") }
+        guard let s = FSEventStreamCreate(nil, callback, &ctx, watched as CFArray,
                                           FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.2, flags) else { return }
         FSEventStreamSetDispatchQueue(s, queue)
         FSEventStreamStart(s)
@@ -713,7 +823,9 @@ final class RadarEngine {
         A.bg = meta["requestShape"] as? String == "background"
     }
 
-    private func fileStat(_ path: String) -> (size: UInt64, mtime: Double)? {
+    private func fileStat(_ path: String) -> (size: UInt64, mtime: Double)? { Self.fileStat(path) }
+
+    private static func fileStat(_ path: String) -> (size: UInt64, mtime: Double)? {
         var st = stat()
         guard stat(path, &st) == 0 else { return nil }
         return (UInt64(st.st_size), Double(st.st_mtimespec.tv_sec) * 1000 + Double(st.st_mtimespec.tv_nsec) / 1e6)
@@ -960,6 +1072,7 @@ final class RadarEngine {
     /// into a terminal.
     private func pollOthers() {
         let me = getuid(), now = ProcessInfo.processInfo.systemUptime, ms = nowMs()
+        if codexRunning { refreshCodexWaits() } else { codexWaits = [:] }
         var found: [Int32: (tool: String, info: Proc.Info)] = [:]
         for pid in Proc.all() {
             guard let tool = Proc.otherAI(pid), let info = Proc.info(pid), info.uid == me, info.tty != nil else { continue }
@@ -967,7 +1080,7 @@ final class RadarEngine {
         }
         var seen = Set<String>(), measured = Set<Int32>()
         // A launcher's child is the same session (Codex's Node script starts Codex's own binary).
-        for (pid, f) in found where found[f.info.ppid] == nil {
+        for (pid, f) in found.sorted(by: { $0.value.info.started < $1.value.info.started }) where found[f.info.ppid] == nil {
             let id = "ai:\(pid):\(f.info.started)"
             seen.insert(id)
             let O: OtherAI
@@ -975,6 +1088,7 @@ final class RadarEngine {
                 O = known
             } else {
                 O = OtherAI(id: id, tool: f.tool, pid: pid)
+                if f.tool == "Antigravity" { O.turnOpen = false }
                 O.firstTs = Double(f.info.started) / 1000
                 O.lastTs = ms
                 O.statusSince = ms
@@ -1041,6 +1155,8 @@ final class RadarEngine {
         agyWasRunning = agyRunning
         let before = others.count
         others = others.filter { $0.value.endedAt == 0 || ms - $0.value.endedAt < 120_000 }
+        agyConfirms = agyConfirms.filter { others[$0.key] != nil }
+        agyTurns = agyTurns.filter { others[$0.key] != nil }
         if others.count != before { stateDirty = true }
         otherCpu = otherCpu.filter { measured.contains($0.key) }
     }
@@ -1068,16 +1184,29 @@ final class RadarEngine {
     private func otherStatus(_ O: OtherAI, _ now: Double) -> (status: String, waiting: String?) {
         guard O.endedAt == 0 else { return ("ended", nil) }
         let command = otherCommand(O)
-        guard let open = O.turnOpen else { return (O.busy || command != nil ? "busy" : "idle", nil) }
+        guard let open = O.turnOpen else { return ((O.tool != "Antigravity" && O.busy) || command != nil ? "busy" : "idle", nil) }
         if O.waitsForUser || O.agentWaiting != nil {
             return ("waiting", "approval: " + ((O.waitsForUser ? O.call?.p : O.agentWaiting)?.l ?? "a step"))
         }
-        // A completed Codex turn can still have a command or delegated work running. CPU/children are the ground truth
-        // until they settle; parking the planet here made an actively working Codex look idle. Codex's CPU only:
-        // Antigravity's screen redraws take some while it waits for the user, and its records tell when it works.
-        if !open { return ((O.tool == "Codex" && O.busy) || command != nil || O.agents.contains { $0["running"] as? Bool == true } ? "busy" : "idle", nil) }
-        if !O.stepsKnown, command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 { return ("waiting", "approval: " + call.p.l) }
+        // A recorded Codex turn is authoritative. UI redraws, MCP servers and leftover shells must not
+        // restart a completed turn, nor does low CPU prove that an active tool needs approval.
+        if O.tool == "Codex" {
+            if open, let command = codexWait(O) { return ("waiting", "approval: " + command) }
+            return (open ? "busy" : "idle", nil)
+        }
+        if !open { return ((O.tool != "Antigravity" && command != nil) || O.agents.contains { $0["running"] as? Bool == true } ? "busy" : "idle", nil) }
+        if O.tool != "Antigravity", !O.stepsKnown, command == nil, !O.busy, let call = O.call, now - call.p.t > 4000 { return ("waiting", "approval: " + call.p.l) }
         return ("busy", nil)
+    }
+
+    /// What a Codex waits for the user to approve (CodexHooks): its session's request, until it's answered. Codex's own
+    /// hooks drop it once the tool ran, the turn stopped or was interrupted, or a new prompt came; before those, a command
+    /// it started after the request (allowed: a long one would keep the request on screen until it ends), a tool's output
+    /// in its log after it (allowed and done, or denied), or a new turn answer it too.
+    private func codexWait(_ O: OtherAI) -> String? {
+        guard let log = O.log, let session = CodexHooks.session(ofLog: log), let wait = codexWaits[session] else { return nil }
+        if O.commandStarted > wait.since || (codexOutputAt[O.id] ?? 0) > wait.since || O.turnStart > wait.since { return nil }
+        return wait.command
     }
 
     /// The command it has a shell run, when that's work. Where its records tell its turns (Codex, Antigravity), a shell
@@ -1086,8 +1215,9 @@ final class RadarEngine {
     /// earlier, and the servers it starts with would pass for that turn's commands.
     private func otherCommand(_ O: OtherAI) -> String? {
         guard let c = O.command else { return nil }
-        guard O.tool == "Codex" || O.tool == "Antigravity" else { return c }
-        return O.turnStart > 0 && O.commandStarted >= max(O.turnStart, O.firstTs + 5000) ? c : nil
+        if O.tool == "Antigravity" { return O.turnOpen == true && O.turnStart > 0 && O.commandStarted >= max(O.turnStart, O.firstTs + 5000) ? c : nil }
+        guard O.tool == "Codex" else { return c }
+        return O.turnOpen == true && O.turnStart > 0 && O.commandStarted >= max(O.turnStart, O.firstTs + 5000) ? c : nil
     }
 
     // MARK: the other AI tools' work, counted as Claude's is
@@ -1252,7 +1382,11 @@ final class RadarEngine {
                     O.ctx = int(last["input_tokens"])
                     // Its input counts the cached part too: the rest is what was new.
                     let cached = int(last["cached_input_tokens"])
-                    otherTokens(O, at + ":tok", ts, max(0, int(last["input_tokens"]) - cached), int(last["output_tokens"]), cached)
+                    let total = info?["total_token_usage"] as? [String: Int]
+                    if total == nil || total != O.codexTokenTotal {
+                        otherTokens(O, at + ":tok", ts, max(0, int(last["input_tokens"]) - cached), int(last["output_tokens"]), cached)
+                    }
+                    O.codexTokenTotal = total
                 }
                 if let window = info?["model_context_window"] as? NSNumber { O.ctxMax = window.doubleValue }
             case ("event_msg", "thread_settings_applied"):
@@ -1263,6 +1397,7 @@ final class RadarEngine {
             case ("response_item", let kind?) where kind.hasSuffix("_call_output"):
                 let key = "codex:" + (p["call_id"] as? String ?? at)
                 if O.call?.id == p["call_id"] as? String { O.call = nil }
+                codexOutputAt[O.id] = max(codexOutputAt[O.id] ?? 0, ts)
                 otherResult(O, key, ok: Self.codexOk(p["output"]), ts, d: otherCalls[key].map { max(0, ts - $0.p.t) })
             case ("response_item", "web_search_call"):
                 // Logged once the search is over, with no output line to end it: nothing left running.
@@ -1289,35 +1424,74 @@ final class RadarEngine {
     private func readAntigravity(_ O: OtherAI, cwd: String) {
         let root = HOME + "/.gemini/antigravity-cli"
         readAgyModel(O, root: root)
+        readAgyConfirmations(O, root: root)
         guard let db = Self.agyOpen(root + "/conversation_summaries.db") else { return }
         defer { sqlite3_close(db) }
-        guard let (id, title, status) = Self.agyConversation(db, cwd: cwd, root: root, since: O.firstTs - 2000) else {
+        let here = Self.realFolder(cwd)
+        let claimed = Set(others.values.compactMap { $0 !== O && $0.tool == "Antigravity" && $0.endedAt == 0 ? $0.convId : nil })
+        let sharedFolder = others.values.contains { $0 !== O && $0.tool == "Antigravity" && $0.endedAt == 0 && Self.realFolder($0.cwd) == here }
+        var stickyId = (sharedFolder && O.turnOpen == true && O.convId != nil && !claimed.contains(O.convId!)) ? O.convId : nil
+        if let logged = agyTurns[O.id]?.conversation, !claimed.contains(logged) { stickyId = logged }
+        guard let (id, title, status) = Self.agyConversation(db, pid: O.pid, cwd: cwd, root: root, since: O.firstTs - 2000, excluding: claimed, stickyId: stickyId) else {
             // Nothing sent from this folder yet: the user's turn (its screen redrawing is no work, as its CPU said).
-            if O.turnOpen != false {
+            if O.turnOpen != false || O.convId != nil {
                 O.turnOpen = false
+                O.transcriptOpen = false
+                O.runningBgTasks.removeAll()
+                O.convId = nil
                 stateDirty = true
             }
             return
         }
-        let open = status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY") || status.hasSuffix("_CANCELING")
-        if O.turnOpen != open || O.title != title {
+        readAgyTranscript(O, root: root, id: id)
+        let steps = Self.agySteps(root, id, sinceStep: O.userStepIdx, planIdx: O.plan?.idx)
+        if steps?.canceled == true {
+            O.transcriptOpen = false
+            O.runningBgTasks.removeAll()
+        }
+        let summaryOpen = status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY") || status.hasSuffix("_CANCELING")
+        let stepsActive = steps?.active == true
+        var open = summaryOpen || stepsActive || O.transcriptOpen || !O.runningBgTasks.isEmpty
+        if let logged = agyTurns[O.id], let working = logged.working {
+            if working {
+                open = true
+            } else if nowMs() - logged.since >= 700 {
+                // Its CLI is back at its prompt (a declined tool's ERROR or a background step's RUNNING in the transcript
+                // say nothing then).
+                open = false
+                O.transcriptOpen = false
+                O.runningBgTasks.removeAll()
+            }
+        }
+        if O.turnOpen != open || O.title != title || O.convId != id {
             O.turnOpen = open
             O.title = title
+            O.convId = id
             stateDirty = true
         }
-        readAgyTranscript(O, root: root, id: id)
         if !open, let plan = O.plan { closeAgyCalls(O, conversation: id, plan: plan, root: root, aid: nil) }
         // What runs, or waits for the user, right now: its steps not over yet.
         let was = (O.call?.p.l, O.waitsForUser)
+        let shown = agyConfirms[O.id]?.pending
         if !open {
             O.call = nil
             O.waitsForUser = false
-        } else if let steps = Self.agySteps(root, id) {
+            // A turn over asks nothing any more.
+            agyConfirms[O.id]?.pending = nil
+        } else if let steps {
             O.stepsKnown = true
-            O.waitsForUser = steps.waiting != nil
-            O.call = O.plan.flatMap { plan in (steps.waiting ?? steps.open).flatMap { Self.agyCall(plan, step: $0) } }.map { ("", $0) }
+            let stepCall = O.plan.flatMap { plan in (steps.waiting ?? steps.open).flatMap { Self.agyCall(plan, step: $0) } }
+            if let stepCall {
+                O.call = ("", stepCall)
+            }
+            // The CLI's own log says when it shows a confirmation, for any tool (writing a file outside the workspace asks
+            // too); without it, a waiting step of a tool that isn't a read, a search or an edit.
+            let canWait = O.call.map { !["read", "search", "edit"].contains($0.p.c) } ?? true
+            O.waitsForUser = shown != nil || (steps.waiting != nil && canWait)
+            if let shown, let plan = O.plan, let call = Self.agyCall(plan, step: shown.step) { O.call = ("", call) }
         } else {
             O.stepsKnown = false
+            O.waitsForUser = shown != nil
         }
         if was.0 != O.call?.p.l || was.1 != O.waitsForUser { stateDirty = true }
         readAntigravityAgents(O, db: db, parent: id, root: root)
@@ -1327,37 +1501,82 @@ final class RadarEngine {
     /// else its newest there (a folder as a file:// address, as it writes it). The desktop Antigravity's conversations share
     /// the list (app_data_dir "antigravity"): one of those, months old, is no CLI's. Folders compare with their links
     /// resolved: the CLI may write the one it was started in, the process has the real one. One nothing has touched since
-    /// `since` (the CLI's start) is an earlier run's: a CLI starts a new conversation, so it has sent nothing yet.
-    private static func agyConversation(_ db: OpaquePointer, cwd: String, root: String, since: Double) -> (id: String, title: String, status: String)? {
+    /// `since` (the CLI's start) is an earlier run's: a CLI starts a new conversation, so it has sent nothing yet — unless
+    /// it was started with `--conversation <id>` or `-c` / `--continue`.
+    private static func agyConversation(_ db: OpaquePointer, pid: Int32, cwd: String, root: String, since: Double, excluding claimed: Set<String> = [], stickyId: String? = nil) -> (id: String, title: String, status: String)? {
         let here = realFolder(cwd), cols = "conversation_id, title, status, workspace_uris, last_modified_time"
-        // Its time ("2026-11-04 20:08:07.021044+00:00"); one that doesn't read counts as touched.
-        let touched = { (col: (Int32) -> String) -> Bool in
-            let t = parseISO(col(4))
-            return t == 0 || t >= since
+        let args = Proc.arguments(pid) ?? []
+        var explicitId: String? = stickyId
+        var continued = false
+        for (i, a) in args.enumerated() {
+            if (a == "--conversation" || a == "-r" || a == "--resume"), i + 1 < args.count {
+                explicitId = args[i + 1]
+            } else if a.hasPrefix("--conversation=") {
+                explicitId = String(a.dropFirst("--conversation=".count))
+            } else if a == "-c" || a == "--continue" {
+                continued = true
+            }
         }
-        var row: (id: String, title: String, status: String)?
+        if let cid = explicitId, !cid.isEmpty, !claimed.contains(cid) {
+            var row: (id: String, title: String, status: String)?
+            agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE conversation_id = ?", [cid]) { col in
+                row = (col(0), col(1), col(2))
+                return false
+            }
+            if let row { return row }
+        }
+        // Its time ("2026-11-04 20:08:07.021044+00:00") or the live mtime of its transcript / WAL (since a background
+        // `agy -p /usage` call can checkpoint and unlink conversation_summaries.db-wal while a TUI session runs).
+        let liveTime = { (cid: String, iso: String) -> Double in
+            let t0 = parseISO(iso)
+            let t1 = fileStat(root + "/brain/" + cid + "/.system_generated/logs/transcript.jsonl")?.mtime ?? 0
+            let t2 = fileStat(root + "/conversations/" + cid + ".db-wal")?.mtime ?? 0
+            let t3 = fileStat(root + "/conversations/" + cid + ".db")?.mtime ?? 0
+            return max(max(t0, t1), max(t2, t3))
+        }
+        let touched = { (cid: String, iso: String) -> Double? in
+            let t = liveTime(cid, iso)
+            if continued || t == 0 || t >= since { return t }
+            return nil
+        }
+        var lastIds = Set<String>()
         if let data = FileManager.default.contents(atPath: root + "/cache/last_conversations.json"),
            let last = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            for case let (dir, id as String) in last where realFolder(dir) == here {
-                agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE conversation_id = ?", [id]) { col in
-                    if touched(col) { row = (col(0), col(1), col(2)) }
-                    return false
-                }
-                if let row { return row }
+            for case let (dir, id as String) in last where realFolder(dir) == here && !claimed.contains(id) {
+                lastIds.insert(id)
+            }
+        }
+        var best: (row: (id: String, title: String, status: String), running: Bool, t: Double)?
+        var seenIds = Set<String>()
+        let consider = { (cid: String, title: String, status: String, iso: String) in
+            guard seenIds.insert(cid).inserted, let t = touched(cid, iso) else { return }
+            let run = status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY") || status.hasSuffix("_CANCELING")
+            if let b = best {
+                if run != b.running ? run : t > b.t { best = ((cid, title, status), run, t) }
+            } else {
+                best = ((cid, title, status), run, t)
             }
         }
         // Older CLIs' lists have no app_data_dir.
         for filter in ["nesting_depth = 0 AND IFNULL(app_data_dir, '') != 'antigravity'", "nesting_depth = 0"] {
             var read = false
             agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE \(filter) ORDER BY last_modified_time DESC LIMIT 40") { col in
+                let cid = col(0)
+                if claimed.contains(cid) { return true }
                 let uris = (try? JSONSerialization.jsonObject(with: Data(col(3).utf8)) as? [String]) ?? []
-                guard uris.contains(where: { URL(string: $0).map { realFolder($0.path) } == here }) else { return true }
-                if touched(col) { row = (col(0), col(1), col(2)) }
-                return false
+                guard lastIds.contains(cid) || uris.contains(where: { URL(string: $0).map { realFolder($0.path) } == here }) else { return true }
+                consider(cid, col(1), col(2), col(4))
+                return true
             } done: { read = $0 }
             if read { break }
         }
-        return row
+        for id in lastIds where !seenIds.contains(id) {
+            agyRows(db, "SELECT \(cols) FROM conversation_summaries WHERE conversation_id = ?", [id]) { col in
+                consider(col(0), col(1), col(2), col(4))
+                return false
+            }
+        }
+        return best?.row
     }
 
     /// The calls of a conversation's last reply still open once it has stopped (its turn over, or a subagent the session
@@ -1376,6 +1595,86 @@ final class RadarEngine {
             guard let status = ended[plan.idx + 1 + k] else { continue }
             otherResult(O, key, ok: status == "3", nowMs(), d: nil, aid: aid)
         }
+    }
+
+    /// What an Antigravity CLI's own log says, as it writes it the moment it happens: its turn (`Sending user message to
+    /// conversation <id>` starts one, as a background task's wake-up `[Sonar] Resolved active tags` does; the first
+    /// `doRefreshQuota:` after it, not a forced one, ends it, as `Cancelling …` does: true of every turn end across 13 logs,
+    /// a declined tool's too, and never mid-turn), and the confirmation or question it shows (`Surfacing tool
+    /// confirmation: "WriteFile" at step 4`, `Surfacing ask_question at step 7`) until the user answers. Its log is the one
+    /// whose first line names its pid ("Starting language server process with pid 94106"), read from the start once.
+    private func readAgyConfirmations(_ O: OtherAI, root: String) {
+        if agyConfirms[O.id] == nil {
+            let dir = root + "/log", tag = "with pid \(O.pid)"
+            let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).filter { $0.hasPrefix("cli-") && $0.hasSuffix(".log") }.sorted(by: >)
+            guard let name = names.first(where: { name in
+                guard let fh = FileHandle(forReadingAtPath: dir + "/" + name) else { return false }
+                defer { try? fh.close() }
+                let head = String(decoding: (try? fh.read(upToCount: 300)) ?? Data(), as: UTF8.self)
+                return head.split(separator: "\n").first.map { $0.hasSuffix(tag) || $0.contains(tag + " ") } ?? false
+            }) else { return }
+            agyConfirms[O.id] = (dir + "/" + name, 0, nil)
+            agyTurns[O.id] = (nil, 0, nil)
+        }
+        guard var c = agyConfirms[O.id], let st = fileStat(c.log), st.size > c.offset, let fh = FileHandle(forReadingAtPath: c.log) else { return }
+        defer { try? fh.close() }
+        let from = max(c.offset, st.size > 2 << 20 ? st.size - (2 << 20) : 0)
+        try? fh.seek(toOffset: from)
+        let data = fh.readDataToEndOfFile()
+        guard let lastBreak = data.lastIndex(of: 0x0A) else { return }
+        c.offset = from + UInt64(lastBreak - data.startIndex + 1)
+        var turn = agyTurns[O.id] ?? (nil, 0, nil)
+        let was = c.pending.map { "\($0.step):\($0.tool)" }, wasTurn = turn.working
+        for raw in data[data.startIndex...lastBreak].split(separator: 0x0A) {
+            let line = String(decoding: raw, as: UTF8.self)
+            let at = Self.glogTime(line) ?? nowMs()
+            if let r = line.range(of: "Sending user message to conversation ") {
+                turn = (true, at, String(line[r.upperBound...].prefix { !$0.isWhitespace && $0 != "(" }))
+            } else if line.contains("[Sonar] Resolved active tags"), turn.working != true {
+                turn = (true, at, turn.conversation)
+            } else if let r = line.range(of: "Surfacing tool confirmation: \"") {
+                let rest = line[r.upperBound...]
+                let tool = rest.prefix { $0 != "\"" }
+                let step = rest.range(of: " at step ").flatMap { Int(rest[$0.upperBound...].prefix { $0.isNumber }) } ?? -1
+                c.pending = (step, String(tool), at)
+            } else if let r = line.range(of: "Surfacing ask_question at step ") {
+                c.pending = (Int(line[r.upperBound...].prefix { $0.isNumber }) ?? -1, "a question", at)
+            } else if line.contains("Responding to tool confirmation") || line.contains("] Tool confirmation for conversation")
+                        || line.contains("cleared pending tool confirmation") || line.contains("Responding to pending ask_question")
+                        || line.contains("AskQuestion response for conversation") || line.contains("cancelled ask_question")
+                        || line.contains("AskQuestion cancelled") {
+                c.pending = nil
+            } else if turn.working == true, (line.contains("] doRefreshQuota:") && !line.contains("force=true") && !line.contains("not logged in"))
+                        || line.contains("Cancelling in-progress response") || line.contains("] Cancelling conversation ") {
+                turn = (false, at, turn.conversation)
+                c.pending = nil
+            }
+        }
+        agyConfirms[O.id] = c
+        agyTurns[O.id] = turn
+        if was != c.pending.map({ "\($0.step):\($0.tool)" }) || wasTurn != turn.working { stateDirty = true }
+        // Queued input goes out a moment after a turn ends: an idle that short is no turn of the user's. Look again then.
+        if turn.working == false, nowMs() - turn.since < 700 {
+            queue.asyncAfter(deadline: .now() + 0.75) { self.agyChanged() }
+        }
+    }
+
+    /// A glog line's time ("I1111 00:00:39.359043 …", local, without a year), in ms.
+    private static func glogTime(_ line: String) -> Double? {
+        let parts = line.split(separator: " ", maxSplits: 2)
+        guard parts.count >= 2, parts[0].count == 5, let month = Int(parts[0].dropFirst().prefix(2)), let day = Int(parts[0].suffix(2)) else { return nil }
+        let hms = parts[1].split(separator: ":")
+        guard hms.count == 3, let h = Int(hms[0]), let m = Int(hms[1]), let sec = Double(hms[2]) else { return nil }
+        let cal = Calendar.current, now = Date()
+        var dc = cal.dateComponents([.year], from: now)
+        dc.month = month
+        dc.day = day
+        dc.hour = h
+        dc.minute = m
+        dc.second = Int(sec)
+        guard var date = cal.date(from: dc) else { return nil }
+        if date > now.addingTimeInterval(86_400) { date = cal.date(byAdding: .year, value: -1, to: date) ?? date }
+        return (date.timeIntervalSince1970 + sec.truncatingRemainder(dividingBy: 1)) * 1000
     }
 
     /// A folder as the file system has it, its links resolved.
@@ -1398,12 +1697,12 @@ final class RadarEngine {
               let end = text[r.upperBound...].firstIndex(of: "\"") else { return }
         let label = String(text[r.upperBound..<end])
         var model = label, effort = ""
-        if let m = label.range(of: #"\s*\((low|medium|high|xhigh|max)\)\s*$"#, options: [.regularExpression, .caseInsensitive]) {
+        if let m = label.range(of: #"\s*\((low|medium|high|xhigh|max|thinking)\)\s*$"#, options: [.regularExpression, .caseInsensitive]) {
             model = String(label[..<m.lowerBound])
             effort = label[m].trimmingCharacters(in: CharacterSet(charactersIn: "() ")).lowercased()
         }
         let lower = model.lowercased()
-        let window = lower.contains("gemini") ? 1_048_576.0 : lower.contains("claude") ? 200_000 : 0
+        let window = (lower.contains("gemini") || lower.contains("argon")) ? 1_048_576.0 : 200_000.0
         if model != O.model || effort != O.effort || window != O.ctxMax {
             O.model = model
             O.effort = effort
@@ -1421,6 +1720,9 @@ final class RadarEngine {
             O.log = path
             O.logOffset = 0
             O.plan = nil
+            O.transcriptOpen = false
+            O.userStepIdx = 0
+            O.runningBgTasks.removeAll()
         }
         guard let st = fileStat(path), st.size > O.logOffset, let fh = FileHandle(forReadingAtPath: path) else { return }
         defer { try? fh.close() }
@@ -1433,10 +1735,12 @@ final class RadarEngine {
             guard let j = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
             let kind = j["type"] as? String ?? "", step = j["status"] as? String ?? ""
             let ts = parseISO(j["created_at"] as? String), idx = int(j["step_index"])
-            O.waitsForUser = step == "WAITING"
             switch kind {
             case "USER_INPUT":
                 O.turnStart = ts
+                O.userStepIdx = idx
+                O.transcriptOpen = true
+                O.runningBgTasks.removeAll()
                 let asked = Self.agyRequest(j["content"])
                 O.prompt = clip(asked, 200)
                 otherText(O, "agy:\(id):\(idx):in", "prompt", asked, ts)
@@ -1450,11 +1754,23 @@ final class RadarEngine {
                 let calls = j["tool_calls"] as? [[String: Any]] ?? []
                 O.plan = calls.isEmpty ? nil : AgyPlan(idx: idx, calls: calls, ts: ts)
                 O.call = calls.last.map { ("", Self.agyTool($0, at: ts)) }
+                O.transcriptOpen = !calls.isEmpty || !O.runningBgTasks.isEmpty
                 for (k, call) in calls.enumerated() {
                     let p = Self.agyTool(call, at: ts)
                     otherTool(O, "agy:\(id):\(idx):\(k)", p, files: Self.agyFile(call, kind: p.c).map { [$0] } ?? [])
                 }
             default:
+                if kind == "SYSTEM_MESSAGE", let text = j["content"] as? String {
+                    if let r = text.range(of: #"task-\d+"#, options: .regularExpression) { O.runningBgTasks.remove(String(text[r])) }
+                    O.transcriptOpen = true
+                } else {
+                    if step == "RUNNING", let text = j["content"] as? String,
+                       let r = text.range(of: #"task-\d+"#, options: .regularExpression) {
+                        O.runningBgTasks.insert(String(text[r]))
+                    }
+                    // A tool the user declined ends the turn there, with no reply after it.
+                    O.transcriptOpen = step != "CANCELED" && !(step == "ERROR" && (j["content"] as? String ?? "").contains("user denied permission"))
+                }
                 // A tool's own step: done, it no longer waits; still running or waiting, it does. Its call's result counts.
                 if step == "DONE" || step == "ERROR" || step == "CANCELED" {
                     O.call = nil
@@ -1506,9 +1822,10 @@ final class RadarEngine {
             guard running || now - mtime < 15 * Self.MIN else { return true }
             var call: Pending?, waits = false
             if running, let plan = log.plan {
-                if let steps = Self.agySteps(root, id) {
-                    waits = steps.waiting != nil
+                if let steps = Self.agySteps(root, id, sinceStep: plan.idx, planIdx: plan.idx) {
                     call = (steps.waiting ?? steps.open).flatMap { Self.agyCall(plan, step: $0) }
+                    let canWait = call.map { !["read", "search", "edit"].contains($0.c) } ?? true
+                    waits = steps.waiting != nil && canWait
                 } else {
                     call = plan.calls.last.map { Self.agyTool($0, at: plan.ts) }
                 }
@@ -1580,20 +1897,26 @@ final class RadarEngine {
         return log
     }
 
-    /// A conversation's steps not over yet, from its own database: the first that runs or waits to (a tool's), and the
+    /// A conversation's steps not over yet, from its own database: whether any step in the current turn is still active
+    /// (1 pending, 2 running, 8 model generating reply, 9 waiting, 11 queued), the first tool step that runs, and the
     /// first WAITING for the user's permission. Nil: it can't be read.
-    private static func agySteps(_ root: String, _ id: String) -> (open: Int?, waiting: Int?)? {
+    private static func agySteps(_ root: String, _ id: String, sinceStep: Int = 0, planIdx: Int? = nil) -> (active: Bool, open: Int?, waiting: Int?, canceled: Bool)? {
         guard let db = agyOpen(root + "/conversations/" + id + ".db") else { return nil }
         defer { sqlite3_close(db) }
-        // Its step statuses: 1 pending, 2 running, 9 waiting, 11 queued (3 done; 8 the model still writing its reply).
-        var open: Int?, waiting: Int?, read = false
-        agyRows(db, "SELECT idx, status FROM steps WHERE status IN (1, 2, 9, 11) ORDER BY idx") { col in
-            let idx = Int(col(0)) ?? 0
-            if open == nil { open = idx }
-            if waiting == nil, col(1) == "9" { waiting = idx }
+        var active = false, open: Int?, waiting: Int?, lastStatus = 0, read = false
+        let minPlan = planIdx ?? sinceStep
+        agyRows(db, "SELECT idx, status FROM steps WHERE idx >= \(max(0, sinceStep)) ORDER BY idx") { col in
+            let idx = Int(col(0)) ?? 0, st = Int(col(1)) ?? 0
+            lastStatus = st
+            if [1, 2, 8, 9, 11].contains(st) { active = true }
+            if idx > minPlan {
+                if [1, 2, 9, 11].contains(st), open == nil { open = idx }
+                if st == 9 { waiting = idx } else if st == 2 || st == 3 || st == 8 { waiting = nil }
+            }
             return true
         } done: { read = $0 }
-        return read ? (open, waiting) : nil
+        guard read else { return nil }
+        return (active, open, waiting, !active && lastStatus == 6)
     }
 
     /// The tool call a step runs: the reply's calls run in order, a step each, right after it.
@@ -1606,12 +1929,11 @@ final class RadarEngine {
         agyPlanned(plan, step: step).map { agyTool($0, at: plan.ts) }
     }
 
-    /// A read-only connection to one of Antigravity's databases: while it has it open (its write-ahead log beside it), as
-    /// any reader; otherwise (the log merged in and gone; it opens its conversations' only to write) it reads as it stands.
+    /// A read-only connection to one of Antigravity's databases: always tries `mode=ro` first so any live WAL is included,
+    /// falling back to `immutable=1` when the WAL was merged in and removed.
     private static func agyOpen(_ path: String) -> OpaquePointer? {
         guard FileManager.default.fileExists(atPath: path) else { return nil }
-        let modes = FileManager.default.fileExists(atPath: path + "-wal") ? ["mode=ro", "immutable=1"] : ["immutable=1"]
-        for mode in modes {
+        for mode in ["mode=ro", "immutable=1"] {
             var db: OpaquePointer?
             let url = "file:" + path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)! + "?" + mode
             if sqlite3_open_v2(url, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK {
@@ -1970,9 +2292,10 @@ final class RadarEngine {
             item["pid"] = Int(O.pid)
             item["host"] = orNull(host)
             item["tab"] = orNull(O.hostTab)
+            item["convId"] = orNull(O.convId)
             list.append(item)
             var brief = SessionBrief(id: O.id, name: O.tool, title: !O.title.isEmpty ? O.title : O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
-                                     cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab)
+                                     cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab, convId: O.convId)
             brief.model = O.model.isEmpty ? O.tool : O.model
             brief.effort = O.effort
             brief.ctx = O.ctx
@@ -2197,15 +2520,103 @@ final class RadarEngine {
                 changed = true
             }
         }
-        for sid in history.keys where !present.contains(sid) {
+        for sid in history.keys where !present.contains(sid) && history[sid]?.tool != "antigravity" {
             history.removeValue(forKey: sid)
             changed = true
         }
+        // Scan Antigravity conversations from its SQLite database and merge into the same list.
+        changed = scanAgyHistory(present: &present) || changed
         guard changed else { return }
         let items = history.values
             .filter { !$0.cwd.isEmpty && (!$0.title.isEmpty || !$0.lastPrompt.isEmpty) }
             .sorted { $0.mtime > $1.mtime }
         DispatchQueue.main.async { self.onHistory?(items) }
+    }
+
+    /// Reads Antigravity's conversation_summaries.db and upserts items into `history`.
+    /// Returns true when anything changed. `present` is updated with every agy id seen so stale ones are pruned.
+    private func scanAgyHistory(present: inout Set<String>) -> Bool {
+        let agyRoot = HOME + "/.gemini/antigravity-cli"
+        let dbPath = agyRoot + "/conversation_summaries.db"
+        guard let db = Self.agyOpen(dbPath) else { return false }
+        defer { sqlite3_close(db) }
+        var changed = false
+        // Fallback folder map from cache/last_conversations.json (folder -> conversation_id) when workspace_uris is empty.
+        var lastByConv: [String: String] = [:]
+        if let data = FileManager.default.contents(atPath: agyRoot + "/cache/last_conversations.json"),
+           let last = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for case let (dir, cid as String) in last { lastByConv[cid] = dir }
+        }
+        // Top-level CLI conversations only (nesting_depth = 0); skip the desktop-app's own UI conversations.
+        // Older CLIs' lists may not have app_data_dir, so fall back to nesting_depth = 0.
+        var rows: [(id: String, title: String, preview: String, mtime: Double, uriJson: String)] = []
+        for filter in ["nesting_depth = 0 AND IFNULL(app_data_dir, '') != 'antigravity'", "nesting_depth = 0"] {
+            var read = false
+            let sql = "SELECT conversation_id, title, preview, last_modified_time, last_user_input_time, workspace_uris " +
+                      "FROM conversation_summaries WHERE \(filter) ORDER BY last_modified_time DESC LIMIT 200"
+            Self.agyRows(db, sql) { col in
+                rows.append((col(0), col(1), col(2), parseISO(col(3)), col(5)))
+                return true
+            } done: { read = $0 }
+            if read { break }
+        }
+        for row in rows {
+            let id = row.id
+            guard !id.isEmpty else { continue }
+            present.insert(id)
+            // Parse cwd from workspace_uris: a JSON array of "file:///absolute/path" strings; fall back to last_conversations.json.
+            var cwd = ""
+            if let data = row.uriJson.data(using: .utf8),
+               let arr = try? JSONSerialization.jsonObject(with: data) as? [String],
+               let first = arr.first,
+               let url = URL(string: first), url.isFileURL {
+                cwd = url.path
+            } else if let dir = lastByConv[id] {
+                cwd = dir
+            }
+            guard !cwd.isEmpty else { continue }
+            cwd = URL(fileURLWithPath: cwd).standardizedFileURL.path
+            let tPath = "\(agyRoot)/brain/\(id)/.system_generated/logs/transcript.jsonl"
+            let tStat = fileStat(tPath) ?? fileStat("\(agyRoot)/conversations/\(id).db")
+            let size = Int(tStat?.size ?? 0)
+            let mtime = max(row.mtime, tStat?.mtime ?? 0)
+            // Only update when mtime or transcript size changed.
+            if let old = history[id], old.mtime == mtime, old.size == size { continue }
+            var item = history[id] ?? ChatItem(id: id, path: tPath, cwd: cwd, mtime: 0, size: 0, title: "", lastPrompt: "", tool: "antigravity")
+            item.path = tPath
+            item.mtime = mtime
+            item.size = size
+            item.cwd = cwd
+            item.title = clip(row.title, 90)
+            var lastPrompt = clip(row.preview, 160)
+            if let fh = FileHandle(forReadingAtPath: tPath), let tSize = tStat?.size, tSize > 0 {
+                defer { try? fh.close() }
+                let readBytes = Int(min(tSize, 65_536))
+                try? fh.seek(toOffset: tSize - UInt64(readBytes))
+                if let data = try? fh.read(upToCount: readBytes) {
+                    for line in data.split(separator: 10).reversed() {
+                        if let rec = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                           rec["type"] as? String == "USER_INPUT" {
+                            let q = Self.agyRequest(rec["content"] as? String ?? "")
+                            if !q.isEmpty {
+                                lastPrompt = clip(q, 160)
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+            item.lastPrompt = lastPrompt
+            item.tool = "antigravity"
+            history[id] = item
+            changed = true
+        }
+        // Remove stale agy items whose conversation was deleted from the DB.
+        for sid in history.keys where history[sid]?.tool == "antigravity" && !present.contains(sid) {
+            history.removeValue(forKey: sid)
+            changed = true
+        }
+        return changed
     }
 
     private func readTail(_ item: inout ChatItem) {

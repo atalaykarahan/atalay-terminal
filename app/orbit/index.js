@@ -142,7 +142,7 @@ const QUALITY = {
 // What the app reports through activity() and power(); a hidden page also stops on its own.
 const ACT = { visible: true, focused: true, saver: false, until: 0 };
 function wantDpr() {
-  const d = ACT.focused ? QUALITY.front.dpr : QUALITY.behind.dpr;
+  const d = !ACT.saver || ACT.focused ? QUALITY.front.dpr : QUALITY.behind.dpr;
   return Math.min(d, ACT.saver ? QUALITY.saver.dpr : d, window.devicePixelRatio || 1);
 }
 // Sharper at once; less sharp only once it has stayed that way a moment, so a menu or a click through a chat window
@@ -420,6 +420,7 @@ class Session {
     this.fly.t0 = now;
     this.fly.dur = 1400;
     this.warp = false;
+    poke(1600);
   }
 
   syncDrones(agents, now) {
@@ -1820,7 +1821,7 @@ function wake() {
   rafId = requestAnimationFrame(frame);
 }
 function targetFps(now) {
-  if (press || camAnim) return QUALITY.front.fps;
+  if (press || camAnim || !ACT.saver) return QUALITY.front.fps;
   const fps = ACT.focused || now < ACT.until ? QUALITY.front.fps : QUALITY.behind.fps;
   return ACT.saver ? Math.min(fps, QUALITY.saver.fps) : fps;
 }

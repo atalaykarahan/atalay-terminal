@@ -361,10 +361,17 @@ extension Proc {
     /// The AI tool `pid` is (its name in `otherAIs`), if it's one of them.
     static func otherAI(_ pid: Int32) -> String? {
         guard let name = name(pid) else { return nil }
-        if let tool = otherAIs[name] { return tool }
-        guard interpreters.contains(name) || name.hasPrefix("python"), let args = arguments(pid),
-              // The script, past the interpreter's options (`node --no-warnings …/bin/gemini`, `python -m aider`).
-              let script = args.dropFirst().first(where: { !$0.hasPrefix("-") }) else { return nil }
-        return otherAIs[((script as NSString).lastPathComponent as NSString).deletingPathExtension]
+        var found = otherAIs[name]
+        if found == nil {
+            guard interpreters.contains(name) || name.hasPrefix("python"), let args = arguments(pid),
+                  // The script, past the interpreter's options (`node --no-warnings …/bin/gemini`, `python -m aider`).
+                  let script = args.dropFirst().first(where: { !$0.hasPrefix("-") }) else { return nil }
+            found = otherAIs[((script as NSString).lastPathComponent as NSString).deletingPathExtension]
+        }
+        if found == "Antigravity", let args = arguments(pid),
+           args.contains(where: { $0 == "-p" || $0 == "--prompt" || $0 == "/usage" }) {
+            return nil
+        }
+        return found
     }
 }

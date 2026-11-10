@@ -405,8 +405,8 @@ enum TerminalFactory {
     /// without, it is a plain terminal (where Claude can be started or resumed by hand).
     nonisolated static func shellArgs(_ shell: String, cwd: String, claudeArgs: [String]?) -> [String] {
         guard let claudeArgs else { return ["-il"] }
-        let claude = (["claude"] + claudeArgs).map(shellQuote).joined(separator: " ")
-        return ["-ilc", "cd -- \(shellQuote(cwd)) && \(claude); exec \(shellQuote(shell)) -il"]
+        let cmd = (claudeArgs.first == "agy" ? claudeArgs : ["claude"] + claudeArgs).map(shellQuote).joined(separator: " ")
+        return ["-ilc", "cd -- \(shellQuote(cwd)) && \(cmd); exec \(shellQuote(shell)) -il"]
     }
 
     /// The theme's colours (ThemeStore): when a terminal is made, and again when the theme changes.
