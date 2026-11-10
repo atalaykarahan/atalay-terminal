@@ -45,12 +45,11 @@ function createThemes({ webDir, settings, onChange, onScale, ai }) {
   });
   let current = list.find((t) => t.id === chosenId());
 
-  // Every token on the page's root (above style.css's defaults), and the default theme's again on the orbit map: the
-  // tokens made from others are made there again from the default ones, its text colour is set again rather than
-  // inherited, and the page's background, which shows through it, is painted under it.
+  // Every token on the page's root (above style.css's defaults), and on the orbit map (#mapwrap):
+  // both use the active theme's tokens so the 3D space, planets, radar and background match the theme.
   const css = () => {
     const decl = (t) => Object.keys(t).sort().map((k) => `${k}:${t[k]};`).join('');
-    return `:root:root{${decl(tokens(current))}}#mapwrap#mapwrap{${decl(tokens(list[0]))}` +
+    return `:root:root{${decl(tokens(current))}}#mapwrap#mapwrap{${decl(tokens(current))}` +
       '--panel:rgba(var(--panel-rgb),var(--glass-a));--line:rgba(var(--accent-rgb),0.32);--line-soft:rgba(var(--accent-rgb),0.13);' +
       'color:var(--txt);background:linear-gradient(rgba(var(--bg-rgb),0.6),rgba(var(--bg-rgb),0.6)),' +
       'radial-gradient(ellipse at 50% 40%,var(--bloom) 0%,var(--bg) 70%) fixed}' +

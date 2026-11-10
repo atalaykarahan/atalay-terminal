@@ -16,6 +16,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
+const { fileURLToPath } = require('node:url');
 const { createLedger, agg: ledgerAgg, addCall: ledgerAdd } = require('./ledger');
 
 const HOME = os.homedir();
@@ -455,12 +456,14 @@ function agyConversation(db, cwd, root, since = 0) {
     const t = parseISO(r.last_modified_time);
     return !t || t >= since;
   };
+  let fallback = null;
   try {
     const last = JSON.parse(fs.readFileSync(path.join(root, 'cache', 'last_conversations.json'), 'utf8'));
     for (const [dir, id] of Object.entries(last && typeof last === 'object' ? last : {})) {
       if (typeof id !== 'string' || !samePath(dir)) continue;
       const r = db.prepare(`SELECT ${cols} FROM conversation_summaries WHERE conversation_id = ?`).get(id);
       if (r && touched(r)) return r;
+      if (r && !fallback) fallback = r;
     }
   } catch {}
   let rows = [];
@@ -476,9 +479,13 @@ function agyConversation(db, cwd, root, since = 0) {
     try {
       uris = JSON.parse(r.workspace_uris);
     } catch {}
-    if (Array.isArray(uris) && uris.some(same)) return touched(r) ? r : null;
+    if (Array.isArray(uris) && uris.some(same)) {
+      if (touched(r)) return r;
+      if (!fallback) fallback = r;
+      break;
+    }
   }
-  return null;
+  return fallback;
 }
 
 // A conversation's steps not over yet, from its own database (the transcript only gets a step once it's done): the
@@ -559,15 +566,22 @@ function agyTool(call, at) {
   const name = String(call.name || 'tool');
   const args = call.args || {};
   let what = name;
-  for (const k of AGY_LABEL_KEYS) {
-    const v = agyArg(args[k]);
-    if (v) {
-      what = v;
-      break;
+  if (name === 'ask_question') {
+    const qs = agyValue(args.questions);
+    const q = Array.isArray(qs) && qs[0] && typeof qs[0].question === 'string' ? qs[0].question : null;
+    if (q) what = q;
+  } else {
+    for (const k of AGY_LABEL_KEYS) {
+      const v = agyArg(args[k]);
+      if (v) {
+        what = v;
+        break;
+      }
     }
   }
   let n = name, c = 'plan';
   if (['run_command', 'read_terminal', 'send_command_input', 'command_status'].includes(name)) [n, c] = ['Bash', 'bash'];
+  else if (name === 'ask_question') [n, c] = ['AskUserQuestion', 'plan'];
   else if (name === 'search_web') [n, c] = ['WebSearch', 'web'];
   else if (name === 'read_url_content' || name === 'view_content_chunk') [n, c] = ['WebFetch', 'web'];
   else if (name.startsWith('browser_') || name.endsWith('_browser_url') || name.endsWith('_browser_page') || name === 'capture_browser_screenshot') [n, c] = ['Browser', 'browser'];
@@ -625,13 +639,36 @@ function agyLog(file, mtime, id) {
         const p = agyTool(call, ts);
         log.calls.push({ key: `agy:${id}:${idx}:${k}`, p, file: agyFile(call, p.c), ts });
       });
-    } else if (log.plan && !['USER_INPUT', 'SYSTEM_MESSAGE'].includes(j.type) && ['DONE', 'ERROR', 'CANCELED'].includes(j.status)) {
+    } else if (log.plan && !['USER_INPUT', 'SYSTEM_MESSAGE', 'EPHEMERAL_MESSAGE'].includes(j.type) && ['DONE', 'ERROR', 'CANCELED'].includes(j.status)) {
       // A tool's own step, right after the reply that called it.
       const k = (Number(j.step_index) || 0) - log.plan.idx - 1;
       if (k >= 0 && k < log.plan.calls.length) log.results.push({ key: `agy:${id}:${log.plan.idx}:${k}`, ok: j.status === 'DONE', ts, d: agyDuration(j.content) });
     }
   }
   return log;
+}
+
+function gitBranchOf(cwd) {
+  if (!cwd) return '';
+  let cur = path.resolve(cwd);
+  for (let i = 0; i < 8; i++) {
+    const dotGit = path.join(cur, '.git');
+    try {
+      const st = fs.statSync(dotGit);
+      let headFile = path.join(dotGit, 'HEAD');
+      if (st.isFile()) {
+        const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+        if (m) headFile = path.resolve(cur, m[1].trim(), 'HEAD');
+      }
+      const head = fs.readFileSync(headFile, 'utf8').trim();
+      const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(head);
+      return ref ? ref[1] : head.slice(0, 7);
+    } catch {}
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  return '';
 }
 
 // The newest unclaimed Codex log of the last week begun in `cwd` and written since `since` (ms). One live process owns
@@ -1424,6 +1461,7 @@ class RadarEngine {
   gitSources() {
     const out = new Set();
     for (const S of this.sessions.values()) if (S.cwd && (S.live || S.lastTs >= this.day0)) out.add(S.cwd);
+    for (const O of this.others.values()) if (O.cwd && (O.endedAt === 0 || O.lastTs >= this.day0)) out.add(O.cwd);
     for (const F of this.G.files.values()) if (F.w > 0 && path.isAbsolute(F.p)) out.add(path.dirname(F.p));
     return [...out];
   }
@@ -1437,6 +1475,10 @@ class RadarEngine {
     for (const S of this.sessions.values()) {
       if (!S.cwd || !(S.live || S.lastTs >= this.day0)) continue;
       out.push({ id: S.id, name: S.name || S.id.slice(0, 8), title: S.title || '', status: this.shownStatus(S, bySession.get(S.id) || [], now), live: !!S.live, cwd: S.cwd });
+    }
+    for (const O of this.others.values()) {
+      if (!O.cwd || !(O.endedAt === 0 || O.lastTs >= this.day0)) continue;
+      out.push({ id: O.id, name: O.tool, title: O.title || O.prompt || '', status: this.otherStatus(O, now).status, live: O.endedAt === 0, cwd: O.cwd });
     }
     return out;
   }
@@ -1459,6 +1501,7 @@ class RadarEngine {
       out.push({
         sessionId: S.id, pid: S.pid, cwd: S.cwd, status: this.shownStatus(S, bySession.get(S.id) || [], now),
         name: S.name || S.id.slice(0, 8), title: S.title || '', prompt: S.lastPrompt || '', waitingFor: S.waitingFor ?? null,
+        model: S.model || '', lastWorkTs: S.lastTs || 0,
         host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null,
       });
     }
@@ -1467,7 +1510,11 @@ class RadarEngine {
       if (O.endedAt > 0) continue;
       const { status, waiting } = this.otherStatus(O);
       out.push({
-        sessionId: O.id, pid: O.pid, cwd: O.cwd, status, waitingFor: waiting, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
+        sessionId: O.conversationId ? `agy:${O.conversationId}` : O.id,
+        rawSessionId: O.id,
+        conversationId: O.conversationId || null,
+        pid: O.pid, cwd: O.cwd, status, waitingFor: waiting, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
+        prompt: O.prompt || '', model: O.model || '', lastWorkTs: O.lastWorkTs || 0,
         host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
       });
     }
@@ -1476,6 +1523,9 @@ class RadarEngine {
 
   // Where a conversation started (its transcript's first record), the folder `claude --resume` must run in.
   sessionCwd(sessionId) {
+    if (!sessionId) return null;
+    const item = this.history.get(sessionId);
+    if (item && item.cwd) return item.cwd;
     if (!SID.test(String(sessionId || ''))) return null;
     if (this.firstCwd.has(sessionId)) return this.firstCwd.get(sessionId);
     const fp = this.transcriptPath(sessionId);
@@ -1540,6 +1590,7 @@ class RadarEngine {
       if (this.due('registry', w.registry ? 5000 : 1000)) this.pollRegistry();
       if (this.due('recent', w.projects ? 10_000 : 2000)) this.pumpRecent();
       if (this.due('scan', w.projects ? 60_000 : 10_000)) this.scanNew();
+      this.pollOthers();
       this.publishState();
     });
     this.every(3, () => this.pollProcesses());
@@ -1774,6 +1825,10 @@ class RadarEngine {
       this.pumpSoon(fp);
     });
     watch('registry', this.registry, {}, () => this.registryChanged());
+    const agyDir = path.join(HOME, '.gemini', 'antigravity-cli');
+    watch('antigravity_history', agyDir, {}, (_event, name) => {
+      if (name && String(name).includes('conversation_summaries.db')) this.historySoon();
+    });
   }
 
   registryChanged() {
@@ -1843,6 +1898,42 @@ class RadarEngine {
             if (!(await readChat(item))) continue;
             this.history.set(sid, item);
             changed = true;
+          }
+        }
+        const agyDbPath = path.join(HOME, '.gemini', 'antigravity-cli', 'conversation_summaries.db');
+        if (fs.existsSync(agyDbPath)) {
+          const db = agyOpen(agyDbPath);
+          if (db) {
+            try {
+              const rows = db.prepare('SELECT conversation_id, title, preview, last_modified_time, workspace_uris FROM conversation_summaries WHERE nesting_depth = 0 ORDER BY last_modified_time DESC LIMIT 250').all();
+              for (const r of rows) {
+                if (this.stopped) break;
+                if (!r.conversation_id) continue;
+                const sid = 'agy:' + r.conversation_id;
+                present.add(sid);
+                let cwd = '';
+                try {
+                  const uris = JSON.parse(r.workspace_uris || '[]');
+                  if (Array.isArray(uris) && uris.length > 0 && typeof uris[0] === 'string') {
+                    if (uris[0].startsWith('file://')) cwd = fileURLToPath(uris[0]);
+                    else cwd = uris[0];
+                  }
+                } catch {}
+                if (cwd) cwd = path.normalize(cwd);
+                const mtime = parseISO(r.last_modified_time) || 0;
+                const title = clip(redact(r.title || ''), 90);
+                const lastPrompt = clip(redact(r.preview || ''), 160);
+                const old = this.history.get(sid);
+                if (old && old.mtime === mtime && old.title === title && old.cwd === cwd) continue;
+                const item = { id: sid, agyId: r.conversation_id, path: '', cwd, mtime, size: 0, title, lastPrompt };
+                this.history.set(sid, item);
+                changed = true;
+              }
+            } catch (err) {
+              report(err);
+            } finally {
+              agyClose(db);
+            }
           }
         }
         for (const sid of this.history.keys()) {
@@ -2621,10 +2712,14 @@ class RadarEngine {
       if (busy !== O.busy || cwd !== O.cwd) {
         O.busy = busy;
         O.cwd = cwd;
+        if (cwd) O.branch = gitBranchOf(cwd);
         this.stateDirty = true;
+      } else if (cwd && !O.branch) {
+        O.branch = gitBranchOf(cwd);
       }
       // Since when it shows what it shows (your.call's clock), its records' turn included, not only its CPU.
       const shown = this.otherStatus(O, now).status;
+      if (shown === 'busy') O.lastWorkTs = now;
       if (shown !== O.shown) {
         O.shown = shown;
         O.statusSince = now;
@@ -2658,6 +2753,31 @@ class RadarEngine {
     this.publishState();
   }
 
+  // Real-time 1s poll for live Antigravity and Codex sessions between WMI process scans.
+  pollOthers() {
+    const now = Date.now();
+    for (const O of this.others.values()) {
+      if (O.endedAt > 0 || !O.cwd) continue;
+      if (O.tool === 'Antigravity') this.readAntigravity(O, O.cwd, now);
+      else if (O.tool === 'Codex') this.readCodexLog(O, O.cwd, O.firstTs, now);
+      if (now - (O.branchChecked || 0) >= 10_000) {
+        O.branchChecked = now;
+        const br = gitBranchOf(O.cwd);
+        if (br !== (O.branch || '')) {
+          O.branch = br;
+          this.stateDirty = true;
+        }
+      }
+      const shown = this.otherStatus(O, now).status;
+      if (shown === 'busy') O.lastWorkTs = now;
+      if (shown !== O.shown) {
+        O.shown = shown;
+        O.statusSince = now;
+        this.stateDirty = true;
+      }
+    }
+  }
+
   // Its status: ended, or what its records say (over is the user's turn, unless its subagents still work, as Claude's
   // background ones; a step waiting for the user's permission, its own or a subagent's, waits; without Antigravity's
   // steps to tell, a tool call that runs nothing and burns nothing for a few seconds does), else busy while it works the
@@ -2666,7 +2786,8 @@ class RadarEngine {
     if (O.endedAt > 0) return { status: 'ended', waiting: null };
     if (O.turnOpen != null && (O.waitsForUser || O.agentWaiting)) {
       const p = O.waitsForUser ? O.call && O.call.p : O.agentWaiting;
-      return { status: 'waiting', waiting: `approval: ${p ? p.l : 'a step'}` };
+      const prefix = O.waitsForUser && O.waitingKind === 'question' ? 'question' : 'approval';
+      return { status: 'waiting', waiting: `${prefix}: ${p ? p.l : 'a step'}` };
     }
     const command = this.otherCommand(O);
     // A rollout can mark its turn complete while a child command or delegated task is still working. Keep its planet
@@ -2871,7 +2992,20 @@ class RadarEngine {
         return;
       }
       const id = row.conversation_id;
+      O.conversationId = id;
       const open = /_(RUNNING|BUSY|CANCELING)$/.test(row.status || '');
+      if (open) {
+        O.lastTs = now;
+        O.lastWorkTs = now;
+      }
+      if (O.turnOpen === true && !open && O.turnStart > 0) {
+        const d = now - O.turnStart;
+        if (d > 0 && d < 2 * 3_600_000) {
+          O.turnMs = d;
+          this.G.turns += 1;
+          this.G.turnMs += d;
+        }
+      }
       if (O.turnOpen !== open || O.title !== row.title) {
         O.turnOpen = open;
         O.title = row.title || '';
@@ -2880,20 +3014,25 @@ class RadarEngine {
       this.readAgyTranscript(O, root, id, now);
       if (!open && O.plan) this.closeAgyCalls(O, id, O.plan, root, null);
       // What runs, or waits for the user, right now: its steps not over yet.
-      const was = `${O.call ? O.call.p.l : ''}|${O.waitsForUser}`;
+      const was = `${O.call ? O.call.p.l : ''}|${O.waitsForUser}|${O.waitingKind || ''}`;
       if (!open) {
         O.call = null;
         O.waitsForUser = false;
+        O.waitingKind = null;
       } else {
         const steps = agySteps(root, id);
         O.stepsKnown = !!steps;
         if (steps) {
-          O.waitsForUser = steps.waiting != null;
-          const p = O.plan ? agyCall(O.plan, steps.waiting ?? steps.open) : null;
+          const stepIdx = steps.waiting ?? steps.open;
+          const rawCall = O.plan && stepIdx != null ? agyPlanned(O.plan, stepIdx) : null;
+          const isQuestion = rawCall != null && rawCall.name === 'ask_question';
+          O.waitsForUser = steps.waiting != null || isQuestion;
+          O.waitingKind = isQuestion ? 'question' : steps.waiting != null ? 'approval' : null;
+          const p = O.plan ? agyCall(O.plan, stepIdx) : null;
           O.call = p ? { id: '', p } : null;
         }
       }
-      if (was !== `${O.call ? O.call.p.l : ''}|${O.waitsForUser}`) this.stateDirty = true;
+      if (was !== `${O.call ? O.call.p.l : ''}|${O.waitsForUser}|${O.waitingKind || ''}`) this.stateDirty = true;
       this.readAntigravityAgents(O, db, id, root, now);
     } finally {
       agyClose(db);
@@ -2944,11 +3083,15 @@ class RadarEngine {
       O.waitsForUser = step === 'WAITING';
       if (j.type === 'USER_INPUT') {
         O.turnStart = ts;
+        O.lastTs = Math.max(O.lastTs || 0, ts);
+        if (now - ts < 90_000) O.lastWorkTs = Math.max(O.lastWorkTs || 0, ts);
         O.prompt = clip(agyRequest(j.content), 200);
         this.otherText(O, `agy:${id}:${idx}:in`, 'prompt', agyRequest(j.content), ts);
         O.call = null;
         O.plan = null;
       } else if (j.type === 'PLANNER_RESPONSE') {
+        O.lastTs = Math.max(O.lastTs || 0, ts);
+        if (now - ts < 90_000) O.lastWorkTs = Math.max(O.lastWorkTs || 0, ts);
         if (j.input_tokens != null) O.ctx = (Number(j.input_tokens) || 0) + (Number(j.cache_read_tokens) || 0);
         this.otherTokens(O, `agy:${id}:${idx}:tok`, ts, Number(j.input_tokens) || 0, Number(j.output_tokens) || 0, Number(j.cache_read_tokens) || 0);
         if (typeof j.content === 'string') this.otherText(O, `agy:${id}:${idx}:say`, 'say', j.content, ts);
@@ -2960,7 +3103,7 @@ class RadarEngine {
           const p = agyTool(call, ts);
           this.otherTool(O, `agy:${id}:${idx}:${k}`, p, ts, agyFile(call, p.c));
         });
-      } else {
+      } else if (j.type !== 'EPHEMERAL_MESSAGE') {
         // A tool's own step: done, it no longer waits; still running or waiting, it does. Its call's result counts.
         if (['DONE', 'ERROR', 'CANCELED'].includes(step)) {
           O.call = null;
@@ -3309,10 +3452,10 @@ class RadarEngine {
       for (let k = k0 - 29; k <= k0; k++) spark.push(O.spark.get(k) || 0);
       const flags = O.ctxMax > 0 && O.ctx / O.ctxMax > 0.8 ? ['ctx 80%+'] : [];
       list.push({
-        id: O.id, name: O.tool, title: O.title || baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: '',
+        id: O.id, name: O.tool, title: O.title || baseName(O.cwd), lastPrompt: O.prompt || '', cwd: cwdLabel(O.cwd), branch: O.branch || '',
         tool: O.tool,
         model: O.model || O.tool, effort: O.effort || '', status, live, statusSince: live ? O.statusSince : O.endedAt,
-        cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: 0,
+        cpu: O.cpu, mem: 0, kind: '', entry: '', firstTs: O.firstTs, lastTs: O.lastTs, ctx: O.ctx || 0, ctxMax: O.ctxMax || 0, turnMs: O.turnMs || 0,
         tok: { ...O.tok }, cost: 0, tools: O.tools, errors: O.errors, web: O.web, prompts: O.prompts,
         byCat: O.byCat, pending: running ? [running] : [], spark, flags, agents, agentsRunning: nRun,
         waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
@@ -3360,6 +3503,10 @@ class RadarEngine {
     const promptTok = G.tokIn + G.tokCr + G.tokCw;
     let sessionsToday = 0, agentsToday = 0, agentCost = 0;
     for (const S of this.sessions.values()) if (S.lastTs >= this.day0 && (S.tools > 0 || S.prompts > 0)) sessionsToday++;
+    for (const O of this.others.values()) {
+      if (O.lastTs >= this.day0 && (O.tools > 0 || O.prompts > 0)) sessionsToday++;
+      if (O.agentLogs) for (const log of O.agentLogs.values()) if (log.lastTs >= this.day0 && log.tools > 0) agentsToday++;
+    }
     for (const A of this.agents.values()) {
       if (A.lastTs >= this.day0 && A.tools > 0) agentsToday++;
       agentCost += A.cost;
@@ -3473,6 +3620,7 @@ function createEngine(opts = {}) {
     live: () => e.live(),
     setOthers: (list) => e.setOthers(list),
     sessionCwd: (sessionId) => e.sessionCwd(sessionId),
+    historyItem: (sessionId) => e.history.get(sessionId) || null,
     dismiss: (sessionId, pid) => e.dismiss(sessionId, pid),
     transcriptItems: (sessionId, limit) => e.transcriptItems(sessionId, limit),
     spendHistory: (range) => e.spendHistory(range),

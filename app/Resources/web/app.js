@@ -23,6 +23,27 @@ const STATUS = {
 };
 // A session's colour: the orbit map's (HUES) and the theme's (--hue0…--hue9, sessCss).
 const HUES = ['#ffb057', '#00e5ff', '#9d6bff', '#3dffa8', '#ff5c8a', '#5b8cff', '#ffd23f', '#b8ff3d', '#e879f9', '#f5ebe0'];
+function syncThemeColors() {
+  const root = getComputedStyle(document.getElementById('mapwrap') || document.documentElement);
+  const v = (k, d) => root.getPropertyValue(k).trim() || d;
+  STATUS.busy.color = v('--accent', '#f88008');
+  STATUS.waiting.color = v('--warn', '#ff2e63');
+  STATUS.idle.color = v('--cyan', '#00e5ff');
+  STATUS.ended.color = v('--ended', '#5c4d40');
+  for (let i = 0; i < 10; i++) HUES[i] = v(`--hue${i}`, HUES[i]);
+  CAT.web.color = v('--sky', '#38bdf8');
+  CAT.browser.color = v('--blue', '#5b8cff');
+  CAT.read.color = v('--green', '#3dffa8');
+  CAT.search.color = v('--lime', '#b8ff3d');
+  CAT.edit.color = v('--amber', '#ffd23f');
+  CAT.bash.color = v('--orange', '#ff5c8a');
+  CAT.agent.color = v('--violet', '#9d6bff');
+  CAT.mcp.color = v('--magenta', '#e879f9');
+  CAT.plan.color = v('--lavender', '#a99bc4');
+}
+window.addEventListener('themechange', syncThemeColors);
+document.addEventListener('DOMContentLoaded', syncThemeColors);
+setTimeout(syncThemeColors, 100);
 const LOG_CAT = { prompt: ['you', '#ffffff'], say: ['claude', 'var(--txt2)'], sys: ['system', 'var(--amber)'], state: ['status', 'var(--accent-soft)'] };
 const FONT = '"SF Mono", Menlo, Monaco, Consolas, monospace';
 

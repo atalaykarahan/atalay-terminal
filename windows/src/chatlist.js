@@ -84,9 +84,10 @@ function createChatList({ settings }) {
     const known = new Set(items.map((i) => i.id));
     const all = items.slice();
     for (const b of live) {
-      if (!b.cwd || known.has(b.sessionId)) continue;
-      known.add(b.sessionId);
-      all.push({ id: b.sessionId, cwd: b.cwd, mtime: Infinity, size: 0, title: b.title || `new chat · ${b.name}`, lastPrompt: '' });
+      const liveKey = b.conversationId ? `agy:${b.conversationId}` : b.sessionId;
+      if (!b.cwd || known.has(liveKey) || known.has(b.sessionId)) continue;
+      known.add(liveKey);
+      all.push({ id: liveKey, cwd: b.cwd, mtime: Infinity, size: 0, title: b.title || `new chat · ${b.name}`, lastPrompt: '' });
     }
     return all.sort((a, b) => (a.mtime === b.mtime ? 0 : a.mtime > b.mtime ? -1 : 1));
   }
@@ -231,7 +232,12 @@ function createChatList({ settings }) {
 
     /** The page's list: the chats that aren't archived, each with its live status, and the folders' labels. */
     snapshot() {
-      const status = new Map(live.map((b) => [b.sessionId, b]));
+      const status = new Map();
+      for (const b of live) {
+        status.set(b.sessionId, b);
+        if (b.rawSessionId) status.set(b.rawSessionId, b);
+        if (b.conversationId) status.set(`agy:${b.conversationId}`, b);
+      }
       const rows = [];
       const shown = new Map(); // folder key -> its path as the newest chat there has it
       for (const i of everything()) {

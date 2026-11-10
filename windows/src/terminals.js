@@ -154,10 +154,15 @@ function createTerminals({ onData, onExit, host, extraPath }) {
      * and the shell stays when it exits; without, it's a plain terminal. `title` goes with it, for its window after a
      * restart. Known at once (`has`); its process a moment later.
      */
-    spawn({ id, cwd, claudeArgs, cols = 100, rows = 30, title }) {
+    spawn({ id, cwd, claudeArgs, agyArgs, cols = 100, rows = 30, title }) {
       const dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
-      const args = claudeArgs ? shell.run(['claude', ...claudeArgs].map((a, i) => (i ? quote(a) : a)).join(' ')) : shell.args;
-      const t = { cwd: dir, claude: !!claudeArgs, title, pid: null, startedAt: Date.now(), lastIO: Date.now(), pty: null };
+      let args = shell.args;
+      if (claudeArgs) {
+        args = shell.run(['claude', ...claudeArgs].map((a, i) => (i ? quote(a) : a)).join(' '));
+      } else if (agyArgs) {
+        args = shell.run(['agy', ...agyArgs].map((a, i) => (i ? quote(a) : a)).join(' '));
+      }
+      const t = { cwd: dir, claude: !!claudeArgs || !!agyArgs, title, pid: null, startedAt: Date.now(), lastIO: Date.now(), pty: null };
       all.set(id, t);
       return ready.then(async () => {
         if (!link) return spawnHere(id, t, args, cols, rows);

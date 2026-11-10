@@ -191,6 +191,7 @@ function createRunaways({ onChange, onRead, onPower }) {
   function startWindows() {
     const script = [
       '$ErrorActionPreference = "SilentlyContinue"',
+      '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
       '$me = (Get-Process -Id $PID).SessionId',
       `try { Add-Type -TypeDefinition @'\n${CWD_READER}\n'@ } catch {}`,
       '$pm = $null; try { $pm = [Windows.System.Power.PowerManager,Windows.System.Power,ContentType=WindowsRuntime] } catch {}',
@@ -207,7 +208,7 @@ function createRunaways({ onChange, onRead, onPower }) {
       // A parent gone, or a later process that took its number: an orphan.
       '    $orphan = (-not $born.ContainsKey($pp)) -or ($born[$pp] -gt $p.CreationDate)',
       '    $cwd = ""',
-      `    if ($want.ContainsKey($id) -or $p.Name -match '^claude(\\.exe)?$' -or ($orphan -and $p.Name -match '${SHELLS}')) { try { $cwd = [AtlCwd]::Of($id) } catch {} }`,
+      `    if ($want.ContainsKey($id) -or $p.Name -match '^(claude|agy|codex|gemini)(\\.exe)?$' -or ($orphan -and $p.Name -match '${SHELLS}')) { try { $cwd = [AtlCwd]::Of($id) } catch {} }`,
       '    $c = [string]$p.CommandLine; if ($c.Length -gt 400) { $c = $c.Substring(0, 400) }',
       '    $t = [DateTimeOffset]::new($p.CreationDate).ToUnixTimeMilliseconds()',
       // Whole milliseconds: a fraction would be written with the PC's own decimal sign.

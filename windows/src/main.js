@@ -181,6 +181,7 @@ const engine = createEngine({
   onState(json) {
     toDash(`state(${json})`);
     matchChats();
+    noteToolsAtWork();
     pushActiveSession();
     for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
     badge();
@@ -262,9 +263,16 @@ const toolsAt = new Map();
 function noteToolsAtWork() {
   const now = Date.now();
   for (const s of engine.live()) {
-    if (s.status !== 'busy') continue;
+    const active = s.status === 'busy' || (s.lastWorkTs > 0 && now - s.lastWorkTs < 90_000);
+    if (!active) continue;
+    const at = s.status === 'busy' ? now : s.lastWorkTs;
     const key = s.ai ? String(s.name || '').toLowerCase() : 'claude';
-    if (['claude', 'codex', 'gemini', 'antigravity'].includes(key)) toolsAt.set(key, now);
+    if (['claude', 'codex', 'gemini', 'antigravity'].includes(key)) {
+      toolsAt.set(key, Math.max(toolsAt.get(key) || 0, at));
+    }
+    if (/gemini/i.test(s.model || '')) {
+      toolsAt.set('gemini', Math.max(toolsAt.get('gemini') || 0, at));
+    }
   }
 }
 const toolsAtWork = () => [...toolsAt].filter(([, at]) => Date.now() - at < 90_000).map(([key]) => key).sort();
@@ -446,7 +454,11 @@ app.on('web-contents-created', (_e, contents) => {
   contents.on('will-navigate', (e, url) => {
     if (ownPage(url)) return;
     e.preventDefault();
-    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url);
+    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url).catch(() => {});
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url).catch(() => {});
+    return { action: 'deny' };
   });
 });
 
@@ -592,8 +604,11 @@ let winOpenJSON = '';
 function pushWinOpen(force) {
   if (!dashView) return;
   const map = {};
-  for (const c of chats.values()) {
-    if (c.sessionId && (c.steppedAside || (c.win && !c.win.isDestroyed() && c.win.isVisible()))) map[c.sessionId] = true;
+  const live = engine.live();
+  for (const [id, c] of chats) {
+    if (!(c.steppedAside || (c.win && !c.win.isDestroyed() && c.win.isVisible()))) continue;
+    if (c.sessionId) map[c.sessionId] = true;
+    for (const s of live) if (s.tab === id && s.sessionId) map[s.sessionId] = true;
   }
   const json = JSON.stringify(map);
   if (json === winOpenJSON && !force) return;
@@ -604,9 +619,12 @@ function pushWinOpen(force) {
 let chatsJSON = '', chatsVersion = -1;
 function pushChats(force) {
   if (!chatsView) return;
-  const live = chatlist.setLive(engine.live());
+  const liveList = engine.live();
+  const live = chatlist.setLive(liveList);
   // A chat with a window of the app, shown or not: "in a window".
-  const open = chatlist.setOpen([...chats.values()].map((c) => c.sessionId).filter(Boolean));
+  const openIds = new Set([...chats.values()].map((c) => c.sessionId).filter(Boolean));
+  for (const s of liveList) if (s.tab && chats.has(s.tab) && s.sessionId) openIds.add(s.sessionId);
+  const open = chatlist.setOpen([...openIds]);
   if (!force && !live && !open && chatlist.version() === chatsVersion) return;
   chatsVersion = chatlist.version();
   const json = JSON.stringify(chatlist.snapshot());
@@ -653,7 +671,7 @@ function handleChats(msg) {
       return true;
     }
     case 'copyId':
-      if (typeof msg.id === 'string' && msg.id) clipboard.writeText(msg.id);
+      if (typeof msg.id === 'string' && msg.id) clipboard.writeText(msg.id.replace(/^agy:/, ''));
       return true;
     case 'openFolder':
       return openFolder();
@@ -884,12 +902,14 @@ function stepAside(open) {
 
 function chatInfo(id, c) {
   const s = engine.live().find((x) => !x.ai && (x.tab === id || (c.sessionId && x.sessionId === c.sessionId)));
+  // Another AI tool running in it (Codex, Antigravity…): the page leaves it the keys it needs (terminal.js).
+  const tool = engine.live().find((x) => x.ai && (x.tab === id || (c.sessionId && (x.sessionId === c.sessionId || (x.conversationId && `agy:${x.conversationId}` === c.sessionId)))));
+  const active = s || tool;
   // A chat with no live Claude after its first seconds is a terminal: Claude exited, or never started (not installed).
   const starting = c.claude && Date.now() - c.startedAt < 15_000;
-  const status = !terminals.has(id) ? 'ended' : s ? s.status : starting ? 'busy' : 'terminal';
-  // Another AI tool running in it (Codex, Antigravity…): the page leaves it the keys it needs (terminal.js).
-  const tool = engine.live().find((x) => x.ai && x.tab === id);
-  return { title: (s && s.name) || c.title, status: status === 'shell' ? 'idle' : status, cwd: tildify(c.cwd), tool: tool ? tool.name : null };
+  const status = !terminals.has(id) ? 'ended' : active ? active.status : starting ? 'busy' : 'terminal';
+  const title = (s && s.name) || (tool && (tool.title || tool.name)) || c.title;
+  return { title, status: status === 'shell' ? 'idle' : status, cwd: tildify((active && active.cwd) || c.cwd), tool: tool ? tool.name : null };
 }
 
 const tildify = (p) => (p && p.startsWith(os.homedir()) ? '~' + p.slice(os.homedir().length) : p || '');
@@ -913,7 +933,7 @@ function matchChats() {
   }
   const taken = new Set([...chats.values()].map((c) => c.sessionId).filter(Boolean));
   for (const c of chats.values()) {
-    if (!c.claude || c.sessionId || !c.claudeArgs) continue;
+    if (!c.claude || c.sessionId || (!c.claudeArgs && !c.agyArgs)) continue;
     const s = live.find((x) => !x.ai && !taken.has(x.sessionId) && samePath(x.cwd, c.cwd));
     if (s) {
       c.sessionId = s.sessionId;
@@ -928,7 +948,7 @@ const samePath = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.
  * that outlived the app attaches to it instead (`claude`: whether it was started as a chat), hidden unless `show`.
  */
 let chatCascade = 0;
-function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!claudeArgs, sessionId, title, show = true }) {
+function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, agyArgs, claude = !!(claudeArgs || agyArgs), sessionId, title, show = true }) {
   const home = chatHome(), area = home.workArea;
   const cascade = (chatCascade++ % 6) * 28;
   const place = wholeOnDisplay({ x: area.x + 120 + cascade, y: area.y + 80 + cascade, width: 960, height: 640 }, home);
@@ -939,7 +959,7 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
     webPreferences: webPrefs(),
   });
   bootFor(win.webContents, { termFont: termFontSize() });
-  const c = { win, sessionId, cwd, claude, claudeArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
+  const c = { win, sessionId, cwd, claude, claudeArgs, agyArgs, title: title || path.basename(cwd || os.homedir()), startedAt: Date.now(), steppedAside: false };
   chats.set(id, c);
   win.on('focus', () => touchTerminal(id));
   win.loadFile(path.join(__dirname, '..', 'pages', 'terminal.html'));
@@ -1053,7 +1073,7 @@ function revealOutside(pid) {
 
 function openSession(sid, fork) {
   if (!sid) return false;
-  const live = engine.live().find((s) => s.sessionId === sid);
+  const live = engine.live().find((s) => s.sessionId === sid || s.rawSessionId === sid || (s.conversationId && `agy:${s.conversationId}` === sid));
   // Another AI tool (Codex…) has no conversation to resume or copy: a click shows the window it runs in, ours, or else
   // the terminal's outside the app (Windows Terminal, VS Code…), the first of its parents with a window.
   if (sid.startsWith('ai:')) {
@@ -1066,7 +1086,24 @@ function openSession(sid, fork) {
     // Running in one of the app's windows (a terminal Claude was started in, a chat back from the last launch): its
     // live process decides first, then the window that opened the conversation.
     if (live && live.tab && chats.has(live.tab) && terminals.has(live.tab)) return showChat(live.tab);
-    for (const [id, c] of chats) if (c.sessionId === sid && terminals.has(id)) return showChat(id);
+    for (const [id, c] of chats) if ((c.sessionId === sid || (sid.startsWith('agy:') && c.sessionId === sid.slice(4))) && terminals.has(id)) return showChat(id);
+  }
+  if (sid.startsWith('agy:')) {
+    const agyId = sid.slice(4);
+    if (!fork && live && !live.tab && live.pid) {
+      revealOutside(live.pid);
+      return true;
+    }
+    const cwd = engine.sessionCwd(sid) || (live && live.cwd);
+    if (!cwd || !fs.existsSync(cwd)) {
+      dialog.showMessageBox(dash || undefined, { type: 'warning', message: 'Project folder not found', detail: cwd || "Couldn't tell which folder this chat started in." });
+      return false;
+    }
+    const copy = fork || !!live;
+    const hist = engine.historyItem ? engine.historyItem(sid) : null;
+    const title = (copy ? '⑂ ' : '') + ((hist && hist.title) || (live && live.name) || agyId.slice(0, 8));
+    openChatWindow({ cwd, agyArgs: ['--conversation', agyId], sessionId: copy ? null : sid, title });
+    return true;
   }
   const cwd = engine.sessionCwd(sid) || (live && live.cwd);
   if (!cwd || !fs.existsSync(cwd)) {
@@ -1201,7 +1238,7 @@ ipcMain.on('term:ready', (e, { cols, rows }) => {
   if (terminals.has(id)) terminals.attach(id, cols, rows);
   else {
     terminals
-      .spawn({ id, cwd: c.cwd, claudeArgs: c.claudeArgs, cols, rows, title: c.title })
+      .spawn({ id, cwd: c.cwd, claudeArgs: c.claudeArgs, agyArgs: c.agyArgs, cols, rows, title: c.title })
       .catch((err) => send(c.win, 'term:data', `\r\n\x1b[31m${err.message}\x1b[0m\r\n`));
   }
   send(c.win, 'term:info', chatInfo(id, c));
@@ -1222,6 +1259,10 @@ ipcMain.on('term:resize', (e, { cols, rows }) => {
 ipcMain.on('term:end', (e) => {
   const found = chatOf(e);
   if (found) endTerminal(found[0]);
+});
+ipcMain.on('term:close', (e) => {
+  const found = chatOf(e);
+  if (found && found[1].win && !found[1].win.isDestroyed()) found[1].win.close();
 });
 ipcMain.on('term:copy', (e, text) => {
   if (chatOf(e) && typeof text === 'string' && text) clipboard.writeText(text);
@@ -1254,7 +1295,9 @@ ipcMain.on('term:openFile', (e, q) => {
 });
 ipcMain.on('term:open', (_e, uri) => {
   if (typeof uri !== 'string') return;
-  const clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
+  let clean = uri.trim().replace(/^['"<]+|['">.,;:!?)]+$/g, '');
+  if (/^www\./i.test(clean)) clean = 'https://' + clean;
+  else if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(clean)) clean = 'http://' + clean;
   if (/^https?:\/\//i.test(clean)) shell.openExternal(clean).catch(() => {});
 });
 
