@@ -323,6 +323,7 @@ window.Cloud = (() => {
           <section class="mn-page mn-profile" data-page="profile"></section>
           <section class="mn-page mn-settings" data-page="settings">
             ${window.Account ? '<div class="hk-h">ACCOUNT</div><div class="acct-host"></div>' : ''}
+            ${window.Profile ? '<div class="hk-h prof-h" hidden>PROFILE</div><div class="prof-host" hidden></div>' : ''}
             <div class="hk-h">HACKER NAME</div>
             <label class="hk-field"><span class="hk-prompt">$</span><input class="hk-input fit" maxlength="${MAX}" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="hacker name"><span class="hk-tag" title="Your tag: names can repeat, name + tag can't">${tagText(S.tag)}</span><span class="hk-count"></span></label>
             <p class="hk-status"></p>
@@ -381,6 +382,7 @@ window.Cloud = (() => {
     q('.hk-sw.act').onclick = toggleActivity;
     q('.hk-sw.brd').onclick = toggleBoard;
     window.Account?.mount(q('.acct-host'));
+    window.Profile?.mount(q('.prof-host'));
     const pwr = q('.hk-sw.pwr-auto');
     if (pwr) pwr.onclick = () => window.webkit.messageHandlers.radar.postMessage({ type: 'powerSaveAuto', on: !window.__powerSave?.auto });
     const dcOn = q('.hk-sw.dc-on'), dcProj = q('.hk-sw.dc-proj'), dcAct = q('.hk-sw.dc-act');
@@ -1042,6 +1044,7 @@ window.Cloud = (() => {
           `<small>${x.to ? `${Xp.num(x.to - x.xp)} XP to level ${x.level + 1}` : 'top level'} · ${Xp.num(x.xp)} XP</small>`
         : `<small>${S.reachable ? 'loading…' : "can't reach the server"}</small>`) +
       `<small class="me-acct">${A && A.signedIn ? `✓ signed in${A.github ? ` · GitHub ${esc(A.github)}` : ''}` : 'not signed in · badges need an account'}</small></div></div>` +
+      (A && A.signedIn && window.Profile ? window.Profile.links(A) : '') +
       (x
         ? `<div class="me-stats">${stat('TODAY', Xp.dur(x.today))}${stat('THIS WEEK', `${x.week}/${x.goal} days`)}` +
           `${stat('STREAK', `${x.streak} ${x.streak === 1 ? 'week' : 'weeks'}`)}${stat('TOTAL', Xp.hours(x.total))}</div>`
@@ -1088,6 +1091,8 @@ window.Cloud = (() => {
         `<div class="pf-rank"><small>${Social.dot(f.presence)} ${esc(Social.PRESENCE[f.presence || 'offline'].label)}</small>` +
         (f.nick ? `<b class="pf-nick">${esc(f.nick)}</b><em class="pf-real">${tagged(f)}</em>` : tagged(f)) +
         `<span>Level ${x.level} · ${esc(r.name)}</span></div></div>` +
+        // Their GitHub, Instagram, LinkedIn… once they added them (profile.js).
+        (window.Profile ? window.Profile.links(f) : '') +
         (x.total === null
           ? '<p class="pf-note">keeps their active time to themselves</p>'
           : `<div class="pf-stats">${stat('LAST 24H', x.last24 == null ? '—' : Xp.dur(x.last24))}${stat('THIS WEEK', `${x.week}/3 days`)}${stat('TOTAL', Xp.hours(x.total))}</div>` +
@@ -1505,6 +1510,7 @@ window.Cloud = (() => {
     setHTML(host.querySelector('.pf-host'),
       `<div class="pf-card" style="--rc:${r.color}"><div class="pf-head">${u.avatar ? `<img class="pf-pic" alt="" src="${esc(u.avatar)}">` : Xp.headband(u.level, 'pf-band')}` +
       `<div class="pf-rank"><small>#${u.pos} ${boardBy === 'friends' ? 'among friends' : 'on the leaderboard'}${u.me ? ' · you' : ''}</small>${tagged(u)}<span>Level ${u.level} · ${esc(r.name)}</span></div></div>` +
+      (window.Profile ? window.Profile.links(u) : '') +
       `<div class="pf-stats">${stat('LAST 24H', u.last24 == null ? '—' : Xp.dur(u.last24))}${stat('THIS WEEK', `+${Xp.num(u.week)} XP`)}${stat('ACTIVE', active === null ? '—' : Xp.dur(active))}${stat('TOTAL', `${Xp.num(u.xp)} XP`)}</div>` +
       (u.days ? `<div class="hk-h">LAST 7 DAYS</div>${Xp.week(u.days, r.color, u.daysEnd)}` : '<p class="pf-note">keeps their active time to themselves</p>') +
       (t ? `<div class="pf-theme"><span><label>THEME</label><b>${esc(t.name)}</b></span>${theirs}</div>` : '') +

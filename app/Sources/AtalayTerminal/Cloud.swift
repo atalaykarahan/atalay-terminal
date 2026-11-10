@@ -583,7 +583,7 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// checked on the path as the API reads it (decoded, any case, slashes squeezed), with no "." or ".." segment to
     /// walk it elsewhere, and a path that doesn't decode refused.
     static func pageMayCall(_ path: String) -> Bool {
-        let routes = ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/feedback"]
+        let routes = ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/me/profile", "v1/me/avatar", "v1/feedback"]
         let trees = ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap", "v1/account", "v1/auth",
                      "v1/settings", "v1/badges"]
         guard routes.contains(path) || trees.contains(where: { path == $0 || path.hasPrefix($0 + "/") || path.hasPrefix($0 + "?") }),
@@ -618,7 +618,8 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
                 replyHandler(cloud.json, nil)
             case "social":
                 // Only the friends, messages, notifications, feedback, Roadmap, account, sign-in and settings-sync
-                // endpoints; the page never reaches anything else with the token.
+                // endpoints, and the profile's links and picture (profile.js); the page never reaches anything else
+                // with the token.
                 let path = body["path"] as? String ?? ""
                 guard Self.pageMayCall(path) else {
                     replyHandler(["error": "bad_path"], nil)

@@ -26,7 +26,8 @@ const THEME = /^[a-z0-9-]{1,40}$/;
 
 // Only the friends, messages, notifications, feedback, Roadmap, account, sign-in, settings-sync and badges endpoints,
 // as the Mac's CloudBridge allows them; the pages never reach anything else with the token.
-const SOCIAL_ROUTES = ['v1/me/status', 'v1/me/activity', 'v1/me/leaderboard', 'v1/feedback'];
+// v1/me/profile and v1/me/avatar: Settings → PROFILE's links and picture (profile.js).
+const SOCIAL_ROUTES = ['v1/me/status', 'v1/me/activity', 'v1/me/leaderboard', 'v1/me/profile', 'v1/me/avatar', 'v1/feedback'];
 const SOCIAL_TREES = [
   'v1/social', 'v1/friends', 'v1/messages', 'v1/leaderboard', 'v1/notifications',
   'v1/roadmap', 'v1/account', 'v1/auth', 'v1/settings', 'v1/badges',

@@ -1,9 +1,10 @@
 import AppKit
 import WebKit
+import UniformTypeIdentifiers
 
 /// The animated radar page (Resources/web) in a WKWebView, fed by the engine through `window.__radar`.
 @MainActor
-final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
     var onMessage: (([String: Any]) -> Void)?
 
@@ -22,6 +23,7 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         ucc.addScriptMessageHandler(SaversBridge(), contentWorld: .page, name: "savers")
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         let dir = Self.webDirectory()
         webView.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
     }
@@ -127,6 +129,18 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         NSLog("dashboard page: web content process ended, reloading")
         webView.reload()
+    }
+
+    /// An `<input type=file>` on the page (Settings → PROFILE's new picture, profile.js): WebKit leaves the panel to the
+    /// app, Electron opens its own on Windows. Pictures only, one at a time.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.png, .jpeg, .webP, .gif]
+        guard let window = webView.window else { return completionHandler(panel.runModal() == .OK ? panel.urls : nil) }
+        panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.urls : nil) }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
