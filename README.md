@@ -55,6 +55,9 @@ Works with Claude Code, Codex and Antigravity; not affiliated with Anthropic, Op
   Windows version, and the PC is known by a salted hash of Windows' MachineGuid.
 - Messages are stored on the server so they reach your friends; they aren't end-to-end encrypted.
 - Settings can hide your active time from friends and your name on the leaderboard.
+- Discord presence (on unless Settings · DISCORD turns it off) tells the Discord app on your computer how many
+  sessions run and the AI tools at work, for your Discord profile, with your level; the project folders' names and
+  today's active time each have their own switch. Never prompts, code or file names.
 - No analytics or tracking libraries. Updates come from this project's GitHub releases; on the Mac they're signed and
   the app checks the signature before installing, on Windows (not code-signed yet) it checks each download against
   the checksum published with it.

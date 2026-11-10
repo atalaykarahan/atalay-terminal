@@ -76,6 +76,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         observeVisibility()
         PowerSaver.shared.onChange = { [weak self] in self?.pushPower() }
         PowerSaver.shared.start()
+        DiscordPresence.shared.onChange = { [weak self] in self?.pushDiscord() }
+        DiscordPresence.shared.start()
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: ThemeStore.changed, object: nil)
         let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -147,7 +149,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             preferred,
         ])
         radar.onMessage = { [weak self] in self?.handleRadar($0) }
-        Cloud.shared.onChange = { [weak self] _ in self?.pushCloud() }
+        Cloud.shared.onChange = { [weak self] _ in
+            self?.pushCloud()
+            DiscordPresence.shared.refresh()
+        }
         // Friends and messages: the dashboard (menu, badges) and both message panels hear every live event. Your own
         // XP changing (the daily bonus, a new level) also updates what Cloud knows, so the top bar shows it at once.
         Social.shared.onEvent = { [weak self] json in
@@ -212,6 +217,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             lastVisibility = ""
             dashboardVisibilityChanged()
             pushPower(force: true)
+            pushDiscord()
             pushCloud()
             terminalsJSON = ""
             pushTerminals()
@@ -219,6 +225,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Power save: the switch on the map, and Settings' "on by itself at low battery".
         case "powerSave": PowerSaver.shared.choose(msg["on"] as? Bool == true)
         case "powerSaveAuto": PowerSaver.shared.setAuto(msg["on"] as? Bool == true)
+        // Settings · DISCORD: what you're doing on your Discord profile, and the project's name in it.
+        case "discordPresence": DiscordPresence.shared.setEnabled(msg["on"] as? Bool == true)
+        case "discordProject": DiscordPresence.shared.setShowProject(msg["on"] as? Bool == true)
+        case "discordActive": DiscordPresence.shared.setShowActive(msg["on"] as? Bool == true)
         case "open": if let sid = msg["sid"] as? String { openSession(sid) }
         case "fork": if let sid = msg["sid"] as? String { openSession(sid, fork: true) }
         case "newTerminal": overlay.showNewTerminal()
@@ -335,6 +345,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             lastStatus[b.id] = b.status
         }
         WaitNotifier.shared.update(live)
+        DiscordPresence.shared.update(list)
         if sidebar.briefs != briefs { sidebar.briefs = briefs }
         let open = Set(chats.values.compactMap(\.sessionId))
         if sidebar.openInTabs != open { sidebar.openInTabs = open }
@@ -555,6 +566,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             radar.push("power", saver.on ? "true" : "false")
         }
         radar.push("powerSave", saver.json)
+    }
+
+    /// Settings · DISCORD shows its switches and whether Discord answers (DiscordPresence).
+    private func pushDiscord() {
+        radar.push("discord", DiscordPresence.shared.json)
     }
 
     // MARK: chats

@@ -1459,7 +1459,7 @@ class RadarEngine {
       out.push({
         sessionId: S.id, pid: S.pid, cwd: S.cwd, status: this.shownStatus(S, bySession.get(S.id) || [], now),
         name: S.name || S.id.slice(0, 8), title: S.title || '', prompt: S.lastPrompt || '', waitingFor: S.waitingFor ?? null,
-        host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null,
+        host: this.hostLabel(S), tab: typeof S.hostTab === 'string' ? S.hostTab : null, statusSince: S.statusSince || 0,
       });
     }
     // The other AI tools (`ai`: no conversation to resume, nor one a new chat window should take for its own).
@@ -1469,6 +1469,7 @@ class RadarEngine {
       out.push({
         sessionId: O.id, pid: O.pid, cwd: O.cwd, status, waitingFor: waiting, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
         host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
+        statusSince: O.statusSince || 0,
       });
     }
     return out;
