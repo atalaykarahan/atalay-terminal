@@ -11,8 +11,10 @@ window.Sfx = (() => {
   let ctx = null;
   let out = null;
   let idle = 0;
+  // When the last sound playing ends (ms): the context rests only after it.
+  let until = 0;
 
-  function audio(ms = 2500) {
+  function context() {
     if (!ctx) {
       ctx = new AudioContext();
       // A short echo gives the tones a little space without sounding like an alarm.
@@ -29,10 +31,16 @@ window.Sfx = (() => {
       delay.connect(feedback).connect(delay);
       delay.connect(wet).connect(ctx.destination);
     }
+    return ctx;
+  }
+
+  function audio(ms = 2500) {
+    context();
     if (ctx.state === 'suspended') ctx.resume();
-    // A running context keeps a real-time audio thread busy; rest it between sounds.
+    // A running context keeps a real-time audio thread busy; rest it between sounds, once the last one has ended.
+    until = Math.max(until, Date.now() + ms);
     clearTimeout(idle);
-    idle = setTimeout(() => ctx.state === 'running' && ctx.suspend(), ms);
+    idle = setTimeout(() => ctx.state === 'running' && ctx.suspend(), until - Date.now());
     return ctx;
   }
 
@@ -383,36 +391,64 @@ window.Sfx = (() => {
   }
 
   // Recorded sounds (sounds/*.m4a), and where in each its moment is (s): the impact's burst, the shine's ring (the
-  // badge's reveal lines them up on the moment the badge shows), a badge put on display landing.
+  // badge's reveal lines them up on the moment the badge shows), a badge put on display landing. They play through the
+  // audio context, from sounds.js (the files in base64, loaded on first use), never through an <audio> element: macOS
+  // takes one that played for music (Now Playing), and the keyboard's play key then played the badge's sound again.
   const SAMPLES = { 'badge-impact': 1.62, 'badge-shine': 1.07, 'badge-equip': 0.36 };
-  const loaded = new Map();
-  // The theme's own recording when it has one (hooks.js), its moment at the same point in it as the app's.
-  function sample(name) {
-    const own = Hooks.soundOf(name);
-    const src = own && own !== 'none' ? own : `sounds/${name}.m4a`;
-    let a = loaded.get(src);
-    if (!a) {
-      a = new Audio(src);
-      a.preload = 'auto';
-      loaded.set(src, a);
+  const decoded = new Map();
+  let sounds = null;
+  const soundsJs = () =>
+    window.__SOUNDS ? Promise.resolve() : (sounds = sounds || new Promise((ok) => {
+      const s = document.createElement('script');
+      s.src = 'sounds.js';
+      s.onload = s.onerror = () => ok();
+      document.head.append(s);
+    }));
+  function buffer(name) {
+    if (!decoded.has(name)) {
+      decoded.set(name, soundsJs().then(() => {
+        const b64 = window.__SOUNDS && window.__SOUNDS[name];
+        if (!b64) return null;
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        return context().decodeAudioData(bytes.buffer);
+      }).catch(() => null));
     }
-    return a;
+    return decoded.get(name);
+  }
+  // A theme's own recording (hooks.js) is a file a page can't read: an <audio> element plays it, and lets go of it once
+  // it's over, so it doesn't stay the computer's Now Playing.
+  function playFile(src, vol, from) {
+    try {
+      const a = new Audio(src);
+      a.volume = vol;
+      a.currentTime = from;
+      a.onended = () => { a.removeAttribute('src'); a.load(); };
+      a.play().catch(() => {});
+    } catch {}
   }
 
   return {
     /** Loads a recorded sound ahead, so it starts on time. */
-    preload: (name) => void sample(name).load(),
+    preload: (name) => void buffer(name),
     /** Where in the recorded sound its moment is, in ms. */
     hit: (name) => Math.round(1000 * (SAMPLES[name] || 0)),
     /** Plays a recorded sound from the start, or from `from` s in (yours: do not disturb doesn't silence it). */
     sample(name, vol = 1, from = 0) {
-      if (Hooks.soundOf(name) === 'none') return;
-      const a = sample(name);
-      try {
-        a.currentTime = from;
-        a.volume = vol;
-        a.play().catch(() => {});
-      } catch {}
+      const own = Hooks.soundOf(name);
+      if (own === 'none') return;
+      // The theme's own recording, its moment at the same point in it as the app's.
+      if (own) return playFile(own, vol, from);
+      buffer(name).then((buf) => {
+        if (!buf) return;
+        const c = audio(Math.ceil((buf.duration - from) * 1000) + 300);
+        const src = c.createBufferSource(), g = c.createGain();
+        src.buffer = buf;
+        g.gain.value = vol;
+        src.connect(g).connect(c.destination);
+        const start = () => src.start(0, Math.min(from, buf.duration));
+        if (c.state === 'running') start();
+        else c.resume().then(start).catch(() => {});
+      });
     },
     play(name) {
       const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom', 'theme-kept'].includes(name);

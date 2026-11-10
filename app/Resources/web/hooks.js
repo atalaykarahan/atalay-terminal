@@ -85,7 +85,10 @@ window.Hooks = (() => {
     if (!file) return false;
     if (file !== 'none') {
       try {
-        new Audio(file).play().catch(() => {});
+        // Let go of it once it's over, so it doesn't stay the computer's Now Playing (sfx.js).
+        const a = new Audio(file);
+        a.onended = () => { a.removeAttribute('src'); a.load(); };
+        a.play().catch(() => {});
       } catch {}
     }
     return true;
