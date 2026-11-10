@@ -366,6 +366,12 @@ window.Sfx = (() => {
     },
   };
 
+  // A sound that is another's unless the theme gives it one of its own (hooks.js): two chats writing the same file sound
+  // as a chat that needs you.
+  const SAME = { clash: 'wait' };
+  // Moments the app marks without a sound of its own (hooks.js): only a theme's file plays for them.
+  const THEMED = ['streak', 'streak-break', 'back', 'theme-kept'];
+
   let warned = false;
   function warnIfSilent() {
     if (warned || !ctx || ctx.state === 'running') return;
@@ -380,12 +386,15 @@ window.Sfx = (() => {
   // badge's reveal lines them up on the moment the badge shows), a badge put on display landing.
   const SAMPLES = { 'badge-impact': 1.62, 'badge-shine': 1.07, 'badge-equip': 0.36 };
   const loaded = new Map();
+  // The theme's own recording when it has one (hooks.js), its moment at the same point in it as the app's.
   function sample(name) {
-    let a = loaded.get(name);
+    const own = Hooks.soundOf(name);
+    const src = own && own !== 'none' ? own : `sounds/${name}.m4a`;
+    let a = loaded.get(src);
     if (!a) {
-      a = new Audio(`sounds/${name}.m4a`);
+      a = new Audio(src);
       a.preload = 'auto';
-      loaded.set(name, a);
+      loaded.set(src, a);
     }
     return a;
   }
@@ -397,6 +406,7 @@ window.Sfx = (() => {
     hit: (name) => Math.round(1000 * (SAMPLES[name] || 0)),
     /** Plays a recorded sound from the start, or from `from` s in (yours: do not disturb doesn't silence it). */
     sample(name, vol = 1, from = 0) {
+      if (Hooks.soundOf(name) === 'none') return;
       const a = sample(name);
       try {
         a.currentTime = from;
@@ -405,11 +415,14 @@ window.Sfx = (() => {
       } catch {}
     },
     play(name) {
-      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom'].includes(name);
-      if (!SOUNDS[name] || (window.Social && window.Social.dnd() && !yours)) return;
+      const yours = ['send', 'accept', 'decline', 'levelup', 'rankup', 'glitch', 'fire', 'hit', 'boom', 'theme-kept'].includes(name);
+      const base = SOUNDS[name] ? name : SAME[name];
+      if ((!base && !THEMED.includes(name)) || (window.Social && window.Social.dnd() && !yours)) return;
+      // The theme's own sound, or its silence, instead of the app's (a theme-only one has nothing else).
+      if (Hooks.sound(name) || !base || (base !== name && Hooks.sound(base))) return;
       try {
-        audio(LENGTH[name] || 2500);
-        SOUNDS[name]();
+        audio(LENGTH[base] || 2500);
+        SOUNDS[base]();
         setTimeout(warnIfSilent, 600);
       } catch {}
     },

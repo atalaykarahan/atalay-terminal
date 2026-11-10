@@ -14,9 +14,15 @@
       brightBlack: a(8), brightRed: a(9), brightGreen: a(10), brightYellow: a(11), brightBlue: a(12), brightMagenta: a(13), brightCyan: a(14), brightWhite: a(15),
     };
   };
+  // The cursor: the theme's when it asks for one (--cursor-style block, bar or underline; --cursor-blink 1 or 0), else a
+  // blinking block.
+  const cursor = () => ({
+    cursorStyle: ['block', 'bar', 'underline'].find((s) => s === token('--cursor-style')) || 'block',
+    cursorBlink: token('--cursor-blink') !== '0',
+  });
   const term = new Terminal({
     fontFamily: '"MesloLGS NF", "CaskaydiaCove Nerd Font", "Cascadia Mono", Consolas, monospace',
-    fontSize: window.__termFont || 14, lineHeight: 1.1, cursorBlink: true, scrollback: 10000, allowProposedApi: true,
+    fontSize: window.__termFont || 14, lineHeight: 1.1, ...cursor(), scrollback: 10000, allowProposedApi: true,
     // Text never fades into its background (Claude's diffs paint lines green and red), as the Mac app's terminals do.
     minimumContrastRatio: 4.5, theme: palette(),
   });
@@ -104,7 +110,7 @@
     term.focus();
   });
   document.addEventListener('visibilitychange', () => !document.hidden && refit());
-  addEventListener('themechange', () => (term.options.theme = palette()));
+  addEventListener('themechange', () => Object.assign(term.options, { theme: palette(), ...cursor() }));
   // The terminals' text size changed (View's zoom with a terminal in front, or Settings sync): the grid follows.
   atl.on('term:font', (n) => {
     if (!(n >= 9 && n <= 24) || term.options.fontSize === n) return;

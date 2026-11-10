@@ -351,13 +351,17 @@ window.Messages = (() => {
     if (!NOTICES || !c || !c.key || clashShut.has(c.key)) return;
     clashes.delete(c.key);
     clashes.set(c.key, c);
-    Sfx.play('wait');
+    Hooks.set('sameFile', clashes.size);
+    Hooks.pulse('clash', { value: c.file, path: c.path, chats: c.chats });
+    Sfx.play('clash');
     showClash();
   }
 
   function clashOver(key) {
     clashShut.delete(key);
-    if (!NOTICES || !clashes.delete(key) || !peek || peek.kind !== 'clash') return;
+    if (!NOTICES || !clashes.delete(key)) return;
+    Hooks.set('sameFile', clashes.size);
+    if (!peek || peek.kind !== 'clash') return;
     if (clashes.size) showClash();
     else hidePeek();
   }
@@ -365,6 +369,7 @@ window.Messages = (() => {
   function shutClashes() {
     for (const k of clashes.keys()) clashShut.add(k);
     clashes.clear();
+    Hooks.set('sameFile', 0);
   }
 
   // ======================= your progress =======================
@@ -399,6 +404,8 @@ window.Messages = (() => {
     if (!NOTICES) return;
     const x = ev.xp;
     if (x && x.level) {
+      Hooks.set('level', x.level);
+      Hooks.set('rank', Xp.rank(x.level).name);
       if (seenLevel && x.level > seenLevel) {
         const from = pending ? pending.from : seenLevel;
         pending = { level: x.level, from, rankUp: Xp.rank(x.level).name !== Xp.rank(from).name };
@@ -464,6 +471,8 @@ window.Messages = (() => {
     if (pending) {
       const c = pending;
       pending = null;
+      // A theme may play its own (hooks.js): cancelled, the takeover stays out and the badges come next.
+      if (!Hooks.pulse('levelup', { value: c.level, from: c.from, rankUp: c.rankUp }, { cancelable: true })) return play();
       takeover = showTakeover(c);
     } else {
       revealNext(false);
@@ -646,6 +655,7 @@ window.Messages = (() => {
       (tier ? `<div class="rv-tier">${esc(tier)}</div>` : '') +
       (c.quiet ? '<div class="rv-note">from what you\'ve done so far · right click one in your profile to display it</div>' : '') +
       `</div><div class="tk-hint">${c.n < c.of ? 'press any key for the next one' : 'press any key to continue'}</div>`;
+    Hooks.pulse('badge-reveal', { value: main.id, tier: main.tier, n: c.n, of: c.of });
     // Straight on from the one before: under it, already dark, while it fades away on top.
     const prev = c.cont && takeover && takeover.el.isConnected ? takeover.el : null;
     if (prev) document.body.insertBefore(el, prev);

@@ -118,6 +118,7 @@ function handleInit(d) {
       marqueePush(ev);
     }
     map('seed', d.log);
+    setStreak({ n: Hooks.logic.streakOf(STATE.ticker) });
     flushMarquee(true);
     renderAll();
     $('boot').classList.add('gone');
@@ -185,7 +186,7 @@ function setDiscord(s) {
 // The top bar is every AI's, whichever chat is in front: the Windows app still reports that chat, and nothing here
 // follows it.
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, discord: setDiscord, activeSession: () => {}, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => map('idle', s), openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, discord: setDiscord, activeSession: () => {}, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => { map('idle', s); setIdle(Number(s)); }, openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
 }
 
@@ -199,6 +200,7 @@ function onEvent(ev) {
       break;
     case 'result':
       logResult(ev);
+      setStreak(Hooks.logic.streak(streak, !!ev.ok));
       break;
     case 'say':
     case 'sys':
@@ -217,9 +219,11 @@ function transitions(next) {
       if (s.status === 'waiting') {
         flashEdge();
         ping('waiting');
+        Hooks.pulse('session-status', { value: s.status, sid: s.id });
         logState(s, `⚠ needs you · ${s.waitingFor || 'waiting'}`, 'err');
       } else if (s.status === 'idle') {
         ping('idle');
+        Hooks.pulse('session-status', { value: s.status, sid: s.id });
         logState(s, '◆ turn finished · your move', 'state');
       } else if (s.status === 'ended') {
         logState(s, 'session ended', 'state');
@@ -240,7 +244,7 @@ let audio = null;
 // The audio context is suspended between pings: a running one keeps a real-time audio thread busy.
 let audioIdle = 0;
 function ping(kind) {
-  if (!soundOn) return;
+  if (!soundOn || Hooks.sound('ping-' + kind)) return;
   try {
     audio = audio || new AudioContext();
     if (audio.state === 'suspended') audio.resume();
@@ -284,6 +288,33 @@ window.__sound = {
     paintSound();
   },
 };
+
+// ---------- theme hooks (hooks.js) ----------
+// The run of good tool results (data-streak), with a moment at each mark and when a run of 3 or more ends; and how long
+// the computer has had no input, in steps (data-idle), with a moment on the return.
+let streak = 0;
+function setStreak({ n, mark = 0, broke = 0 }) {
+  streak = n;
+  Hooks.set('streak', n);
+  if (mark) {
+    Hooks.pulse('streak-milestone', { value: mark }, { ms: 3000 });
+    window.Sfx?.play('streak');
+  }
+  if (broke) {
+    Hooks.pulse('streak-break', { value: broke });
+    window.Sfx?.play('streak-break');
+  }
+}
+let idleFor = '';
+function setIdle(seconds) {
+  const { level, back } = Hooks.logic.idleStep(idleFor, seconds);
+  idleFor = level;
+  if (back) {
+    Hooks.pulse('back', { value: back });
+    window.Sfx?.play('back');
+  }
+  Hooks.set('idle', level || null);
+}
 
 // ---------- small UI bits ----------
 function flashEdge() {
@@ -483,6 +514,8 @@ function renderAll() {
   if (shown('p-spend')) renderSpend();
   renderCall();
   renderTicker();
+  Hooks.set('waiting', STATE.sessions.filter((s) => s.status === 'waiting').length);
+  Hooks.set('working', STATE.sessions.filter((s) => s.status === 'busy').length);
   map('state', STATE);
   const T = STATE.totals;
   const lc = clearedOf('p-log');
@@ -735,10 +768,15 @@ function tellClashes() {
   const now = new Map();
   for (const { f, sids } of clashFiles()) now.set(f.p, { key: f.p, file: f.short, path: f.p, chats: sids.map(sessName) });
   if (clashSeen) {
-    for (const [k, c] of now) if (!clashSeen.has(k)) native({ type: 'clash', ...c });
+    for (const [k, c] of now) {
+      if (clashSeen.has(k)) continue;
+      native({ type: 'clash', ...c });
+      Hooks.pulse('clash', { value: c.file, path: c.path, chats: c.chats });
+    }
     for (const k of clashSeen.keys()) if (!now.has(k)) native({ type: 'clashOver', key: k });
   }
   clashSeen = now;
+  Hooks.set('sameFile', now.size);
 }
 
 function renderSessions() {

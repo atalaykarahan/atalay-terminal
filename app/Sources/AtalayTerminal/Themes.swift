@@ -75,10 +75,10 @@ final class ThemeStore: ObservableObject {
 
     /// Every page takes the style sheet again (and keeps it for its next load).
     private func repaint() {
-        let css = Self.jsString(self.css)
+        let css = Self.jsString(self.css), id = Self.jsString(current.id)
         for page in pages.allObjects {
             Self.install(script, in: page.configuration.userContentController)
-            page.evaluateJavaScript("window.__theme && window.__theme(\(css)); true", completionHandler: nil)
+            page.evaluateJavaScript("window.__theme && window.__theme(\(css), \(id)); true", completionHandler: nil)
         }
     }
 
@@ -169,15 +169,27 @@ final class ThemeStore: ObservableObject {
             + (current.glow == true ? "body{text-shadow:0 0 1px rgba(255,255,255,0.3),0 0 5px currentColor,0 0 12px rgba(var(--accent-rgb),0.5)}" : "")
             // A font picked in Settings is the text font too, where the monospace leaves names to a sans (style.css --font-sans).
             + (Self.uiFonts.first { $0.id == uiFont }?.css.map { ":root:root{--font:\($0);--font-sans:\($0)}" } ?? "")
+            // Named by every ::before and ::after, for `__theme` to make WebKit resolve them again (below).
+            + "html.theme-swap *::before,html.theme-swap *::after{--theme-swap:1}"
     }
 
+    /// `__theme(css, id)` puts another theme on the page. WebKit keeps a ::before or ::after under `@container style()`
+    /// as the theme before drew it (a theme's decorations stayed on screen): a class all their rules name, on for one
+    /// forced layout, makes it resolve them again. `themechange` carries the theme's id.
     private var script: WKUserScript {
         let source = """
         \(Self.marker)(() => {
           const s = document.createElement('style');
           s.textContent = \(Self.jsString(css));
           document.documentElement.appendChild(s);
-          window.__theme = (css) => { s.textContent = css; window.dispatchEvent(new Event('themechange')); };
+          window.__theme = (css, id) => {
+            s.textContent = css;
+            const h = document.documentElement;
+            h.classList.add('theme-swap');
+            void h.offsetHeight;
+            h.classList.remove('theme-swap');
+            window.dispatchEvent(new CustomEvent('themechange', { detail: { id } }));
+          };
         })();
         """
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)

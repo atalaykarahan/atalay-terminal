@@ -73,7 +73,9 @@ Works with Claude Code, Codex and Antigravity; not affiliated with Anthropic, Op
   `app/Resources/web` (their licences are kept with them).
 - Themes: `app/Resources/web/themes/themes.json` holds each theme's terminal palette and accent, and
   `app/Sources/AtalayTerminal/Themes.swift` makes every colour of the app from them: the page's CSS variables
-  (`style.css`), the terminals' and the native views'. The orbit map keeps the default theme's colours.
+  (`style.css`), the terminals' and the native views'. The orbit map keeps the default theme's colours. A theme can
+  also follow what the app is doing in its own CSS, and bring its own sounds and terminal cursor
+  ([docs/theme-hooks.md](docs/theme-hooks.md)).
 - The server behind friends, messages and levels (Fastify and Postgres) is hosted and isn't part of this repository.
 
 ## Build from source

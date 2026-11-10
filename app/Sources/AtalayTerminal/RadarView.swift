@@ -10,6 +10,8 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, W
 
     override init() {
         let config = WKWebViewConfiguration()
+        // A theme's sounds (web/hooks.js) play without a click on the page first, as the message panels' do.
+        config.mediaTypesRequiringUserActionForPlayback = []
         let ucc = WKUserContentController()
         ucc.addUserScript(WKUserScript(source: Self.terminalLook, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = ucc
