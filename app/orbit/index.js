@@ -139,8 +139,9 @@ const QUALITY = {
   behind: { fps: 20, dpr: 1.25 },
   saver: { fps: 30, dpr: 1.5 },
 };
-// What the app reports through activity() and power(); a hidden page also stops on its own.
-const ACT = { visible: true, focused: true, saver: false, until: 0 };
+// What the app reports through activity() and power(); a hidden page also stops on its own, and so does a map whose box
+// is gone (shown: Source Control, Settings and the other full views put #mapwrap out of the layout).
+const ACT = { visible: true, focused: true, saver: false, until: 0, shown: true };
 function wantDpr() {
   const d = !ACT.saver || ACT.focused ? QUALITY.front.dpr : QUALITY.behind.dpr;
   return Math.min(d, ACT.saver ? QUALITY.saver.dpr : d, window.devicePixelRatio || 1);
@@ -160,6 +161,7 @@ const CAM = { right: new THREE.Vector3(), up: new THREE.Vector3(), fwd: new THRE
 let viewReady = false;
 
 function resize() {
+  if (!ACT.shown) return; // sized again once it's back in the layout
   const w = Math.max(200, host.clientWidth), h = Math.max(160, host.clientHeight), dpr = wantDpr();
   if (w === SIZE.w && h === SIZE.h && dpr === SIZE.dpr) return;
   SIZE.w = w;
@@ -180,7 +182,13 @@ function resize() {
     intro();
   }
 }
-new ResizeObserver(resize).observe(host);
+new ResizeObserver(() => {
+  // Out of the layout: no frames until it's back, at the size it had (no render targets reallocated twice).
+  ACT.shown = host.clientWidth > 0 && host.clientHeight > 0;
+  if (!ACT.shown) return;
+  resize();
+  wake();
+}).observe(host);
 
 function fitDistance() {
   const vf = THREE.MathUtils.degToRad(camera.fov / 2);
@@ -1822,7 +1830,7 @@ function poke(ms = 1500) {
   wake();
 }
 function wake() {
-  if (rafId || !ACT.visible || document.hidden) return;
+  if (rafId || !ACT.visible || !ACT.shown || document.hidden) return;
   lastFrame = performance.now();
   rafId = requestAnimationFrame(frame);
 }
@@ -1834,7 +1842,7 @@ function targetFps(now) {
 document.addEventListener('visibilitychange', wake);
 function frame(now) {
   rafId = 0;
-  if (!ACT.visible || document.hidden) return;
+  if (!ACT.visible || !ACT.shown || document.hidden) return;
   rafId = requestAnimationFrame(frame);
   if (now - lastFrame < 1000 / targetFps(now) - 2) return;
   const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
