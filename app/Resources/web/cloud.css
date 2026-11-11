@@ -37,6 +37,7 @@
 
 .hk-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; border-bottom: 1px solid rgba(var(--glow), 0.1); }
 .hk-row:last-child { border-bottom: 0; }
+.ts-row[hidden] { display: none; }
 .hk-row > span { color: var(--dim); }
 .hk-val { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .hk-val b { color: var(--hi); font-weight: 400; white-space: nowrap; }

@@ -341,7 +341,9 @@ window.Cloud = (() => {
             <div class="hk-row ts-row"><span>rtk · shorter command output for Claude Code, Codex and Antigravity<small class="ts-note" data-which="rtk">…</small></span>
               <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
             <div class="hk-row ts-row"><span>caveman · short answers from Claude Code, Codex and Antigravity<small class="ts-note" data-which="caveman">…</small></span>
-              <button type="button" class="hk-sw ts" data-which="caveman" role="switch" aria-checked="false" title="Turn caveman on or off"><i></i></button></div>` : ''}
+              <button type="button" class="hk-sw ts" data-which="caveman" role="switch" aria-checked="false" title="Turn caveman on or off"><i></i></button></div>
+            <div class="hk-row ts-row" hidden><span>agent token rules · fewer, shorter model calls when Claude Code, Codex and Antigravity work as a team<small class="ts-note" data-which="agentRules">…</small></span>
+              <button type="button" class="hk-sw ts" data-which="agentRules" role="switch" aria-checked="false" title="Turn agent token rules on or off"><i></i></button></div>` : ''}
             ${ARCHIVE() ? `<div class="hk-h">CHATS</div>
             <div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
               <button type="button" class="arc-btn arc-open">manage</button></div>` : ''}
@@ -601,22 +603,25 @@ window.Cloud = (() => {
 
   // ---------- the token savers ----------
   // rtk and caveman, which the app ships and turns on for Claude Code, Codex and Antigravity (TokenSavers.swift / savers.js):
-  // a switch each, and what rtk saved. One the user set up themselves switches the same way.
+  // a switch each, and what rtk saved. One the user set up themselves switches the same way. The agent rules (savers.js
+  // only, off until turned on) show where the app has them.
   const SAVERS = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.savers);
   const saversCall = (msg) => window.webkit.messageHandlers.savers.postMessage(msg);
   const compact = (n) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
-  const SAVER_OFF = { rtk: "off · Claude Code, Codex and Antigravity read commands' output in full", caveman: 'off · full-length answers' };
+  const SAVER_OFF = { rtk: "off · Claude Code, Codex and Antigravity read commands' output in full", caveman: 'off · full-length answers', agentRules: 'off · no rules for multi-agent work' };
   function showSavers(all) {
     if (!all) return;
-    for (const which of ['rtk', 'caveman']) {
+    for (const which of ['rtk', 'caveman', 'agentRules']) {
       const st = all[which], sw = q(`.hk-sw.ts[data-which="${which}"]`), note = q(`.ts-note[data-which="${which}"]`);
       if (!st || !sw || !note) continue;
+      sw.closest('.ts-row').hidden = false;
       sw.setAttribute('aria-checked', st.on ? 'true' : 'false');
       sw.disabled = !st.available;
-      sw.title = `Turn ${which} on or off`;
+      const name = which === 'agentRules' ? 'agent token rules' : which;
+      sw.title = `Turn ${name} on or off`;
       note.textContent = !st.available ? 'not in this build'
         : st.saved != null ? `saved ${compact(st.saved)} tokens so far, ${Math.round(st.pct)}% of what ${compact(st.commands)} commands printed`
-        : st.on ? (which === 'caveman' ? 'on · about two thirds fewer output tokens, from the next chat' : 'on · nothing saved yet') : SAVER_OFF[which];
+        : st.on ? (which === 'caveman' ? 'on · about two thirds fewer output tokens, from the next chat' : which === 'agentRules' ? 'on · from the next chat' : 'on · nothing saved yet') : SAVER_OFF[which];
     }
   }
   async function renderSaver() {
@@ -626,7 +631,8 @@ window.Cloud = (() => {
       sw.onclick = async () => {
         const which = sw.dataset.which, on = sw.getAttribute('aria-checked') !== 'true';
         sw.disabled = true;
-        q(`.ts-note[data-which="${which}"]`).textContent = on ? `turning ${which} on…` : `turning ${which} off…`;
+        const name = which === 'agentRules' ? 'agent token rules' : which;
+        q(`.ts-note[data-which="${which}"]`).textContent = on ? `turning ${name} on…` : `turning ${name} off…`;
         showSavers(await saversCall({ type: 'set', which, on }).catch(() => null));
       };
     });
