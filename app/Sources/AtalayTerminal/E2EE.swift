@@ -381,8 +381,11 @@ final class E2EE {
             saveVault()
             friendKeys = [:]
         } else if vault.account != account {
-            // Its account joined another one: the keys it had came along there (merged), so they stay.
+            // Its account joined another one: the keys it had came along there (merged), so they stay. The recovery key it
+            // had was the account's it left: that one's recovery copy is gone, so it would open nothing here.
             vault.account = account
+            vault.recovery = nil
+            vault.recoverySeen = false
             saveVault()
             friendKeys = [:]
         }
