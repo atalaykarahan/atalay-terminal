@@ -98,6 +98,8 @@ static class Native
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
+    [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint WaitForSingleObject(IntPtr h, uint ms);
@@ -636,6 +638,10 @@ static class Program
 
     static int Main(string[] args)
     {
+        // The app starts this process detached, which Windows makes a new process group that ignores Ctrl+C, and every
+        // shell started from here inherits that: Ctrl+C couldn't stop a command running in a terminal (ping, npm run dev).
+        // Handled again, it goes on to the copy below and to the shells, as in a console of their own.
+        Native.SetConsoleCtrlHandler(IntPtr.Zero, false);
         if (args.Length < 1 || args[0].Length == 0) return 2;
         if (args.Length < 2 || args[1] != "--host") return Relaunch(args[0]);
         // One host per pipe: a second one started at the same moment leaves.
