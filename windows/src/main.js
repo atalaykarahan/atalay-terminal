@@ -666,9 +666,16 @@ async function openFolder() {
 
 // The chats list's requests (pages/chats.js).
 function handleChats(msg) {
+  // A folder on this PC, whatever the page sends: never a file (opening it in Explorer would start a program) nor a
+  // network share (merely looking one up hands its host the user's NTLM hash, as files.js keeps from its paths).
   const dir = () => {
     const d = String(msg.cwd || '');
-    return d && fs.existsSync(d) ? d : null;
+    if (!d || /^[\\/]{2}/.test(d)) return null;
+    try {
+      return fs.statSync(d).isDirectory() ? d : null;
+    } catch {
+      return null;
+    }
   };
   switch (msg.type) {
     case 'ready':
