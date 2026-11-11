@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Security
 
 /// Installs a newer build offered by the API in two steps. `prepare` downloads its zip, checks the SHA-256 and the
 /// Ed25519 signature made with the release key (its public half is AtalayUpdateKey in Info.plist) and unpacks it next to
@@ -19,16 +20,31 @@ enum Updater {
 
     /// A build an earlier run staged and never restarted into (that restart hung, as in 0.19.0 and 0.19.1, or the app was
     /// force-quit or crashed): only that run knew of it, so every launch since downloaded it again and tried again.
-    /// Newer than this build and the same app: the one to go in. Anything else waiting there is stale, and goes.
+    /// Newer than this build, the same app and signed as this app is: the one to go in. Its zip was checked against the
+    /// release key when it came, but it has waited on disk since, where anything can be put; the signature is what still
+    /// ties it to a release. Anything else waiting there is stale, and goes (the next check for updates downloads it again).
     static func leftover() -> Staged? {
         let url = stagedURL
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let build = { (b: Bundle?) in Int(b?.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0 }
-        if let staged = Bundle(url: url), staged.bundleIdentifier == Bundle.main.bundleIdentifier, build(staged) > build(.main) {
+        if let staged = Bundle(url: url), staged.bundleIdentifier == Bundle.main.bundleIdentifier, build(staged) > build(.main),
+           signedAs(Bundle.main.bundleURL, url) {
             return Staged(build: build(staged), version: staged.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", url: url)
         }
         try? FileManager.default.removeItem(at: url)
         return nil
+    }
+
+    /// Whether the app at `url` is signed as the one at `reference` is: a valid signature (every architecture, the code
+    /// inside it, strictly) that meets `reference`'s designated requirement, the release certificate for a release. Every
+    /// release so far carries the same one; a build signed ad hoc (a development one) takes no other build.
+    nonisolated static func signedAs(_ reference: URL, _ url: URL) -> Bool {
+        var ref: SecStaticCode?, requirement: SecRequirement?, code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(reference as CFURL, [], &ref) == errSecSuccess, let ref,
+              SecCodeCopyDesignatedRequirement(ref, [], &requirement) == errSecSuccess, let requirement,
+              SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code else { return false }
+        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate)
+        return SecStaticCodeCheckValidity(code, flags, requirement) == errSecSuccess
     }
 
     enum Failure: Error {
