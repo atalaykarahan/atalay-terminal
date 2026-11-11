@@ -17,6 +17,9 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Sounds: a badge's sound no longer takes over your keyboard's play key
 - Runaways: macOS system services are no longer flagged, a live session's work is kept, and a frozen project shows as a TARDIS. Thanks to @EmirCobanOfficial on GitHub
 - Updates: an update downloaded before a restart that never happened goes in at the next launch. Thanks to @EmirCobanOfficial on GitHub
+- Windows: folders whose names have Turkish or other non-English letters (Geliştirme, ü, ğ…) are read right, so their chats fill the panels again; a Codex or Antigravity chat's turn shows (and chimes) within a second, not at the next process scan. Thanks to @farukiskender on GitHub (PR #23)
+- Windows: Ctrl+C stops a command running in one of the app's terminals (ping, npm run dev…); it reached Claude, Codex and Antigravity, but never the commands a shell runs. From the PC's next restart on, as the app's terminal host keeps running through updates
+- Windows: Ctrl+C on a terminal's selection copies it and clears it, so the next Ctrl+C reaches the program again, as in Windows Terminal; a selection is copied only when the mouse lets go of it. Thanks to @EmirCobanOfficial on GitHub (EmirMac#7124 in the app)
 
 ## 0.19.2
 
@@ -169,9 +172,6 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
-- Windows: folders whose names have Turkish or other non-English letters (Geliştirme, ü, ğ…) are read right, so their chats fill the panels again; a Codex or Antigravity chat's turn shows (and chimes) within a second, not at the next process scan. Thanks to @farukiskender on GitHub (PR #23)
-- Windows: Ctrl+C stops a command running in one of the app's terminals (ping, npm run dev…); it reached Claude, Codex and Antigravity, but never the commands a shell runs. From the PC's next restart on, as the app's terminal host keeps running through updates
-- Windows: Ctrl+C on a terminal's selection copies it and clears it, so the next Ctrl+C reaches the program again, as in Windows Terminal; a selection is copied only when the mouse lets go of it. Thanks to @EmirCobanOfficial on GitHub (EmirMac#7124 in the app)
 - Terminal view (PR #10, Ömer; Mac version written 2026-11-07, set aside): the chats and terminals shown take the dashboard's middle side by side, up to six in a grid, and the activity bar's terminal button brings them back. Hard to use as it is: they cover the map, so another one opens only from the chats list. Idea: the button brings every open one at once. The Mac code is kept at `refs/postponed/terminal-view` (`git cherry-pick refs/postponed/terminal-view`)
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines. Cause (found 2026-11-04, reproduced headless with SwiftTerm + the relay + screen): screen 4.0 resizes a window bottom-anchored. Shrinking keeps the cursor's distance from the bottom, so with blank rows under the cursor (short output, after a clear) the output above it goes into screen's own history, which the view never shows, and only blank rows remain; growing pulls lines back in at the top. Fix to try: before a shrink, put the cursor on row max(0, old rows - new rows - blank rows under it) (screen then drops the blank bottom rows instead), apply the size, put the cursor back; the pty size has to wait for that (LocalProcessTerminalView.sizeChanged isn't open, so the relay holds it). Windows has no screen: check it there separately
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in

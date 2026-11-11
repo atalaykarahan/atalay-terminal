@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
 // The theme's colours on the map. The map was drawn in the default theme's orange; that orange now comes from the
-// theme the app shows (Themes.swift's tokens on #mapwrap): its accent where it was the accent, its text colours where
-// they were the text's, and every warm tint around them (the lights, the dust, the warm stars) turned to the accent's
-// hue. The tool, status and session colours stay the map's own (app.js). Where the tokens are the default theme's
-// (Windows sets them again on #mapwrap), the map looks as it always did.
+// theme the app shows (Themes.swift's tokens on #mapwrap, windows/src/themes.js's on Windows): its accent where it was
+// the accent, its text colours where they were the text's, and every warm tint around them (the lights, the dust, the
+// warm stars) turned to the accent's hue. The tool, status and session colours stay the map's own (app.js). Where the
+// tokens are the default theme's, the map looks as it always did.
 const SRGB = THREE.SRGBColorSpace;
 const DEFAULT = { accent: '#f88008', 'accent-soft': '#ffb057', txt: '#f5ebe0', txt2: '#d9c3a8', hi: '#fff8f0', 'deep-rgb': '5, 3, 2' };
 const BASE = new THREE.Color(DEFAULT.accent).getHSL({}, SRGB);
