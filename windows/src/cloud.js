@@ -18,6 +18,7 @@ const dc = require('node:diagnostics_channel');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { createE2EE } = require('./e2ee');
 
 const API = 'https://terminal-api.atalaykarahan.com';
 // Where Node's WebSocket reports the pings it answers (the API's, every 25 s); see `watch`.
@@ -167,6 +168,8 @@ class Failure extends Error {
 // - idleSeconds(): seconds since the last key, mouse or touch input anywhere on the PC, for "away"
 // - theme(): the chosen theme's id; onChange(state): the page's state changed (`json()`); onSocial(text): a live event
 // - tools(): the AI tools at work since the last heartbeat (claude, codex, gemini, antigravity), for their badges
+// - protect: { seal(text), open(bytes) }, both async: text sealed by Windows for this user (Electron's safeStorage), for
+//   the keys of end-to-end encrypted messages (e2ee.js). Without it messages aren't sealed or opened here.
 function createCloud(opts = {}) {
   const dataDir = opts.dataDir;
   if (!dataDir) throw new Error('createCloud: dataDir is required');
@@ -524,8 +527,9 @@ function createCloud(opts = {}) {
   }
 
   // The friends and messages endpoints for the pages: JSON in, the API's JSON out, or `{error}` with its code
-  // ("offline" when it can't be reached, "signed_out" before a hacker name is picked).
-  async function social(method, p, body) {
+  // ("offline" when it can't be reached, "signed_out" before a hacker name is picked). `own`: a call the app makes itself
+  // (the message keys', e2ee.js), to a path it wrote: those aren't among the ones pages may reach.
+  async function social(method, p, body, own = false) {
     const token = readToken();
     if (!token) return { error: 'signed_out' };
     let url;
@@ -536,7 +540,7 @@ function createCloud(opts = {}) {
     }
     // The path as it resolved must still be one of the allowed ones: Node's URL reads %2e%2e as "..", which the check
     // on the path as sent doesn't see.
-    if (url.origin !== base.origin || !url.href.startsWith(base.href) || !allowed(url.href.slice(base.href.length))) {
+    if (url.origin !== base.origin || !url.href.startsWith(base.href) || !(own || allowed(url.href.slice(base.href.length)))) {
       return { error: 'bad_path' };
     }
     method = method.toUpperCase();
@@ -555,6 +559,45 @@ function createCloud(opts = {}) {
       return { error: 'offline' };
     }
   }
+
+  // ---------- end-to-end encrypted messages (e2ee.js, the Mac's E2EE.swift) ----------
+  // Messages are sealed on the way out and opened on the way in; what the keys keep secret is in a file of the app's
+  // folder sealed by Windows for this user, one per API as the token is, and friends' pinned keys beside it.
+  const vaultFile = path.join(dataDir, `e2ee-vault-${host}${base.port ? `-${base.port}` : ''}`);
+  const e2ee = !opts.protect
+    ? null
+    : createE2EE({
+        api: (method, p, body) => social(method, p, body, true),
+        pass: (method, p, body) => social(method, p, body),
+        vault: {
+          async load() {
+            let sealed;
+            try {
+              sealed = fs.readFileSync(vaultFile);
+            } catch (e) {
+              if (e.code === 'ENOENT') return null;
+              throw e;
+            }
+            return opts.protect.open(sealed);
+          },
+          // A key that isn't kept must not go out: this one says so when it can't write (`write` above doesn't).
+          async save(text) {
+            const sealed = await opts.protect.seal(text);
+            const temp = `${vaultFile}.${process.pid}.tmp`;
+            fs.mkdirSync(path.dirname(vaultFile), { recursive: true });
+            try {
+              fs.writeFileSync(temp, sealed, { mode: 0o600 });
+              fs.renameSync(temp, vaultFile);
+            } catch {
+              fs.rmSync(temp, { force: true });
+              fs.writeFileSync(vaultFile, sealed, { mode: 0o600 });
+            }
+          },
+        },
+        pinsFile: path.join(dataDir, `e2ee-friends-${host}${base.port ? `-${base.port}` : ''}.json`),
+        // What changes in the message keys reaches the pages the way live events do.
+        onState: (ev) => deliver(ev),
+      });
 
   // ---------- the live socket (Social.swift) ----------
   // The app's live line to the API for friends and messages: one WebSocket the API pushes events into (a message, a
@@ -576,7 +619,10 @@ function createCloud(opts = {}) {
   // Cloud's state changed: keep the line open while signed in and the API answers.
   function sync() {
     signedIn = S.registered === true;
-    if (signedIn && S.reachable) open();
+    if (signedIn && S.reachable) {
+      open();
+      if (e2ee) e2ee.wake();
+    }
     if (!signedIn) close();
   }
 
@@ -625,6 +671,9 @@ function createCloud(opts = {}) {
   // Each event goes to main.js (the dashboard, the notices and the chat panels hear every one) as JSON.stringify writes
   // it, not as it came: main.js runs it in the pages as code (`social(${text})`), so a line that isn't JSON never gets
   // there. Your own XP changing (the daily bonus, a new level) also updates the state, so the top bar shows it at once.
+  // With message keys the events go through them first (messages opened, key changes taken in), one at a time, in the
+  // order they came.
+  let delivering = Promise.resolve();
   function event(text) {
     let e;
     try {
@@ -632,6 +681,15 @@ function createCloud(opts = {}) {
     } catch {
       return;
     }
+    if (!e2ee) return deliver(e);
+    delivering = delivering
+      .then(async () => {
+        for (const out of await e2ee.incoming(e)) deliver(out);
+      })
+      .catch((err) => console.error('cloud: live event', err));
+  }
+
+  function deliver(e) {
     try {
       onSocial(JSON.stringify(e));
     } catch (err) {
@@ -730,6 +788,8 @@ function createCloud(opts = {}) {
     const data = body === undefined ? undefined : JSON.stringify(body);
     if (data !== undefined) headers['content-type'] = 'application/json';
     if (token) headers.authorization = 'Bearer ' + token;
+    // This app opens end-to-end encrypted messages (e2ee.js): the API sends them sealed, as they are.
+    if (e2ee) headers['x-e2ee'] = '1';
     key.sign(method, url, data, headers);
     const res = await fetcher(String(url), { method, headers, body: data, signal: AbortSignal.timeout(15_000) });
     key.learn(res);
@@ -773,8 +833,13 @@ function createCloud(opts = {}) {
       case 'social': {
         const p = typeof b.path === 'string' ? b.path : '';
         if (!allowed(p)) return { error: 'bad_path' };
-        return social(typeof b.method === 'string' ? b.method : 'GET', p, b.body);
+        const method = typeof b.method === 'string' ? b.method : 'GET';
+        // Messages are sealed on the way out and opened on the way in (e2ee.js).
+        return e2ee ? e2ee.social(method, p, b.body) : social(method, p, b.body);
       }
+      // End-to-end encryption's own screens: the recovery key, approving a computer, a friend's security code.
+      case 'e2ee':
+        return e2ee ? e2ee.page(b) : { error: 'offline' };
       case 'openChat':
         // The chat panel is main.js's to open.
         return { openChat: typeof b.id === 'string' ? b.id : '' };

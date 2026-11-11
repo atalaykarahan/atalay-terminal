@@ -18,6 +18,7 @@ const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { createLedger, agg: ledgerAgg, addCall: ledgerAdd } = require('./ledger');
 const { createCodexHooks, codexSession } = require('./codexhooks');
+const { isCodexLogIn } = require('./chattrash');
 
 const HOME = os.homedir();
 const WIN = process.platform === 'win32';
@@ -738,6 +739,13 @@ function codexLog(cwd, since, excluding = new Set()) {
   return found ? found.file : null;
 }
 
+// A path as Codex keeps it in its database on Windows, without the \\?\ it puts before some (a folder's, not a log's).
+const plainPath = (p) => String(p || '').replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '');
+
+// The conversation another AI tool's process is in, when the tool keeps them: Antigravity's own, and a Codex's is its
+// log's, so the chats list shows a running one once, as that saved conversation.
+const otherConv = (O) => O.convId || (O.tool === 'Codex' && O.log ? codexSession(O.log) : null);
+
 // Another AI tool's counts for the day, as a Claude session has them: its calls by kind, its errors and web calls, its
 // prompts and tokens, its calls per 20 s (the card's spark), and what it already counted (`counted`, `resulted`).
 function resetOther(O) {
@@ -1454,6 +1462,8 @@ class RadarEngine {
     this.historyBusy = false;
     this.historyAgain = false;
     this.historyTimer = null;
+    // Codex conversations whose new log already made the list look again.
+    this.codexAsked = new Set();
   }
 
   // ----- public API -----
@@ -1546,7 +1556,7 @@ class RadarEngine {
       if (O.endedAt > 0) continue;
       const { status, waiting } = this.otherStatus(O);
       out.push({
-        sessionId: O.id, convId: O.convId || null, pid: O.pid, cwd: O.cwd, status, waitingFor: waiting, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
+        sessionId: O.id, convId: otherConv(O), pid: O.pid, cwd: O.cwd, status, waitingFor: waiting, name: O.tool, title: O.title || O.prompt || baseName(O.cwd),
         host: O.hostTab != null ? 'app' : 'term', tab: typeof O.hostTab === 'string' ? O.hostTab : null, ai: true,
         statusSince: O.statusSince || 0,
       });
@@ -1908,6 +1918,13 @@ class RadarEngine {
       // not at its next 30 s look (its first approval would pass unseen), once a second at most.
       const file = path.join(codexSessions, String(name));
       const unclaimed = ![...this.others.values()].some((x) => x.log && path.resolve(x.log).toLowerCase() === path.resolve(file).toLowerCase());
+      // A conversation the chats list doesn't have yet: it looks once now (one that isn't a terminal's never gets
+      // there; the list's own look every two minutes takes care of the rest).
+      const conv = codexSession(file);
+      if (conv && !this.history.has(conv) && !this.codexAsked.has(conv)) {
+        this.codexAsked.add(conv);
+        this.historySoon();
+      }
       for (const O of this.others.values()) if (O.tool === 'Codex' && O.endedAt === 0 && O.cwd) {
         if (!O.log && unclaimed && now - (O.logChecked || 0) > 1000) O.logChecked = 0;
         this.readCodexLog(O, O.cwd, O.firstTs, now);
@@ -2025,16 +2042,20 @@ class RadarEngine {
           }
         }
         for (const sid of this.history.keys()) {
-          if (present.has(sid) || this.history.get(sid)?.tool === 'antigravity') continue;
+          // Claude's only: Antigravity's and Codex's are looked after below.
+          if (present.has(sid) || (this.history.get(sid)?.tool || 'claude') !== 'claude') continue;
           this.history.delete(sid);
           changed = true;
         }
         changed = this.scanAgyHistory(present) || changed;
+        // And Codex's.
+        changed = this.scanCodexHistory() || changed;
         if (changed && !this.stopped) {
+          // `path`: its transcript (Codex's: its log), which deleting a chat from the list goes by (chattrash.js).
           const items = [...this.history.values()]
             .filter((i) => i.cwd && (i.title || i.lastPrompt))
             .sort((a, b) => b.mtime - a.mtime)
-            .map(({ id, cwd, mtime, size, title, lastPrompt, tool }) => ({ id, cwd, mtime, size, title, lastPrompt, tool: tool || 'claude' }));
+            .map(({ id, path: file, cwd, mtime, size, title, lastPrompt, tool }) => ({ id, path: file, cwd, mtime, size, title, lastPrompt, tool: tool || 'claude' }));
           this.call('onHistory', items);
         }
       } while (this.historyAgain && !this.stopped);
@@ -2085,6 +2106,11 @@ class RadarEngine {
             st = fs.statSync(path.join(agyRoot, 'conversations', `${id}.db`));
           } catch {}
         }
+        // Listed with nothing of it on disk any more (deleted from the chats list, chattrash.js): it wouldn't open.
+        if (!st) {
+          present.delete(id);
+          continue;
+        }
         const size = st ? st.size : 0;
         const mtime = Math.max(parseISO(r.last_modified_time) || 0, st ? st.mtimeMs : 0);
         const old = this.history.get(id);
@@ -2132,6 +2158,75 @@ class RadarEngine {
       agyClose(db);
     }
     return changed;
+  }
+
+  // Codex's saved conversations, from its own state database (CODEX_HOME\state_<n>.sqlite, as `codex resume` lists
+  // them), into the same list: the ones begun in a terminal (its TUI), not its desktop app's or `codex exec`'s, nor those
+  // it archived, each with its log still on disk. A running one shows as this conversation too (otherConv). True when
+  // anything changed.
+  scanCodexHistory() {
+    const home = process.env.CODEX_HOME || path.join(HOME, '.codex');
+    const present = new Set();
+    let changed = false;
+    const prune = () => {
+      for (const [sid, item] of this.history) {
+        if (item.tool !== 'codex' || present.has(sid)) continue;
+        this.history.delete(sid);
+        changed = true;
+      }
+      return changed;
+    };
+    // The newest schema's database (state_5.sqlite today). One that can't be read just now keeps the list as it was.
+    let newest = null;
+    try {
+      for (const name of fs.readdirSync(home)) {
+        const m = /^state_(\d+)\.sqlite$/.exec(name);
+        if (m && (!newest || Number(m[1]) > newest.v)) newest = { v: Number(m[1]), name };
+      }
+    } catch {}
+    if (!newest) return prune();
+    const db = agyOpen(path.join(home, newest.name));
+    if (!db) return false;
+    try {
+      const cols = new Set(db.prepare("SELECT name FROM pragma_table_info('threads')").all().map((r) => r.name));
+      if (!['id', 'rollout_path', 'cwd', 'source'].every((c) => cols.has(c))) return prune();
+      const text = (name) => (cols.has(name) ? `IFNULL(${name}, '')` : "''");
+      const number = (name) => (cols.has(name) ? `IFNULL(${name}, 0)` : '0');
+      // Its TUI: "cli" before, and since it runs on Codex's app server, that server's source with the TUI as originator.
+      const terminal = cols.has('originator') ? "(source = 'cli' OR originator = 'codex-tui')" : "source = 'cli'";
+      const rows = db.prepare(
+        `SELECT id, rollout_path AS log, cwd, ${text('name')} AS name, ${text('title')} AS title, ${text('first_user_message')} AS first, ` +
+        `${text('preview')} AS preview, ${number('updated_at_ms')} AS at FROM threads ` +
+        `WHERE ${number('archived')} = 0 AND ${terminal} ORDER BY ${number('updated_at_ms')} DESC LIMIT 300`,
+      ).all();
+      for (const r of rows) {
+        const id = String(r.id || ''), file = plainPath(r.log);
+        if (!isCodexLogIn(home, file, id)) continue;
+        let st;
+        try {
+          st = fs.statSync(file);
+        } catch {
+          continue;
+        }
+        const cwd = plainPath(r.cwd);
+        if (!cwd) continue;
+        present.add(id);
+        const mtime = Math.max(Number(r.at) || 0, st.mtimeMs);
+        const old = this.history.get(id);
+        if (old && old.mtime === mtime && old.size === st.size) continue;
+        const title = [r.name, r.title, r.first].find((s) => typeof s === 'string' && s) || '';
+        const prompt = (typeof r.preview === 'string' && r.preview) || (typeof r.first === 'string' ? r.first : '');
+        this.history.set(id, {
+          id, path: file, cwd: path.resolve(cwd), mtime, size: st.size, title: clip(redact(title), 90), lastPrompt: clip(redact(prompt), 160), tool: 'codex',
+        });
+        changed = true;
+      }
+    } catch {
+      return changed;
+    } finally {
+      agyClose(db);
+    }
+    return prune();
   }
 
   maybeNewDay() {
@@ -3798,7 +3893,7 @@ class RadarEngine {
         tok: { ...O.tok }, cost: 0, tools: O.tools, errors: O.errors, web: O.web, prompts: O.prompts,
         byCat: O.byCat, pending: running ? [running] : [], spark, flags, agents, agentsRunning: nRun,
         waitingFor: waiting, tty: null, pid: O.pid, host: O.hostTab != null ? 'app' : live ? 'term' : null,
-        tab: typeof O.hostTab === 'string' ? O.hostTab : null, convId: O.convId || null,
+        tab: typeof O.hostTab === 'string' ? O.hostTab : null, convId: otherConv(O),
         ...(running && { last: running }),
       });
     }
@@ -3956,6 +4051,8 @@ function createEngine(opts = {}) {
     setOthers: (list) => e.setOthers(list),
     sessionCwd: (sessionId) => e.sessionCwd(sessionId),
     sessionTool: (sessionId) => e.sessionTool(sessionId),
+    // Chats were deleted from the disk (chattrash.js): the list is read again now, not at the engine's next look.
+    refreshHistory: () => e.scanHistory(false).catch(report),
     dismiss: (sessionId, pid) => e.dismiss(sessionId, pid),
     transcriptItems: (sessionId, limit) => e.transcriptItems(sessionId, limit),
     spendHistory: (range) => e.spendHistory(range),

@@ -2158,12 +2158,16 @@ window.Notes = (() => {
   }
 
   if (STORE) {
-    // An empty note until the app's are read (nothing is written till then), and nothing of them in the page's storage.
+    // An empty note until the app's are read (nothing is written till then), and nothing of them in the page's storage:
+    // notes written there before the app kept them go to the app once, then leave it.
+    const before = readHere();
+    const forget = () => {
+      try {
+        localStorage.removeItem(KEY);
+      } catch {}
+    };
     loadAll(null);
     render(null);
-    try {
-      localStorage.removeItem(KEY);
-    } catch {}
     STORE.postMessage({ type: 'load' })
       .then(
         (r) => {
@@ -2177,10 +2181,14 @@ window.Notes = (() => {
       )
       .then((v) => {
         ready = true;
-        loadAll(v);
+        // The page's own only when the app has none and said so (not when it couldn't read its own just now).
+        const carried = !v && !unsaved && before && Array.isArray(before.notes) && before.notes.length ? before : null;
+        loadAll(v || carried);
         render(null);
         stamp();
         drawBoard();
+        if (carried) write().then((kept) => kept && forget());
+        else if (!unsaved) forget();
       });
   } else {
     loadAll(readHere());

@@ -193,6 +193,8 @@
     document.getElementById('status').textContent = label;
     document.getElementById('where').textContent = i.cwd || '';
     document.body.style.setProperty('--st', `var(${color})`);
+    // Streamer mode: the names above are made up already; the terminal itself goes behind frosted glass.
+    document.getElementById('veil').hidden = !i.streamer;
   });
   document.getElementById('hud').addEventListener('mousedown', (e) => e.preventDefault());
   document.getElementById('dash').onclick = () => {

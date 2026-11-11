@@ -4,11 +4,14 @@
 // archived ones (a chat, or a whole folder with its later chats too) leave the list altogether and are listed in
 // Settings instead, as Claude's and ChatGPT's are, so a stream shows only what's meant to be seen. Stars and the archive
 // are kept across launches. Folders opened from the list (its open folder button) stay in it, at the top, with or
-// without chats, and the app's own terminals with no Claude in them show in their folders too. The page
-// (pages/chats.*) draws it and keeps what's only its own: the search, the folders opened past their first five chats,
-// the folders folded shut and the folders picked for archiving several at once.
+// without chats, and the app's own terminals with no Claude in them show in their folders too. Chats deleted from the
+// list (chattrash.js) leave it at once and stay 30 days in Settings' deleted chats, where they can be put back; then
+// their files are deleted from the PC. The page (pages/chats.*) draws the list and keeps what's only its own: the
+// search, the folders opened past their first five chats, the folders folded shut and the chats or folders picked for
+// archiving or deleting several at once.
 const os = require('os');
 const path = require('path');
+const { daysLeft, expired } = require('./chattrash');
 
 const HOME = os.homedir();
 const WIN = process.platform === 'win32';
@@ -54,8 +57,11 @@ function labels(cwds) {
   return out;
 }
 
-/** `settings`: { get(key), set(key, value) }, where the stars and the archive are kept. */
-function createChatList({ settings }) {
+/**
+ * `settings`: { get(key), set(key, value) }, where the stars, the archive and the deleted chats are kept. `trashOps`:
+ * what deletes a conversation's files (chattrash.js); `onErased()`: files were deleted, the engine reads the list again.
+ */
+function createChatList({ settings, trashOps, onErased }) {
   const saved = settings.get('chatList') || {};
   const kept = (k) => new Set(Array.isArray(saved[k]) ? saved[k].filter((x) => typeof x === 'string') : []);
   const favorites = kept('favorites');
@@ -67,22 +73,32 @@ function createChatList({ settings }) {
   const titles = new Map(Object.entries(saved.titles && typeof saved.titles === 'object' ? saved.titles : {}).filter(([, v]) => typeof v === 'string'));
   // Folders opened from the list, in the order they were opened: path as it was picked.
   const pinned = (Array.isArray(saved.pinned) ? saved.pinned : []).filter((x) => typeof x === 'string' && x);
+  // Chats deleted from the list, by id: { id, title, cwd, tool, path, at }, kept across launches.
+  const trash = new Map();
+  for (const [id, c] of Object.entries(saved.trash && typeof saved.trash === 'object' ? saved.trash : {})) {
+    if (!c || typeof c.path !== 'string' || !Number.isFinite(c.at)) continue;
+    trash.set(id, { id, title: String(c.title || ''), cwd: String(c.cwd || ''), tool: typeof c.tool === 'string' ? c.tool : 'claude', path: c.path, at: c.at });
+  }
+  // Chats whose files are being deleted right now: out of the trash already, not back in the list.
+  const erasing = new Set();
   const save = () => settings.set('chatList', {
     favorites: [...favorites], archived: [...archived], folders: [...folders], restored: [...restored], titles: Object.fromEntries(titles),
     pinned: [...pinned],
+    trash: Object.fromEntries([...trash].map(([id, c]) => [id, { title: c.title, cwd: c.cwd, tool: c.tool, path: c.path, at: c.at }])),
   });
 
-  let items = []; // the engine's history: { id, cwd, mtime, size, title, lastPrompt }
+  let items = []; // the engine's history: { id, path, cwd, mtime, size, title, lastPrompt, tool }
   let live = []; // engine.live()
   let open = new Set(); // sessions with a window of the app
   let activeId = null; // session of the focused chat window
   let terms = []; // the app's terminals with no Claude in them: { id, cwd, title, job, shown }
   let liveKey = '', openKey = '', termsKey = '', version = 0;
 
-  // Every chat, newest first, with the live sessions that have no saved title yet (they head the list, "now").
+  // Every chat, newest first, with the live sessions that have no saved title yet (they head the list, "now"). The
+  // deleted ones aren't among them.
   function everything() {
     const known = new Set(items.map((i) => i.id));
-    const all = items.slice();
+    const all = items.filter((i) => !trash.has(i.id) && !erasing.has(i.id));
     for (const b of live) {
       if (!b.cwd || known.has(b.sessionId) || (b.convId && known.has(b.convId))) continue;
       known.add(b.sessionId);
@@ -133,6 +149,47 @@ function createChatList({ settings }) {
     save();
   };
 
+  // The live session a chat of the list is (its own, or the conversation another AI tool's process is in).
+  const liveOf = (item) => live.find((b) => b.sessionId === item.id || (b.convId && b.convId === item.id));
+  // Whether a chat can be deleted here: a saved conversation of Claude Code's, Codex's or Antigravity's, not running
+  // (a running one is ended first).
+  const canDelete = (item) => !liveOf(item) && !!trashOps && trashOps.deletable(item);
+
+  // Deleted from the disk, for good: these chats of the trash. Their names and marks here go with them. One that
+  // couldn't be deleted just now (its tool held its list) stays in the trash, to be tried again.
+  async function erase(ids) {
+    const chats = ids.map((id) => trash.get(id)).filter(Boolean);
+    if (!chats.length || !trashOps) return;
+    for (const c of chats) {
+      trash.delete(c.id);
+      erasing.add(c.id);
+    }
+    changed();
+    const failed = new Set();
+    for (const c of chats) {
+      let gone = false;
+      try {
+        gone = await trashOps.erase(c);
+      } catch {}
+      if (!gone) failed.add(c.id);
+    }
+    for (const c of chats) {
+      erasing.delete(c.id);
+      if (failed.has(c.id)) {
+        if (!trash.has(c.id)) trash.set(c.id, c);
+        continue;
+      }
+      favorites.delete(c.id);
+      archived.delete(c.id);
+      restored.delete(c.id);
+      titles.delete(c.id);
+    }
+    // Gone from the list now, not when the engine has read it again.
+    items = items.filter((i) => failed.has(i.id) || !chats.some((c) => c.id === i.id));
+    changed();
+    if (onErased) onErased();
+  }
+
   return {
     setItems(list) {
       items = Array.isArray(list) ? list : [];
@@ -141,8 +198,18 @@ function createChatList({ settings }) {
     /** What the list shows of the live sessions changed: true. */
     setLive(list) {
       live = list || [];
+      // A deleted chat that runs again (continued in a terminal: `claude --resume`, `codex resume`, `agy --conversation`)
+      // comes back: it's in use.
+      let revived = false;
+      if (trash.size) {
+        for (const b of live) {
+          if (trash.delete(b.sessionId)) revived = true;
+          if (b.convId && trash.delete(b.convId)) revived = true;
+        }
+        if (revived) changed();
+      }
       const key = JSON.stringify(live.map((b) => [b.sessionId, b.convId, b.cwd, b.status, b.host, b.name, b.title]));
-      if (key === liveKey) return false;
+      if (key === liveKey) return revived;
       liveKey = key;
       return true;
     },
@@ -229,6 +296,95 @@ function createChatList({ settings }) {
       restored.clear();
       changed();
     },
+    /** These chats into the archive (the ones picked in the list). */
+    archiveMany(ids) {
+      for (const id of ids) {
+        const item = find(id);
+        if (item && !isArchived(item)) toggleArchived(item);
+      }
+      changed();
+    },
+
+    // ----- deleting chats -----
+
+    /** The chats a folder's panel shows (not its archived or starred ones), for deleting a whole folder's. */
+    chatsInFolders(keys) {
+      const want = new Set(keys);
+      return everything().filter((i) => want.has(folderKey(i.cwd)) && !isArchived(i) && !favorites.has(i.id)).map((i) => i.id);
+    },
+    /** Of the chats named: those that can be deleted, how many can't because they run, and how many others can't. */
+    deletable(ids) {
+      const wanted = new Set(ids);
+      const out = { chats: [], running: 0, others: 0 };
+      for (const item of everything()) {
+        if (!wanted.has(item.id)) continue;
+        if (canDelete(item)) out.chats.push(item);
+        else if (liveOf(item)) out.running++;
+        else out.others++;
+      }
+      return out;
+    },
+    /** A chat's name as the list shows it. */
+    shownTitle: (item) => titles.get(item.id) || item.title || item.lastPrompt || '',
+    /** Into the trash: out of the list (and the favorites), kept 30 days. */
+    delete(chats) {
+      const now = Date.now();
+      for (const item of chats) {
+        if (!canDelete(item)) continue;
+        trash.set(item.id, {
+          id: item.id, title: titles.get(item.id) || item.title || item.lastPrompt || '', cwd: item.cwd, tool: item.tool || 'claude', path: item.path, at: now,
+        });
+        favorites.delete(item.id);
+      }
+      changed();
+    },
+    /** Out of the trash, back where it was in the list. */
+    putBack(id) {
+      if (trash.delete(id)) changed();
+    },
+    putBackAll() {
+      if (!trash.size) return;
+      trash.clear();
+      changed();
+    },
+    trashed: (id) => trash.get(id) || null,
+    trashIds: () => [...trash.keys()],
+    erase,
+    /**
+     * The chats whose 30 days are over are deleted from the disk. One written to since it was deleted (continued while
+     * the app was closed) comes back instead.
+     */
+    emptyExpiredTrash() {
+      const now = Date.now();
+      const all = [...trash.values()];
+      if (!trashOps || !all.some((c) => expired(c, now))) return Promise.resolve();
+      const due = trashOps.due(all, now);
+      // Only what is still as it was read: one put back meanwhile stays.
+      const back = due.putBack.filter((c) => trash.get(c.id) === c);
+      for (const c of back) trash.delete(c.id);
+      if (back.length) changed();
+      return erase(due.erase.filter((c) => trash.get(c.id) === c).map((c) => c.id));
+    },
+    /** For Settings (cloud.js's deleted chats): the deleted chats by folder, the one deleted last first, each with the days it has left. */
+    trashList() {
+      const now = Date.now();
+      const order = [];
+      const byKey = new Map();
+      for (const c of [...trash.values()].sort((a, b) => b.at - a.at)) {
+        const key = folderKey(c.cwd);
+        if (!byKey.has(key)) {
+          order.push(key);
+          byKey.set(key, []);
+        }
+        byKey.get(key).push(c);
+      }
+      const names = labels(order.map((k) => byKey.get(k)[0].cwd));
+      return order.map((key) => {
+        const list = byKey.get(key);
+        const cwd = list[0].cwd;
+        return { cwd, label: names.get(cwd) || projectLabel(cwd), chats: list.map((c) => ({ id: c.id, title: c.title, tool: c.tool, days: daysLeft(c.at, now) })) };
+      });
+    },
 
     /** The page's list: the chats that aren't archived, each with its live status, and the folders' labels. */
     snapshot() {
@@ -269,7 +425,9 @@ function createChatList({ settings }) {
       const names = labels([...shown.values()]);
       const where = {};
       for (const [key, cwd] of shown) where[key] = { label: names.get(cwd) || projectLabel(cwd), path: tildify(cwd), cwd };
-      return { rows, terms: termRows, pinned: pins, saved: items.length, live: live.length, folders: where, active: activeId };
+      // The saved chats in the list or its archive: not the deleted ones (Settings · deleted chats).
+      const saved = items.filter((i) => !trash.has(i.id) && !erasing.has(i.id)).length;
+      return { rows, terms: termRows, pinned: pins, saved, live: live.length, folders: where, active: activeId };
     },
 
     /** For Settings (cloud.js's archived chats): the archived chats by folder, each folder's newest first. */

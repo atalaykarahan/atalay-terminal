@@ -13,4 +13,8 @@ body { display: flex; flex-direction: column; overflow: hidden; background: var(
 #hud button:hover { border-color: var(--accent, #f88008); color: var(--hi, #fff8f0); }
 #hud #end:hover { border-color: var(--red, #ff4d4d); color: var(--red, #ff4d4d); }
 #term { flex: 1; min-height: 0; padding: 6px 4px 4px 8px; }
+/* Streamer mode: frosted glass over the terminal, under the strip (what a terminal prints can't be swapped for made-up
+   text). The terminal runs on under it, and the mouse and the keys still reach it. */
+#veil { position: fixed; inset: 33px 0 0; z-index: 20; pointer-events: none; background: color-mix(in srgb, var(--code-bg, #251200) 45%, transparent); -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2); }
+#veil[hidden] { display: none; }
 .xterm .xterm-viewport { scrollbar-color: rgba(var(--accent-rgb, 248, 128, 8), 0.35) transparent; }

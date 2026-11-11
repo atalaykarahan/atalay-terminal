@@ -29,6 +29,8 @@ const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
 const { createCodexHooks } = require('./codexhooks');
 const { createNotesStore } = require('./notesstore');
+const { createStreamer } = require('./streamer');
+const { createChatTrash } = require('./chattrash');
 
 let autoUpdater = null;
 try {
@@ -87,6 +89,8 @@ const boots = new Map(); // webContents id -> what its preload asks for before t
 const chats = new Map(); // terminal window id -> { win, sessionId, cwd, claude, title, startedAt, steppedAside }
 let activeTerminalId = null;
 const panels = { notices: null, chats: new Map(), showing: new Set() }; // the messages panels: the corner's notices, friends' chats
+// The dashboard's streamer mode: made-up names in the chats list, the chat windows and the notices too (streamer.js).
+const streamer = createStreamer(WEB);
 
 // The AI tools in the theme's colours (Settings · INTERFACE): Claude Code, Codex and Antigravity on their themes that use
 // the terminal's 16 colours.
@@ -219,8 +223,20 @@ const engine = createEngine({
   },
 });
 
-// The chats list beside the dashboard: what it lists, with the stars and the archive (src/chatlist.js).
-const chatlist = createChatList({ settings });
+// The chats list beside the dashboard: what it lists, with the stars, the archive and the deleted chats (src/chatlist.js;
+// chattrash.js deletes a conversation's files once its 30 days are over).
+const chatlist = createChatList({
+  settings,
+  trashOps: createChatTrash({
+    claudeDir: path.join(os.homedir(), '.claude'),
+    codexDir: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+    agyDir: path.join(os.homedir(), '.gemini', 'antigravity-cli'),
+    // npm's Codex is codex.cmd here (where.exe names its extensionless shell script first).
+    codexExe: () => which('codex.exe') || which('codex.cmd'),
+    home: os.homedir(),
+  }),
+  onErased: () => engine.refreshHistory(),
+});
 
 const git = createGit({
   folders: () => [...engine.gitSessions(), ...engine.gitSources(), ...terminals.cwds()],
@@ -275,6 +291,17 @@ const cloud = createCloud({
   idleSeconds: () => powerMonitor.getSystemIdleTime(),
   theme: () => themes.chosenId(),
   tools: () => toolsAtWork(),
+  // The keys of end-to-end encrypted messages (e2ee.js) are kept sealed by Windows for this user, as the notes' key is.
+  protect: {
+    async seal(text) {
+      if (!(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("Windows can't protect the message keys right now");
+      return safeStorage.encryptStringAsync(text);
+    },
+    async open(sealed) {
+      if (!(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("Windows can't open the message keys right now");
+      return (await safeStorage.decryptStringAsync(sealed)).result;
+    },
+  },
   onChange(state) {
     pushCloud();
     if (state && state.xp) toNotices(`xp(${JSON.stringify(state.xp)})`);
@@ -485,8 +512,9 @@ function webPrefs() {
 
 // A window shows the app's own pages and nothing else, as on the Mac (RadarView): a page from anywhere else, a file on
 // this PC included, would get their line to the app (preload.js), which reaches the shells. A link out of a page opens
-// where it belongs instead (a web page in the browser, a file in VS Code from Source Control); other kinds go nowhere,
-// since Windows has handlers for some that run things.
+// where it belongs instead: a web page in the browser; a file in VS Code (Source Control's link where there's no editor)
+// only once the user says so, as on the Mac (SafeOpen.swift): a vscode: link can do more than open a file. Other kinds
+// go nowhere, since Windows has handlers for some that run things.
 const PAGES = [WEB, path.join(__dirname, '..', 'pages')];
 function ownPage(url) {
   let file;
@@ -504,9 +532,21 @@ app.on('web-contents-created', (_e, contents) => {
   contents.on('will-navigate', (e, url) => {
     if (ownPage(url)) return;
     e.preventDefault();
-    if (/^(https?|vscode):/i.test(url)) shell.openExternal(url);
+    if (/^https?:/i.test(url)) shell.openExternal(url).catch(() => {});
+    else if (/^vscode:/i.test(url)) askToOpen(url);
   });
 });
+
+// Another app's link: that app opens it once the user says so. Nothing on this PC opens it: nothing happens.
+async function askToOpen(url) {
+  const name = app.getApplicationNameForProtocol(url);
+  if (!name) return;
+  const r = await dialog.showMessageBox(dash || undefined, {
+    type: 'question', message: `Open this link in ${name}?`, detail: url.length > 300 ? `${url.slice(0, 300)}…` : url,
+    buttons: ['Open', 'Cancel'], defaultId: 0, cancelId: 1, noLink: true,
+  });
+  if (r.response === 0) shell.openExternal(url).catch(() => {});
+}
 
 function bootFor(webContents, extra = {}) {
   const look = { font: 'Cascadia Mono', size: 13 };
@@ -677,10 +717,27 @@ function pushChats(force) {
   const open = chatlist.setOpen([...chats.values()].map((c) => c.sessionId).filter(Boolean));
   if (!force && !live && !open && chatlist.version() === chatsVersion) return;
   chatsVersion = chatlist.version();
-  const json = JSON.stringify(chatlist.snapshot());
+  const snap = chatlist.snapshot();
+  const json = JSON.stringify(streamer.on ? madeUpChats(snap) : snap);
   if (json === chatsJSON && !force) return;
   chatsJSON = json;
   run(chatsView, `window.__chats && __chats.update(${json})`);
+}
+
+// The chats list in streamer mode: every chat, folder and terminal under the made-up name the dashboard gives it. Their
+// ids and folders stay as they are (a click still opens the right one); only what's shown changes.
+function madeUpChats(snap) {
+  return {
+    ...snap,
+    rows: snap.rows.map((r) => ({ ...r, title: streamer.fake('title', r.title || r.lastPrompt), lastPrompt: '' })),
+    terms: snap.terms.map((t) => {
+      const title = t.title ? streamer.project(t.title) : t.title;
+      return { ...t, title, job: t.job ? streamer.fake('cmd', t.job) : t.job, tip: title || 'terminal' };
+    }),
+    folders: Object.fromEntries(
+      Object.entries(snap.folders).map(([key, f]) => [key, { ...f, label: streamer.project(f.cwd), path: streamer.folder(f.cwd) }]),
+    ),
+  };
 }
 
 // The chats list's open folder button: a folder from the system's picker stays at the list's top, with a terminal opened
@@ -753,6 +810,15 @@ function handleChats(msg) {
     case 'folders':
       for (const k of Array.isArray(msg.keys) ? msg.keys : []) chatlist.setFolder(String(k || ''), msg.on === true);
       break;
+    // The chats picked in the list, into the archive.
+    case 'archiveMany':
+      chatlist.archiveMany((Array.isArray(msg.ids) ? msg.ids : []).map(String));
+      break;
+    // Delete…: these chats, or every chat these folders show. Asked first; true when they were deleted.
+    case 'delete':
+      return deleteChats((Array.isArray(msg.ids) ? msg.ids : []).map(String));
+    case 'deleteFolders':
+      return deleteChats(chatlist.chatsInFolders((Array.isArray(msg.keys) ? msg.keys : []).map(String)));
     case 'menu':
       return popupMenu(msg.items, msg.at, chatsView);
     case 'close':
@@ -772,6 +838,89 @@ function handleChats(msg) {
   }
   pushChats(true);
   return true;
+}
+
+// Delete in the chats list (a chat's menu, a folder's, or the bar over the list while some are picked): asks first, then
+// the chats (Claude Code's, Codex's, Antigravity's) leave the list for Settings' deleted chats, where they stay 30 days
+// before they're deleted from the PC. Running chats stay: they're ended first. True when chats were deleted.
+async function deleteChats(ids) {
+  const pick = chatlist.deletable(ids);
+  const box = (o) => dialog.showMessageBox(dash || undefined, { noLink: true, ...o });
+  const stay = [];
+  if (pick.running > 0) stay.push(pick.running === 1 ? '1 running chat stays in the list: end it first.' : `${pick.running} running chats stay in the list: end them first.`);
+  if (pick.others > 0) stay.push(pick.others === 1 ? "1 chat that isn't saved yet stays too." : `${pick.others} chats that aren't saved yet stay too.`);
+  if (!pick.chats.length) {
+    const n = pick.running + pick.others;
+    if (!n) await box({ type: 'info', message: 'Nothing to delete', detail: 'There are no saved chats here.' });
+    else {
+      await box({
+        type: 'info', message: n === 1 ? "This chat can't be deleted" : "These chats can't be deleted",
+        detail: pick.others ? stay.join('\n') : n === 1 ? "It's running: end it first." : "They're running: end them first.",
+      });
+    }
+    return false;
+  }
+  const one = pick.chats.length === 1;
+  const title = one ? chatlist.shownTitle(pick.chats[0]) : '';
+  const r = await box({
+    type: 'warning',
+    message: one ? `Delete “${clip(streamer.on ? streamer.fake('title', title) : title, 60)}”?` : `Delete ${pick.chats.length} chats?`,
+    detail:
+      (one
+        ? "It stays in Settings › deleted chats for 30 days, where you can put it back. Then it's deleted from this PC for good."
+        : "They stay in Settings › deleted chats for 30 days, where you can put them back. Then they're deleted from this PC for good.") +
+      (stay.length ? '\n\n' + stay.join('\n') : ''),
+    buttons: ['Delete', 'Cancel'], defaultId: 0, cancelId: 1,
+  });
+  if (r.response !== 0) return false;
+  // One that began to run while the question stood stays (the list checks each again).
+  chatlist.delete(pick.chats);
+  pushChats(true);
+  return true;
+}
+
+// Settings' deleted chats (web/cloud.js): the chats deleted from the chats list, by folder, with the days each has left
+// of its 30; putting one or all back, and deleting one or all from the disk now (asked first: that can't be undone).
+async function handleTrash(msg) {
+  const sure = async (message, detail) =>
+    (await dialog.showMessageBox(dash || undefined, { type: 'warning', message, detail, buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true })).response === 0;
+  // The files go in the background; the list here shows them gone at once.
+  const erase = (ids) => void chatlist.erase(ids).then(() => pushChats(), (e) => console.error('trash:', e));
+  switch (msg.type) {
+    case 'list':
+      chatlist.emptyExpiredTrash().then(() => pushChats(), (e) => console.error('trash:', e));
+      break;
+    case 'putBack':
+      chatlist.putBack(String(msg.id || ''));
+      break;
+    case 'putBackAll':
+      chatlist.putBackAll();
+      break;
+    case 'erase': {
+      const chat = chatlist.trashed(String(msg.id || ''));
+      const title = chat && (streamer.on && chat.title ? streamer.fake('title', chat.title) : chat.title);
+      if (chat && (await sure(`Delete “${clip(title || 'untitled', 60)}” now?`, "It's deleted from this PC for good. This can't be undone."))) erase([chat.id]);
+      break;
+    }
+    case 'eraseAll': {
+      const ids = chatlist.trashIds();
+      const n = ids.length;
+      if (n && (await sure(n === 1 ? 'Delete the chat now?' : `Delete all ${n} chats now?`, `${n === 1 ? "It's" : "They're"} deleted from this PC for good. This can't be undone.`))) erase(ids);
+      break;
+    }
+    default:
+      throw new Error('unknown request');
+  }
+  pushChats();
+  const folders = chatlist.trashList();
+  // Streamer mode: made-up folders and names here too.
+  return {
+    days: 30,
+    folders: !streamer.on ? folders : folders.map((f) => ({
+      ...f, cwd: streamer.folder(f.cwd), label: streamer.project(f.cwd),
+      chats: f.chats.map((c) => ({ ...c, title: c.title ? streamer.fake('title', c.title) : c.title })),
+    })),
+  };
 }
 
 // Settings' archived chats (web/cloud.js's "archived chats · manage"): the list by folder, and taking a chat, a folder
@@ -902,6 +1051,13 @@ function handleRadar(msg) {
     // the way meanwhile, as on the Mac.
     case 'modal':
       return stepAside(msg.open === true);
+    // Streamer mode (the switch on the map): the chats list, the chat windows and the notices show made-up names too.
+    case 'streamer':
+      if (streamer.set(msg.on === true)) {
+        pushChats(true);
+        for (const [id, c] of chats) send(c.win, 'term:info', chatInfo(id, c));
+      }
+      return true;
     // Two chats began (or stopped) writing the same file (files.heat): the corner's notice, as a chat that needs you.
     case 'clash': {
       const key = typeof msg.key === 'string' ? msg.key : '';
@@ -972,7 +1128,14 @@ function chatInfo(id, c) {
   const status = !terminals.has(id) ? 'ended' : s ? s.status : starting ? 'busy' : 'terminal';
   // Another AI tool running in it (Codex, Antigravity…): the page leaves it the keys it needs (terminal.js).
   const tool = engine.live().find((x) => x.ai && x.tab === id);
-  return { title: (s && s.name) || c.title, status: status === 'shell' ? 'idle' : status, cwd: tildify(c.cwd), tool: tool ? tool.name : null };
+  const title = (s && s.name) || c.title;
+  // Streamer mode: the made-up project and folder the dashboard shows, and frosted glass over the terminal (what it
+  // prints can't be swapped for made-up text).
+  const on = streamer.on;
+  return {
+    title: on ? streamer.name(title) : title, status: status === 'shell' ? 'idle' : status, cwd: on ? streamer.folder(c.cwd) : tildify(c.cwd),
+    tool: tool ? tool.name : null, streamer: on,
+  };
 }
 
 const tildify = (p) => (p && p.startsWith(os.homedir()) ? '~' + p.slice(os.homedir().length) : p || '');
@@ -1162,6 +1325,12 @@ function openSession(sid, fork) {
   if (engine.sessionTool(sid) === 'antigravity') {
     if (fork) return false;
     openChatWindow({ cwd, claudeArgs: ['agy', '--conversation', sid], sessionId: sid, title: (live && live.name) || sid.slice(0, 8) });
+    return true;
+  }
+  // A Codex conversation that isn't running (a running one showed its window above): Codex resumes it.
+  if (engine.sessionTool(sid) === 'codex') {
+    if (fork) return false;
+    openChatWindow({ cwd, claudeArgs: ['codex', 'resume', sid], sessionId: sid, title: chatlist.title(sid) || sid.slice(0, 8) });
     return true;
   }
   // A chat running in another terminal can't be resumed twice: it opens as a copy, as "Open a Copy" does on the Mac.
@@ -1488,12 +1657,13 @@ function clip(s, n) {
 
 // Which chat, where (another AI tool's name first), what it waits for.
 function waitNotice(s) {
-  const folder = path.basename(s.cwd || '') || s.cwd || '';
-  const name = (!s.ai && chatlist.title(s.sessionId)) || s.title || s.prompt || '';
-  return {
-    sid: s.sessionId, title: clip(name || folder, 80), folder: (s.ai ? `${s.name} · ` : '') + folder,
-    what: clip(s.waitingFor || 'waiting for your approval', 200),
-  };
+  // Streamer mode: the made-up names the dashboard shows.
+  const on = streamer.on;
+  const folder = on ? streamer.project(s.cwd) : path.basename(s.cwd || '') || s.cwd || '';
+  const real = (!s.ai && chatlist.title(s.sessionId)) || s.title || s.prompt || '';
+  const name = on && real ? streamer.fake('title', real) : real;
+  const what = s.waitingFor ? (on ? streamer.fake('wait', s.waitingFor) : s.waitingFor) : 'waiting for your approval';
+  return { sid: s.sessionId, title: clip(name || folder, 80), folder: (s.ai ? `${s.name} · ` : '') + folder, what: clip(what, 200) };
 }
 
 // A click on one: that chat in front, or the terminal it runs in outside the app (Windows Terminal, VS Code…), as iTerm2
@@ -1693,6 +1863,10 @@ function handleMessages(win, body) {
       return true;
     case 'openChat':
       return openFriendChat(body.id);
+    // A code block's Copy, or Copy text on a message (the page's own clipboard refuses a window without focus).
+    case 'copyText':
+      if (typeof body.text === 'string' && body.text) clipboard.writeText(body.text);
+      return true;
     // The takeover's lock on the keys (ms; 0 frees them).
     case 'lock':
       if (role === 'notices') takeover.lockedUntil = Date.now() + Math.min(Math.max(Number(body.ms) || 0, 0), 4000);
@@ -1952,6 +2126,10 @@ ipcMain.handle('atl:post', async (e, name, body) => {
         return await handleChats(body);
       case 'archive':
         return handleArchive(body);
+      // Settings' deleted chats: the dashboard's page only (it deletes files).
+      case 'trash':
+        if (e.sender !== pageOf(dashView)) throw new Error('not this page');
+        return await handleTrash(body);
       // Settings' token savers: their state with what rtk saved, and the switches.
       case 'savers':
         if (body.type === 'state') return await savers.state();
@@ -2067,6 +2245,12 @@ app.whenReady().then(() => {
     pushWinOpen();
     pushChats();
   }, 2000);
+  // The deleted chats whose 30 days are over go from the disk: a minute after the app starts, then every hour.
+  if (!PROBE) {
+    const emptyTrash = () => chatlist.emptyExpiredTrash().then(() => pushChats(), (e) => console.error('trash:', e));
+    setTimeout(emptyTrash, 60_000);
+    setInterval(emptyTrash, 3_600_000);
+  }
   // The token savers this build ships go on by themselves the first time (Settings turns them off).
   savers.autoStart();
   if (!PROBE) aiColors.autoStart();

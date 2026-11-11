@@ -151,12 +151,13 @@ function createTerminals({ onData, onExit, host, extraPath }) {
     },
     /**
      * A terminal for window `id` in `cwd`. With `claudeArgs` ([] for a new chat, ['--resume', id] …) Claude runs first
-     * and the shell stays when it exits; without, it's a plain terminal. `title` goes with it, for its window after a
+     * and the shell stays when it exits (Antigravity or Codex instead when they start with "agy" or "codex": a saved
+     * conversation of theirs, resumed); without, it's a plain terminal. `title` goes with it, for its window after a
      * restart. Known at once (`has`); its process a moment later.
      */
     spawn({ id, cwd, claudeArgs, cols = 100, rows = 30, title }) {
       const dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
-      const cmdParts = claudeArgs ? (claudeArgs[0] === 'agy' ? claudeArgs : ['claude', ...claudeArgs]) : null;
+      const cmdParts = claudeArgs ? (claudeArgs[0] === 'agy' || claudeArgs[0] === 'codex' ? claudeArgs : ['claude', ...claudeArgs]) : null;
       const args = cmdParts ? shell.run(cmdParts.map((a, i) => (i ? quote(a) : a)).join(' ')) : shell.args;
       const t = { cwd: dir, claude: !!claudeArgs, title, pid: null, startedAt: Date.now(), lastIO: Date.now(), pty: null };
       all.set(id, t);
