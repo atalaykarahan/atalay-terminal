@@ -136,6 +136,8 @@ final class Cloud {
     let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
     private let base = URL(string: ProcessInfo.processInfo.environment["ATALAY_API_URL"]
         ?? Bundle.main.object(forInfoDictionaryKey: "AtalayAPIURL") as? String ?? "http://127.0.0.1:4800")!
+    /// Which API this is (host and port), for what's kept per API: the token, the message keys (E2EE.swift).
+    var apiName: String { (base.host ?? "api") + (base.port.map { "-\($0)" } ?? "") }
     private var client: [String: Any] {
         ["appVersion": version, "build": build, "osVersion": ProcessInfo.processInfo.operatingSystemVersionString]
     }
@@ -515,6 +517,8 @@ final class Cloud {
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.httpMethod = method
         req.setValue("Bearer " + token, forHTTPHeaderField: "authorization")
+        // This app opens end-to-end encrypted messages (E2EE.swift): the API sends them sealed, as they are.
+        req.setValue("1", forHTTPHeaderField: "x-e2ee")
         if let body, method != "GET", JSONSerialization.isValidJSONObject(body) {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             req.setValue("application/json", forHTTPHeaderField: "content-type")
@@ -546,6 +550,7 @@ final class Cloud {
             req.setValue("application/json", forHTTPHeaderField: "content-type")
         }
         if let token { req.setValue("Bearer " + token, forHTTPHeaderField: "authorization") }
+        req.setValue("1", forHTTPHeaderField: "x-e2ee")
         ClientKey.sign(&req)
         let (data, response) = try await URLSession.shared.data(for: req)
         ClientKey.learn(from: response)
@@ -625,7 +630,11 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
                     replyHandler(["error": "bad_path"], nil)
                     return
                 }
-                replyHandler(await cloud.social(body["method"] as? String ?? "GET", path, body: body["body"]), nil)
+                // Messages are sealed on the way out and opened on the way in (E2EE.swift).
+                replyHandler(await E2EE.shared.social(body["method"] as? String ?? "GET", path, body: body["body"]), nil)
+            case "e2ee":
+                // End-to-end encryption's own screens: the recovery key, approving a computer, a friend's security code.
+                replyHandler(await E2EE.shared.page(body), nil)
             case "openChat":
                 MessagePanel.openChat(friend: body["id"] as? String ?? "")
                 replyHandler(true, nil)

@@ -430,6 +430,11 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         case "openChat":
             // Another friend's chat, from this one: a panel of its own.
             Self.openChat(friend: body["id"] as? String ?? "")
+        case "copyText":
+            // A code block's Copy, or Copy text on a message.
+            guard let text = body["text"] as? String, !text.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
         case "log":
             NSLog("messages page: %@", String(describing: body["msg"] ?? ""))
         default:

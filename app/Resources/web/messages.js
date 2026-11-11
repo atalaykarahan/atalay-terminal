@@ -44,7 +44,7 @@ window.Messages = (() => {
     `<button class="send" data-act="send" disabled>${label}</button></div>`;
   function grow(ta) {
     ta.style.height = '20px';
-    ta.style.height = Math.min(84, ta.scrollHeight) + 'px';
+    ta.style.height = Math.min(CHAT && draft.code ? 220 : 84, ta.scrollHeight) + 'px';
     const btn = ta.parentElement.querySelector('.send');
     if (btn) btn.disabled = !ta.value.trim() || ta.disabled;
   }
@@ -100,7 +100,7 @@ window.Messages = (() => {
       Sfx.play('xp');
     }
     // A chat that needs you, or two writing the same file, has no time: it goes when that's over or it's put away.
-    if (p.kind !== 'wait' && p.kind !== 'clash') peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
+    if (!['wait', 'clash', 'sas', 'device'].includes(p.kind)) peekTimer = setTimeout(autoHide, p.kind === 'xp' || p.kind === 'online' ? STRIP_MS : p.kind === 'fire' ? FIRE_MS + 3000 : p.kind === 'note' ? NOTE_MS : PEEK_MS);
   }
 
   // What comes after a notice: a chat that needs you first, then two chats writing the same file, then the queue.
@@ -186,6 +186,32 @@ window.Messages = (() => {
         `<button class="mb-x" data-act="close" title="Close">×</button></div>` +
         `<div class="mb-text">${esc(w.what)}</div></div>`
       );
+    } else if (p.kind === 'device') {
+      // A computer that joined your account asks for your messages' key (E2EE.swift).
+      const d = p.device;
+      const what = [d.os, d.app ? `app ${d.app}` : ''].filter(Boolean).join(' · ') || 'another computer';
+      return (
+        `<div class="mb peek in"><div class="mb-border"></div><div class="mb-head"><span class="mb-tag">NEW COMPUTER</span>` +
+        `<span class="mb-who"><span>Show your messages there too?</span><small>${esc(what)}</small></span>` +
+        `<button class="mb-x" data-act="close" title="Later">×</button></div>` +
+        `<div class="mb-text">A computer that joined your account asks for your end-to-end encrypted messages. Approve it only if it's yours: both screens will show a code to compare.</div>` +
+        `<div class="mb-actions"><button class="go" data-act="dev-approve">approve…</button><button data-act="close">later</button></div></div>`
+      );
+    } else if (p.kind === 'sas') {
+      // The two computers compare a code; it stays until that's over.
+      const s = p.sas;
+      const other = s.giver ? 'the new computer' : 'your other computer';
+      const tag = s.step === 'compare' ? 'COMPARE' : s.step === 'done' ? 'APPROVED' : s.step === 'failed' ? 'STOPPED' : 'APPROVING';
+      const text =
+        s.step === 'compare'
+          ? `<div class="mb-text">Does ${other} show the same code?<b class="mb-sas">${esc(s.code)}</b>${s.note ? `<small>${esc(s.note)}</small>` : ''}</div>` +
+            '<div class="mb-actions"><button class="go" data-act="sas-yes">they match</button><button data-act="sas-no">they don\'t</button></div>'
+          : `<div class="mb-text">${esc(s.step === 'waiting' ? (s.giver ? 'Waiting for the new computer · keep Orbiterm open on it' : 'Your other computer is approving this one…') : s.note)}</div>`;
+      return (
+        `<div class="mb peek sas ${s.step} in"><div class="mb-border"></div><div class="mb-head"><span class="mb-tag">${tag}</span>` +
+        `<span class="mb-who"><span>Messages on another computer</span><small>end-to-end encryption</small></span>` +
+        `<button class="mb-x" data-act="close" title="${s.step === 'compare' ? 'Stop' : 'Close'}">×</button></div>${text}</div>`
+      );
     } else if (p.kind === 'clash') {
       // Two chats writing the same file (files.heat's collision): which file, which chats, how many more. A click shows
       // the dashboard.
@@ -219,6 +245,20 @@ window.Messages = (() => {
       const el = e.target.closest('[data-act]');
       if (!el || !peek) return;
       const act = el.dataset.act;
+      let act2 = act;
+      if (act === 'close' && peek.kind === 'sas' && peek.sas.step === 'compare') act2 = 'sas-no';
+      if (act2 === 'sas-yes' || act2 === 'sas-no') {
+        const sid = peek.sas.sid;
+        notes.querySelectorAll('.mb-actions button').forEach((b) => (b.disabled = true));
+        return void Social.keys('confirm', { sid, match: act2 === 'sas-yes' });
+      }
+      if (act === 'dev-approve') {
+        const id = peek.device.id;
+        hidePeek();
+        const r = await Social.keys('approve', { device: id });
+        if (r && r.error) say(r.error === 'locked' ? 'this computer has no key to give yet' : "couldn't start approving");
+        return;
+      }
       if (act === 'close') {
         // Put away: the chats waiting now don't pop up again (another question in one of them does).
         if (peek.kind === 'wait') waits.clear();
@@ -292,6 +332,38 @@ window.Messages = (() => {
     if (Social.friend(to)?.unread) Social.read(to);
     const r = await Social.send(to, text);
     if (r.error) say(r.error === 'offline' ? "not sent · you're offline" : "not sent · you're not friends anymore");
+  }
+
+  // ======================= approving another computer =======================
+  // A computer new to your account asks for your messages' key: a notice offers to approve it; then both computers show
+  // a code to compare (E2EE.swift), on top of the other notices until it's over.
+  const devicesShown = new Set();
+  function e2eeNotice(st) {
+    if (!NOTICES) return;
+    const s = st.sas;
+    if (s) {
+      if (peek && peek.kind === 'sas' && peek.sas.sid === s.sid) {
+        peek.sas = s;
+        notes.innerHTML = peekHTML(peek);
+        notes.firstElementChild.classList.remove('in');
+        sizeNotes();
+        clearTimeout(peekTimer);
+        if (s.step === 'done' || s.step === 'failed') peekTimer = setTimeout(hidePeek, 6000);
+        return;
+      }
+      if (peek && peek.kind !== 'sas' && peek.kind !== 'wait' && peek.kind !== 'device') queue.unshift(peek);
+      peek = null;
+      Sfx.play('request');
+      return showPeek({ kind: 'sas', sas: s });
+    }
+    if (peek && peek.kind === 'sas') return hidePeek();
+    if (Social.dnd()) return;
+    for (const d of st.waiting || []) {
+      if (devicesShown.has(d.id)) continue;
+      devicesShown.add(d.id);
+      Sfx.play('request');
+      return showPeek({ kind: 'device', device: d });
+    }
   }
 
   // A new version of the app (from Swift): after whatever is on screen, and not on do-not-disturb.
@@ -892,13 +964,13 @@ window.Messages = (() => {
         if (Social.dnd()) return;
         // The friend you're answering wrote again: their newest message shows above your reply, which stays.
         if (peek && peek.kind === 'message' && peek.from && peek.from.id === ev.with && replying()) {
-          peek.body = ev.message.body;
+          peek.body = Social.preview(ev.message);
           peek.at = ev.message.at;
-          notes.querySelector('.mb-text').textContent = ev.message.body;
+          notes.querySelector('.mb-text').textContent = peek.body;
           notes.querySelector('.mb-time').textContent = time(ev.message.at);
           return sizeNotes();
         }
-        showPeek({ kind: 'message', from: ev.from || Social.friend(ev.with), body: ev.message.body, at: ev.message.at });
+        showPeek({ kind: 'message', from: ev.from || Social.friend(ev.with), body: Social.preview(ev.message), at: ev.message.at });
         return;
       case 'request':
         Sfx.play('request');
@@ -916,6 +988,8 @@ window.Messages = (() => {
       case 'request_gone':
         if (peek && peek.kind === 'request' && peek.request.id === ev.id) hidePeek();
         return;
+      case 'e2ee_state':
+        return e2eeNotice(ev);
       case 'xp':
         return progress(ev);
       case 'badge': {
@@ -948,16 +1022,24 @@ window.Messages = (() => {
   }
 
   // ======================= chat window =======================
+  // The conversation is drawn a message at a time: each message's row is made once and only what changes on it (sent,
+  // failed) is touched afterwards, so nothing on screen blinks or jumps when one is sent or arrives; only a new message
+  // slides in. A message is known by the app's own id for it (uuid), so a message coming back from the server or from
+  // another computer of yours finds its row.
   const win = CHAT ? mount('chatwin') : null;
   const q = (sel) => win.querySelector(sel);
   let current = null;
   let isOpen = false;
-  let pendingSeq = 0;
   const convs = new Map(); // friend id -> { list, more, loaded, loading, name }
   const conv = (id) => {
     if (!convs.has(id)) convs.set(id, { list: [], more: false, loaded: false, loading: null, name: '' });
     return convs.get(id);
   };
+  const keyOf = (m) => m.uuid || `id:${m.id}`;
+  // What's being written: the message it answers, whether it's code (and in which language).
+  const draft = { reply: null, code: false, lang: '' };
+  const TEXT_MAX = 2000;
+  const CODE_MAX = 7990; // with its ``` fence, 8000
 
   function tellShowing() {
     const id = isOpen ? current : null;
@@ -971,12 +1053,25 @@ window.Messages = (() => {
     post(box ? { type: 'layout', w: box.offsetWidth + 16, h: box.offsetHeight + 16, focus: !!focus } : { type: 'layout', w: 0, h: 0 });
   }
 
+  // The box's two tools, drawn (a smiley, code brackets); their names are in the tooltips.
+  const ICON_EMOJI = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M5.4 9.5c.7 1 1.6 1.5 2.6 1.5s1.9-.5 2.6-1.5"/><circle class="f" cx="5.9" cy="6.5" r=".9"/><circle class="f" cx="10.1" cy="6.5" r=".9"/></svg>';
+  const ICON_CODE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 4.3 1.6 8l3.6 3.7M10.8 4.3 14.4 8l-3.6 3.7M9.2 2.8 6.8 13.2"/></svg>';
+
   function frameHTML() {
     return `<div class="mb open chat in"><div class="mb-border"></div>` +
       `<div class="mb-head" title="Drag to move"><span class="mb-tag">CHAT</span><span class="mb-who"></span><span class="mb-time mb-sub"></span>` +
       `<button class="mb-x" data-act="close" title="Close (esc)">×</button></div>` +
-      `<div class="mb-switch"></div><div class="mb-list"></div><div class="mb-gone" hidden>you're not friends anymore · messages won't be delivered</div>` +
-      `${inputHTML('message…', 'send')}</div>`;
+      `<div class="mb-switch"></div><div class="mb-note" hidden></div><div class="mb-list"></div>` +
+      `<div class="mb-gone" hidden>you're not friends anymore · messages won't be delivered</div>` +
+      `<div class="mb-reply" hidden><span class="mb-reply-t"><b></b><small></small></span><button class="mb-x" data-act="unreply" title="Don't reply (esc)">×</button></div>` +
+      `<div class="mb-codebar" hidden><span class="mb-codebar-t">&lt;/&gt; code</span><select class="mb-lang" title="The code's language"></select>` +
+      `<span class="mb-codebar-k">⌘↩ send · ↩ new line</span><button data-act="astext" title="Send it as plain text">send as text</button></div>` +
+      `<div class="mb-suggest" hidden></div><div class="mb-emoji" hidden></div>` +
+      `<div class="mb-input"><span class="pr">$</span><textarea rows="1" maxlength="${TEXT_MAX}" spellcheck="false"></textarea>` +
+      `<button class="mb-tool" data-act="emoji" title="Emoji (type : and a name, too)" aria-label="Emoji">${ICON_EMOJI}</button>` +
+      `<button class="mb-tool" data-act="code" title="Code: kept as it is, coloured, with a Copy button" aria-label="Code">${ICON_CODE}</button>` +
+      `<button class="send" data-act="send" disabled>send</button></div>` +
+      `<div class="mb-menu" hidden></div><div class="mb-sc" hidden></div><div class="mb-toast" hidden></div></div>`;
   }
 
   async function open(id) {
@@ -988,6 +1083,7 @@ window.Messages = (() => {
     id = id || FRIEND || current || (s && (s.friends.find((f) => f.unread) || s.friends[0])?.id);
     if (!id || !Social.friend(id)) return;
     const fresh = !isOpen;
+    if (current !== id) clearDraft();
     current = id;
     isOpen = true;
     if (fresh || !q('.mb.open')) {
@@ -998,7 +1094,7 @@ window.Messages = (() => {
     sizeChat(true);
     await load(id);
     if (!isOpen || current !== id) return;
-    paintList(true);
+    paintList({ stick: true });
     if (Social.friend(id)?.unread) Social.read(id);
     const ta = q('.mb-input textarea');
     if (ta && !ta.disabled) setTimeout(() => ta.focus(), 30);
@@ -1019,53 +1115,354 @@ window.Messages = (() => {
     }, 190);
   }
 
+  // ---------- end-to-end encryption, as this chat shows it ----------
+  const myKeys = () => Social.e2ee() || {};
+  // Whether a message to this friend goes sealed: they have a key, and so does this computer.
+  const sealing = (f) => !!(f && f.e2ee && myKeys().phase === 'ready');
+  const changedCode = (f) => !!(f && (myKeys().friends?.[f.id]?.changed ?? f.sc?.changed));
+
+  // The line above the conversation: their security code changed, messages locked here, or not encrypted yet.
+  function paintNote(f) {
+    const note = q('.mb-note');
+    let html = '', cls = '';
+    if (f && changedCode(f)) {
+      cls = 'warn';
+      html = `<span>⚠ ${esc(f.nick || f.name)}'s security code changed</span><button data-act="sc">check it</button><button data-act="scok">ok</button>`;
+    } else if (f && f.e2ee && myKeys().phase === 'locked') {
+      cls = 'lock';
+      html = '<span>🔒 Messages are locked on this computer · approve it from your other computer, or enter your recovery key in Settings · Account</span>';
+    } else if (f && !f.e2ee) {
+      cls = 'open';
+      html = `<span>🔓 ${esc(f.nick || f.name)} hasn't updated Orbiterm yet · messages to them aren't end-to-end encrypted</span>`;
+    }
+    note.hidden = !html;
+    note.className = `mb-note ${cls}`;
+    if (note.__html !== html) note.innerHTML = note.__html = html;
+  }
+
+  // A friend's security code: the same 60 digits on both screens means nobody reads along.
+  async function showCode() {
+    const f = Social.friend(current);
+    const box = q('.mb-sc');
+    if (!f || !box) return;
+    const r = await Social.keys('code', { id: f.id });
+    if (!isOpen || current !== f.id) return;
+    if (!r || r.error) {
+      box.innerHTML = `<div class="mb-sc-in"><b>Security code</b><p>${r && r.error === 'no_key' ? `${esc(f.name)} has no key yet.` : "Couldn't get it right now."}</p>` +
+        '<div class="mb-actions"><button data-act="scclose">close</button></div></div>';
+      box.hidden = false;
+      return;
+    }
+    const groups = r.code.match(/.{5}/g) || [];
+    const rows = [0, 4, 8].map((i) => `<div>${groups.slice(i, i + 4).join(' ')}</div>`).join('');
+    box.innerHTML =
+      `<div class="mb-sc-in"><b>Security code with ${esc(f.nick || f.name)}</b>` +
+      `<div class="mb-sc-code">${rows}</div>` +
+      `<p>Compare it with ${esc(f.name)}'s screen, side by side or on a call. If it's the same, your messages go only to the two of you; nobody in between, the server included, can read them.</p>` +
+      `<div class="mb-actions">${r.verified ? '<span class="mb-sc-ok">✓ checked</span><button data-act="scun">not checked</button>' : '<button class="go" data-act="scyes">it\'s the same</button>'}` +
+      '<button data-act="scclose">close</button></div></div>';
+    box.hidden = false;
+    if (changedCode(f)) Social.keys('seen', { id: f.id });
+  }
+
   function paint(stick) {
     if (!isOpen) return;
     const f = Social.friend(current);
     const c = conv(current);
     if (f) c.name = Social.label(f);
     q('.mb-who').innerHTML = f ? who(f) : `<span>${esc(c.name)}</span>`;
-    q('.mb-time').textContent = f ? Social.PRESENCE[f.presence || 'offline'].label : '';
+    const sub = q('.mb-time');
+    const subHTML = f
+      ? `${esc(Social.PRESENCE[f.presence || 'offline'].label)}${sealing(f) ? ' · <button class="mb-lock" data-act="sc" title="End-to-end encrypted: only the two of you can read these messages. Click to see the security code.">🔒 encrypted</button>' : ''}`
+      : '';
+    if (sub.__html !== subHTML) sub.innerHTML = sub.__html = subHTML;
     // Removed from friends: the conversation stays on screen, but nothing more goes out.
     q('.mb-gone').hidden = !!f;
+    paintNote(f);
     const ta = q('.mb-input textarea');
     ta.disabled = !f;
-    ta.placeholder = f ? `message ${f.name}…` : 'not friends anymore';
+    ta.placeholder = !f ? 'not friends anymore' : draft.code ? 'paste or write code…' : `message ${f.name}…`;
     grow(ta);
     // Other conversations with unread messages, one click away.
     const others = (Social.state()?.friends || []).filter((x) => x.id !== current && x.unread);
-    q('.mb-switch').innerHTML = others
+    const sw = others
       .map((x) => `<button data-act="switch" data-id="${esc(x.id)}">${Social.dot(x.presence)}${esc(x.name)} <i class="cnt hot">${x.unread}</i></button>`)
       .join('');
-    paintList(stick);
+    const switcher = q('.mb-switch');
+    if (switcher.__html !== sw) switcher.innerHTML = switcher.__html = sw;
+    paintList({ stick });
   }
 
-  function paintList(stick) {
+  // ---------- a message's text: code blocks, `inline code`, quoted lines ----------
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const LANGS = ['bash', 'c', 'cpp', 'csharp', 'css', 'diff', 'go', 'java', 'javascript', 'json', 'kotlin', 'markdown', 'php', 'python', 'ruby', 'rust', 'sql', 'swift', 'typescript', 'xml', 'yaml'];
+  const LANG_NAMES = { cpp: 'C++', csharp: 'C#', javascript: 'JavaScript', typescript: 'TypeScript', xml: 'HTML / XML', bash: 'Shell', json: 'JSON', sql: 'SQL', css: 'CSS', php: 'PHP', yaml: 'YAML', go: 'Go', c: 'C', diff: 'diff' };
+  const langName = (l) => LANG_NAMES[l] || (l ? l[0].toUpperCase() + l.slice(1) : '');
+  const hl = () => window.hljs;
+  // The language of some code: telltale lines first (short snippets fool a statistical guess), then highlight.js's guess
+  // when it's sure enough. Nothing rather than a wrong name.
+  const TELLS = [
+    ['go', /^\s*package \w+|\w+ := |^\s*func \(\w+ \*?\w+\) /m],
+    ['swift', /^\s*(import (Foundation|SwiftUI|AppKit|UIKit|Combine)\b|guard let |@MainActor|@State |func \w+\(.*\)\s*(->|async|throws))/m],
+    ['python', /^\s*(def \w+\(|from [\w.]+ import |import \w+$|elif |print\()/m],
+    ['rust', /^\s*(fn \w+|let mut |impl |use \w+::|pub fn )/m],
+    ['typescript', /^\s*(interface \w+|type \w+ = |.*: (string|number|boolean)\b[;,)=])/m],
+    ['javascript', /^\s*(const |let |var |function |import .* from |export |module\.exports|.*=> )/m],
+    ['java', /^\s*(public (static )?(class|void)|System\.out\.)/m],
+    ['kotlin', /^\s*(fun \w+|val \w+ =)/m],
+    ['php', /<\?php/],
+    ['cpp', /^\s*#include\s*<\w+(\.h)?>|std::/m],
+    ['sql', /^\s*(select .+ from |insert into |update \w+ set |create table |delete from )/im],
+    ['xml', /^\s*<(\w+|!doctype)[^>]*>/im],
+    ['bash', /^\s*(\$ |sudo |npm |npx |git |cd |ls |echo |brew |curl |docker |export \w+=)/m],
+    ['yaml', /^[\w-]+:( |$)[^{]*\n[\w-]+:( |$)/m],
+  ];
+  const guessLang = (code) => {
+    const t = code.trim();
+    if (!t || t.length > 20000) return '';
+    if (/^[[{]/.test(t)) {
+      try {
+        JSON.parse(t);
+        return 'json';
+      } catch {}
+    }
+    const tell = TELLS.find(([, re]) => re.test(t));
+    if (tell) return tell[0];
+    if (!hl()) return '';
+    const r = hl().highlightAuto(t, LANGS);
+    return r.relevance >= 6 ? r.language || '' : '';
+  };
+  // Pasted text that is code: most of its lines look like code, not like sentences.
+  const looksLikeCode = (t) => {
+    const lines = t.replace(/\s+$/, '').split('\n').filter((l) => l.trim());
+    if (lines.length < 2) return false;
+    const codey = lines.filter((l) => /[{}();=<>[\]]|^\s{2,}\S|^\t|^\s*(def|class|import|from|function|const|let|var|return|if|for|while|#include|public|private|fn|func|package|select|insert|update|echo|export)\b/i.test(l)).length;
+    return codey / lines.length >= 0.5;
+  };
+
+  function codeBlock(code, lang) {
+    const known = lang && hl() && hl().getLanguage(lang) ? lang : '';
+    const shown = known || guessLang(code);
+    const box = el('div', 'mb-code');
+    box.__code = code;
+    const head = el('div', 'mb-code-h');
+    head.append(el('span', '', langName(shown) || 'code'));
+    const copy = el('button', 'mb-copy', 'Copy');
+    copy.dataset.act = 'copy';
+    copy.title = 'Copy the code';
+    head.append(copy);
+    const pre = el('pre');
+    const codeEl = el('code', 'hljs');
+    // highlight.js gives the code back escaped, in coloured spans.
+    if (shown && hl()) codeEl.innerHTML = hl().highlight(code, { language: shown, ignoreIllegals: true }).value;
+    else codeEl.textContent = code;
+    pre.append(codeEl);
+    box.append(head, pre);
+    const lines = code.split('\n').length;
+    if (lines > 15) {
+      box.classList.add('long');
+      const more = el('button', 'mb-code-more', `Show all (${lines} lines)`);
+      more.dataset.act = 'expand';
+      box.append(more);
+    }
+    return box;
+  }
+
+  function inline(parent, text) {
+    const parts = text.split(/(`[^`\n]+`)/);
+    for (const p of parts) {
+      if (!p) continue;
+      if (p.length > 2 && p[0] === '`' && p[p.length - 1] === '`') parent.append(el('code', 'mb-ic', p.slice(1, -1)));
+      else parent.append(document.createTextNode(p));
+    }
+  }
+
+  function textPart(parent, text) {
+    const lines = text.split('\n');
+    let quote = null;
+    lines.forEach((line, i) => {
+      if (/^> /.test(line)) {
+        if (!quote) parent.append((quote = el('div', 'mb-q')));
+        else quote.append(document.createTextNode('\n'));
+        inline(quote, line.slice(2));
+        return;
+      }
+      quote = null;
+      inline(parent, line);
+      if (i < lines.length - 1) parent.append(document.createTextNode('\n'));
+    });
+  }
+
+  function renderBody(parent, text) {
+    const re = /```([A-Za-z0-9_+#.-]*)[ \t]*\n?([\s\S]*?)```/g;
+    let at = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      const before = text.slice(at, m.index).replace(/\n$/, '');
+      if (before) textPart(parent, before);
+      parent.append(codeBlock(m[2].replace(/\n$/, ''), m[1].toLowerCase()));
+      at = re.lastIndex;
+      if (text[at] === '\n') at++;
+    }
+    const rest = text.slice(at);
+    if (rest) textPart(parent, rest);
+  }
+
+  // One to three emoji and nothing else: shown big, as WhatsApp and Discord do.
+  const seg = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  const onlyEmoji = (t) => {
+    const s = (t || '').replace(/\s+/g, '');
+    if (!s || !seg || s.length > 40) return false;
+    const g = [...seg.segment(s)].map((x) => x.segment);
+    return g.length <= 3 && g.every((x) => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(x));
+  };
+
+  // What a message is, in one line: for the reply strip and the quote above a reply.
+  const preview = (m) => {
+    const body = m.body || '';
+    const code = /```([A-Za-z0-9_+#.-]*)/.exec(body);
+    const text = body.replace(/```[\s\S]*?(```|$)/g, ' ').replace(/^> .*$/gm, '').replace(/\s+/g, ' ').trim();
+    if (code && !text) return `</> ${langName(code[1].toLowerCase()) || 'code'}`;
+    return (text || (code ? '</> code' : '')).slice(0, 100);
+  };
+
+  // ---------- the list ----------
+  const DAYS = { today: 'TODAY', yesterday: 'YESTERDAY' };
+  const dayLabel = (at) => {
+    const d = new Date(at).toDateString();
+    if (d === new Date().toDateString()) return DAYS.today;
+    if (d === new Date(Date.now() - 864e5).toDateString()) return DAYS.yesterday;
+    return new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase();
+  };
+  const NOTES = {
+    not_friends: "not delivered · you're not friends",
+    locked: 'not sent · approve this computer first (Settings · Account)',
+    key_missing: "not sent · their key is missing · click to retry",
+    too_long: 'not sent · too long',
+  };
+  const stateNote = (m) => (m.state === 'failed' ? NOTES[m.error] || 'not sent · click to retry' : time(m.at));
+  const canRetry = (m) => m.state === 'failed' && m.error !== 'not_friends' && m.error !== 'too_long';
+
+  // A message's row. Its content is made once; `stateOf` and its classes change in place.
+  function messageRow(m) {
+    const row = el('div', `mb-msg${m.mine ? ' mine' : ''}`);
+    const b = el('div', 'b');
+    if (m.reply) {
+      const who = m.reply.who === 'me' ? 'You' : Social.friend(current)?.name || 'them';
+      const qb = el('button', 'mb-quote');
+      qb.dataset.act = 'jump';
+      qb.dataset.key = m.reply.uuid;
+      qb.title = 'Show that message';
+      qb.append(el('b', '', who), el('span', '', m.reply.text || '…'));
+      b.append(qb);
+    }
+    if (m.enc === 'locked') {
+      row.classList.add('locked');
+      b.append(el('span', 'mb-lockmsg', "🔒 can't open this on this computer yet · approve it from your other computer, or enter your recovery key in Settings · Account"));
+    } else if (m.enc === 'bad') {
+      row.classList.add('bad');
+      b.append(el('span', 'mb-lockmsg', "⚠ this message didn't open · it may have been changed on the way"));
+    } else {
+      renderBody(b, m.body || '');
+      if (!m.reply && onlyEmoji(m.body)) row.classList.add('jumbo');
+    }
+    const t = el('div', 't');
+    t.append(el('span', 'mb-when'));
+    const rep = el('button', 'mb-rep', '↩ reply');
+    rep.dataset.act = 'reply';
+    rep.title = 'Reply to this message';
+    t.append(rep);
+    row.append(b, t);
+    return row;
+  }
+
+  function stateRow(row, m) {
+    row.classList.toggle('sending', m.state === 'sending');
+    row.classList.toggle('failed', m.state === 'failed');
+    row.classList.toggle('canreply', !m.state && m.enc !== 'locked' && m.enc !== 'bad');
+    const b = row.firstElementChild;
+    if (canRetry(m)) {
+      b.dataset.act = 'retry';
+      b.dataset.key = keyOf(m);
+    } else {
+      delete b.dataset.act;
+      delete b.dataset.key;
+    }
+    const when = row.querySelector('.mb-when');
+    const note = stateNote(m);
+    if (when.textContent !== note) when.textContent = note;
+  }
+
+  // What a row shows: a different one (opened now, edited by the server's answer) means a new row.
+  const contentOf = (m) => `${m.mine ? 1 : 0}|${m.enc}|${m.body}|${m.reply ? `${m.reply.uuid}|${m.reply.who}|${m.reply.text}` : ''}`;
+
+  /**
+   * Draws the conversation: rows already on screen stay, new ones go in, gone ones go out. `stick` keeps the newest in
+   * view; `fresh` names the messages that just arrived (they slide in).
+   */
+  function paintList({ stick = false, fresh = null } = {}) {
     const list = q('.mb-list');
     if (!list) return;
     const c = conv(current);
+    if (list.__for !== current) {
+      list.textContent = '';
+      list.__for = current;
+      list.__rows = new Map();
+    }
+    const rows = list.__rows;
     const near = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
-    let html = c.more ? '<button class="mb-more" data-act="more">earlier messages</button>' : '';
-    if (c.loaded && !c.list.length) html += `<div class="mb-empty">no messages yet · say hi to ${esc(Social.friend(current)?.name || '')}</div>`;
+    const items = [];
+    if (c.more) items.push({ key: 'more', make: () => Object.assign(el('button', 'mb-more', 'earlier messages'), { title: 'Show earlier messages' }), sig: 'more' });
+    if (c.loaded && !c.list.length) {
+      const name = Social.friend(current)?.name || '';
+      items.push({ key: 'empty', make: () => el('div', 'mb-empty', `no messages yet · say hi to ${name}`), sig: name });
+    }
     let day = '';
+    let sealedSeen = false;
     for (const m of c.list) {
-      const d = new Date(m.at).toDateString();
+      const d = dayLabel(m.at);
       if (d !== day) {
         day = d;
-        const today = new Date().toDateString(), yesterday = new Date(Date.now() - 864e5).toDateString();
-        const label = d === today ? 'TODAY' : d === yesterday ? 'YESTERDAY' : new Date(m.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase();
-        html += `<div class="mb-day">${label}</div>`;
+        items.push({ key: `day:${new Date(m.at).toDateString()}`, make: () => el('div', 'mb-day', d), sig: d });
       }
-      const state = m.state === 'failed' ? ' failed' : m.state === 'sending' ? ' sending' : '';
-      const note =
-        m.state === 'failed'
-          ? m.error === 'not_friends' ? "not delivered · you're not friends" : 'not sent · click to retry'
-          : m.state === 'sending' ? 'sending…' : time(m.at);
-      const retry = m.state === 'failed' && m.error !== 'not_friends';
-      html += `<div class="mb-msg${m.mine ? ' mine' : ''}${state}"${retry ? ` data-act="retry" data-id="${m.id}"` : ''}>` +
-        `<div class="b">${esc(m.body)}</div><div class="t">${note}</div></div>`;
+      if (!sealedSeen && m.enc === true) {
+        sealedSeen = true;
+        items.push({ key: 'sealed', make: () => el('div', 'mb-sealed', '🔒 Messages from here on are end-to-end encrypted: only the two of you can read them'), sig: 's' });
+      }
+      items.push({ key: keyOf(m), make: () => messageRow(m), sig: contentOf(m), m });
     }
-    list.innerHTML = html;
+    const want = new Set(items.map((i) => i.key));
+    for (const [k, n] of rows) {
+      if (want.has(k)) continue;
+      n.remove();
+      rows.delete(k);
+    }
+    let prev = null;
+    for (const it of items) {
+      let n = rows.get(it.key);
+      if (!n || n.__sig !== it.sig) {
+        const made = it.make();
+        made.__sig = it.sig;
+        made.dataset.key = it.key;
+        if (it.key === 'more') made.dataset.act = 'more';
+        if (n) n.replaceWith(made);
+        else if (it.m && fresh && fresh.has(it.key)) {
+          made.classList.add('new');
+          made.addEventListener('animationend', () => made.classList.remove('new'), { once: true });
+        }
+        rows.set(it.key, made);
+        n = made;
+      }
+      if (it.m) stateRow(n, it.m);
+      const at = prev ? prev.nextSibling : list.firstChild;
+      if (at !== n) list.insertBefore(n, at);
+      prev = n;
+    }
     if (stick || near) list.scrollTop = list.scrollHeight;
   }
 
@@ -1077,7 +1474,7 @@ window.Messages = (() => {
     c.loading = null;
     if (r.error) return;
     const pending = c.list.filter((m) => m.state);
-    c.list = [...r.messages, ...pending.filter((p) => !r.messages.some((m) => m.id === p.id))];
+    c.list = [...r.messages, ...pending.filter((p) => !r.messages.some((m) => keyOf(m) === keyOf(p)))];
     c.more = r.more;
     c.loaded = true;
   }
@@ -1085,47 +1482,304 @@ window.Messages = (() => {
   async function loadMore() {
     const c = conv(current);
     const first = c.list.find((m) => typeof m.id === 'number');
-    if (!first) return;
+    if (!first) return false;
     const list = q('.mb-list');
     const from = list.scrollHeight - list.scrollTop;
     const r = await Social.history(current, first.id);
-    if (r.error) return;
-    c.list = [...r.messages, ...c.list];
+    if (r.error) return false;
+    const have = new Set(c.list.map(keyOf));
+    c.list = [...r.messages.filter((m) => !have.has(keyOf(m))), ...c.list];
     c.more = r.more;
     paintList();
     list.scrollTop = list.scrollHeight - from;
+    return true;
   }
 
-  function send(ta) {
-    const text = ta && ta.value.trim();
-    if (!text || !current || ta.disabled) return;
-    ta.value = '';
+  // A quote was clicked: its message, brought into view for a moment (earlier pages loaded if it's further back).
+  async function jump(key) {
+    const list = q('.mb-list');
+    for (let i = 0; i < 6; i++) {
+      const row = list.__rows && list.__rows.get(key);
+      if (row) {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        row.classList.remove('flash');
+        void row.offsetWidth;
+        row.classList.add('flash');
+        return;
+      }
+      if (!conv(current).more || !(await loadMore())) break;
+    }
+    flash("that message is further back than the chat goes");
+  }
+
+  // ---------- writing ----------
+  function setReply(m) {
+    const f = Social.friend(current);
+    draft.reply = { uuid: keyOf(m), mine: !!m.mine, text: preview(m) };
+    const strip = q('.mb-reply');
+    strip.querySelector('b').textContent = m.mine ? 'Replying to yourself' : `Replying to ${f ? f.nick || f.name : 'them'}`;
+    strip.querySelector('small').textContent = draft.reply.text || '…';
+    strip.hidden = false;
+    q('.mb-input textarea').focus();
+  }
+
+  function clearReply() {
+    draft.reply = null;
+    const strip = win && q('.mb-reply');
+    if (strip) strip.hidden = true;
+  }
+
+  function setCode(on, text) {
+    draft.code = on;
+    const ta = q('.mb-input textarea');
+    const bar = q('.mb-codebar');
+    if (!ta || !bar) return;
+    win.firstElementChild.classList.toggle('coding', on);
+    ta.maxLength = on ? CODE_MAX : TEXT_MAX;
+    if (text != null) ta.value = text;
+    if (on) {
+      const sel = q('.mb-lang');
+      if (!sel.options.length) {
+        sel.innerHTML = '<option value="">guess the language</option>' + LANGS.map((l) => `<option value="${l}">${esc(langName(l))}</option>`).join('');
+      }
+      draft.lang = text ? guessLang(text) : draft.lang;
+      sel.value = draft.lang;
+    } else draft.lang = '';
+    bar.hidden = !on;
+    q('[data-act=code]').classList.toggle('on', on);
+    const f = Social.friend(current);
+    ta.placeholder = !f ? 'not friends anymore' : on ? 'paste or write code…' : `message ${f.name}…`;
     grow(ta);
-    const temp = { id: `p${++pendingSeq}`, mine: true, body: text, at: new Date().toISOString(), state: 'sending' };
+    ta.focus();
+  }
+
+  function clearDraft() {
+    if (!win || !q('.mb-input')) return;
+    clearReply();
+    if (draft.code) setCode(false);
+    hideEmoji();
+    hideSuggest();
+  }
+
+  function send() {
+    const ta = q('.mb-input textarea');
+    if (!ta || !current || ta.disabled) return;
+    let text = ta.value;
+    if (!text.trim()) return;
+    if (draft.code) {
+      const code = text.replace(/\s+$/, '').replace(/^\n+/, '');
+      text = '```' + (draft.lang || guessLang(code)) + '\n' + code + '\n```';
+    } else text = text.trim();
+    const out = draft.reply ? { ...draft.reply } : null;
+    const temp = {
+      uuid: Social.uuid(), mine: true, body: text, at: new Date().toISOString(), state: 'sending',
+      enc: sealing(Social.friend(current)), reply: out && { uuid: out.uuid, who: out.mine ? 'me' : 'them', text: out.text }, out,
+    };
+    ta.value = '';
+    clearReply();
+    if (draft.code) setCode(false);
+    hideSuggest();
+    grow(ta);
     conv(current).list.push(temp);
-    paintList(true);
+    paintList({ stick: true, fresh: new Set([keyOf(temp)]) });
     Sfx.play('send');
     deliver(temp, current);
   }
 
   async function deliver(temp, to) {
     temp.state = 'sending';
-    const r = await Social.send(to, temp.body);
+    if (isOpen && current === to) paintList();
+    const r = await Social.send(to, temp.body, { uuid: temp.uuid, reply: temp.out });
     const c = conv(to);
     if (r.error) {
       temp.state = 'failed';
       temp.error = r.error;
     } else {
-      // The live echo of this message may already be in the list; keep one.
-      c.list = c.list.filter((m) => m === temp || m.id !== r.message.id);
-      Object.assign(temp, r.message, { state: null });
+      // The live echo of this message may already be in the list (the same uuid): keep this one.
+      c.list = c.list.filter((m) => m === temp || keyOf(m) !== keyOf(r.message));
+      Object.assign(temp, r.message, { state: null, error: null });
     }
-    if (isOpen && current === to) paintList(true);
+    if (isOpen && current === to) paintList();
   }
 
-  // Messages that failed while offline go out again once the line is back.
-  function retryFailed() {
-    for (const [id, c] of convs) for (const m of c.list) if (m.state === 'failed' && m.error === 'offline') deliver(m, id);
+  // Messages that failed while offline (or before this computer had its key) go out again once that's over.
+  function retryFailed(keys) {
+    const again = (e) => e === 'offline' || e === 'e2ee_starting' || (keys && e === 'locked');
+    for (const [id, c] of convs) for (const m of c.list) if (m.state === 'failed' && again(m.error)) deliver(m, id);
+  }
+
+  // ---------- emoji: the picker, and :name: while typing ----------
+  const RECENT_KEY = 'msgEmojiRecent';
+  const recent = () => {
+    try {
+      return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  };
+  const remember = (e) => {
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify([e, ...recent().filter((x) => x !== e)].slice(0, 24)));
+    } catch {}
+  };
+  const EMO = () => (window.EMOJI ? window.EMOJI.list : []);
+
+  function insertAtCaret(text, from, to) {
+    const ta = q('.mb-input textarea');
+    const s = from ?? ta.selectionStart, e = to ?? ta.selectionEnd;
+    ta.setRangeText(text, s, e, 'end');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.focus();
+  }
+
+  function pickEmoji(e) {
+    remember(e);
+    insertAtCaret(e);
+  }
+
+  function emojiCells(list) {
+    return list.map((x) => `<button class="mb-e" data-act="pick" data-e="${esc(x[1])}" title="${esc(x[2])}">${x[1]}</button>`).join('');
+  }
+
+  function showEmoji() {
+    const box = q('.mb-emoji');
+    if (!box || !window.EMOJI) return;
+    hideSuggest();
+    const groups = window.EMOJI.groups;
+    const firsts = groups.map((_, i) => EMO().find((x) => x[0] === i)?.[1] || '·');
+    const rec = recent();
+    box.innerHTML =
+      '<div class="mb-e-top"><input class="mb-e-find" type="text" spellcheck="false" placeholder="find an emoji (fire, heart, laugh…)">' +
+      '<button class="mb-x" data-act="emojiclose" title="Close (esc)">×</button></div>' +
+      `<div class="mb-e-tabs">${rec.length ? '<button data-act="etab" data-g="r" title="Recent">🕘</button>' : ''}${firsts.map((f, i) => `<button data-act="etab" data-g="${i}" title="${esc(groups[i])}">${f}</button>`).join('')}</div>` +
+      '<div class="mb-e-grid">' +
+      (rec.length ? `<div class="mb-e-h" data-g="r">Recent</div><div class="mb-e-cells">${rec.map((e) => `<button class="mb-e" data-act="pick" data-e="${esc(e)}">${e}</button>`).join('')}</div>` : '') +
+      groups.map((g, i) => `<div class="mb-e-h" data-g="${i}">${esc(g)}</div><div class="mb-e-cells">${emojiCells(EMO().filter((x) => x[0] === i))}</div>`).join('') +
+      '</div>';
+    box.hidden = false;
+    q('[data-act=emoji]').classList.add('on');
+    box.querySelector('.mb-e-find').focus();
+  }
+
+  function hideEmoji() {
+    const box = win && q('.mb-emoji');
+    if (!box || box.hidden) return false;
+    box.hidden = true;
+    box.innerHTML = '';
+    q('[data-act=emoji]')?.classList.remove('on');
+    return true;
+  }
+
+  const matches = (x, words) => {
+    const hay = `${x[2]} ${x[3]} ${x[4]}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  };
+
+  function findEmoji(text) {
+    const box = q('.mb-emoji');
+    const grid = box.querySelector('.mb-e-grid');
+    const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return showEmoji();
+    const hits = EMO().filter((x) => matches(x, words)).slice(0, 160);
+    grid.innerHTML = hits.length ? `<div class="mb-e-cells">${emojiCells(hits)}</div>` : '<div class="mb-e-none">no emoji by that name</div>';
+  }
+
+  // `:fi` → the emoji whose short name or name starts with it, the best first.
+  let suggested = [];
+  let suggestAt = 0;
+  function suggest() {
+    const ta = q('.mb-input textarea');
+    const box = q('.mb-suggest');
+    if (!ta || !box || draft.code) return hideSuggest();
+    const before = ta.value.slice(0, ta.selectionStart);
+    const m = /(^|\s):([a-z0-9_+-]{2,})$/i.exec(before);
+    if (!m) return hideSuggest();
+    const w = m[2].toLowerCase();
+    // An exact short name first, then names starting with it, the shortest (the closest) first.
+    const score = (x) => {
+      const codes = x[4].split(' ').filter(Boolean);
+      const best = (words) => Math.min(...words.filter((p) => p.startsWith(w)).map((p) => p.length), 99);
+      if (codes.includes(w)) return 0;
+      const c = best(codes);
+      if (c < 99) return 100 + c;
+      const n = best(x[2].toLowerCase().split(/\s+/));
+      if (n < 99) return 200 + n;
+      const k = best(x[3].toLowerCase().split(/\s+/));
+      return k < 99 ? 300 + k : 999;
+    };
+    suggested = EMO().map((x) => [score(x), x]).filter((s) => s[0] < 999).sort((a, b) => a[0] - b[0]).slice(0, 6).map((s) => s[1]);
+    if (!suggested.length) return hideSuggest();
+    suggestAt = Math.min(suggestAt, suggested.length - 1);
+    box.__from = before.length - m[2].length - 1;
+    box.innerHTML = suggested
+      .map((x, i) => `<button class="${i === suggestAt ? 'on' : ''}" data-act="sugg" data-i="${i}"><span>${x[1]}</span>${esc(x[4].split(' ')[0] || x[2])}</button>`)
+      .join('') + '<small>↩ or tab to pick</small>';
+    box.hidden = false;
+  }
+
+  function hideSuggest() {
+    const box = win && q('.mb-suggest');
+    suggested = [];
+    suggestAt = 0;
+    if (!box || box.hidden) return false;
+    box.hidden = true;
+    return true;
+  }
+
+  function takeSuggest(i) {
+    const x = suggested[i];
+    const box = q('.mb-suggest');
+    if (!x || !box) return;
+    const ta = q('.mb-input textarea');
+    remember(x[1]);
+    insertAtCaret(x[1] + ' ', box.__from, ta.selectionStart);
+    hideSuggest();
+  }
+
+  // ---------- the right-click menu on a message ----------
+  function showMenu(x, y, row) {
+    const menu = q('.mb-menu');
+    const m = conv(current).list.find((v) => keyOf(v) === row.dataset.key);
+    if (!menu || !m) return;
+    const code = row.querySelector('.mb-code');
+    menu.innerHTML =
+      (row.classList.contains('canreply') ? '<button data-act="mreply">↩ Reply</button>' : '') +
+      (m.body && m.enc !== 'locked' && m.enc !== 'bad' ? '<button data-act="mcopy">Copy text</button>' : '') +
+      (code ? '<button data-act="mcode">Copy code</button>' : '');
+    if (!menu.innerHTML) return;
+    menu.__key = row.dataset.key;
+    menu.hidden = false;
+    const box = win.firstElementChild.getBoundingClientRect();
+    menu.style.left = `${Math.min(x - box.left, box.width - menu.offsetWidth - 8)}px`;
+    menu.style.top = `${Math.min(y - box.top, box.height - menu.offsetHeight - 8)}px`;
+  }
+
+  function hideMenu() {
+    const menu = win && q('.mb-menu');
+    if (!menu || menu.hidden) return false;
+    menu.hidden = true;
+    return true;
+  }
+
+  // A word in the chat for a moment (copied, …).
+  let flashTimer = 0;
+  function flash(text) {
+    const t = q('.mb-toast');
+    if (!t) return;
+    t.textContent = text;
+    t.hidden = false;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => (t.hidden = true), 1600);
+  }
+
+  function copied(btn) {
+    if (!btn) return;
+    btn.textContent = 'Copied ✓';
+    btn.classList.add('done');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('done');
+    }, 1500);
   }
 
   function chatEvent(ev) {
@@ -1136,21 +1790,37 @@ window.Messages = (() => {
         break;
       case 'message': {
         const c = convs.get(ev.with);
-        if (c && c.loaded && !c.list.some((m) => m.id === ev.message.id)) {
-          // My own message echoed back while its send is still in flight: the send fills it in.
-          const inFlight = ev.message.mine && c.list.some((m) => m.state === 'sending' && m.body === ev.message.body);
-          if (!inFlight) c.list.push(ev.message);
+        const m = ev.message;
+        let fresh = null;
+        if (c && c.loaded) {
+          const had = c.list.find((x) => keyOf(x) === keyOf(m) || (m.id && x.id === m.id));
+          // Your own message on its way: its send fills it in. Otherwise the server's copy is the one.
+          if (had) {
+            if (!had.state) Object.assign(had, m);
+          } else {
+            c.list.push(m);
+            fresh = new Set([keyOf(m)]);
+          }
         }
         if (!isOpen) return;
         if (current === ev.with) {
-          paintList();
-          if (!ev.message.mine) {
+          paintList({ fresh });
+          if (!m.mine) {
             Sfx.play('message');
             Social.read(ev.with);
           }
         } else paint();
         return;
       }
+      case 'e2ee_state':
+        if (ev.phase === 'ready') {
+          // This computer got its key (approved, recovered): what couldn't open is asked for again, what couldn't go goes.
+          for (const c of convs.values()) if (c.list.some((m) => m.enc === 'locked')) c.loaded = false;
+          if (isOpen && current && !conv(current).loaded) load(current).then(() => isOpen && paintList());
+          retryFailed(true);
+        }
+        if (isOpen) paint();
+        return;
       case 'hello':
         retryFailed();
         // Back from a drop: anything missed is in a fresh copy of the conversation.
@@ -1168,6 +1838,7 @@ window.Messages = (() => {
   // Dragging by the header, like a window: Swift moves the panel.
   if (CHAT) {
     win.addEventListener('mousedown', (e) => {
+      if (!e.target.closest('.mb-menu')) hideMenu();
       const head = e.target.closest('.mb-head');
       if (!head || e.button !== 0 || e.target.closest('button')) return;
       e.preventDefault();
@@ -1188,39 +1859,163 @@ window.Messages = (() => {
       addEventListener('mousemove', move);
       addEventListener('mouseup', up);
     });
+    win.addEventListener('contextmenu', (e) => {
+      const row = e.target.closest('.mb-msg');
+      e.preventDefault();
+      if (row) showMenu(e.clientX, e.clientY, row);
+    });
     win.addEventListener('click', (e) => {
-      const el = e.target.closest('[data-act]');
-      if (!el) return;
-      switch (el.dataset.act) {
+      const el2 = e.target.closest('[data-act]');
+      if (!el2) return;
+      const act = el2.dataset.act;
+      const ta = q('.mb-input textarea');
+      switch (act) {
         case 'close':
           return close();
         case 'switch':
-          return open(el.dataset.id);
+          return open(el2.dataset.id);
         case 'more':
           return loadMore();
         case 'send':
-          return send(q('.mb-input textarea'));
+          return send();
         case 'retry': {
-          const m = conv(current).list.find((x) => x.id === el.dataset.id);
+          const m = conv(current).list.find((x) => keyOf(x) === el2.dataset.key);
           if (m) deliver(m, current);
-          return paintList();
+          return;
         }
+        case 'reply': {
+          const row = el2.closest('.mb-msg');
+          const m = row && conv(current).list.find((x) => keyOf(x) === row.dataset.key);
+          return m && setReply(m);
+        }
+        case 'unreply':
+          return clearReply();
+        case 'jump':
+          return jump(el2.dataset.key);
+        case 'copy': {
+          const box = el2.closest('.mb-code');
+          if (!box) return;
+          post({ type: 'copyText', text: box.__code });
+          return copied(el2);
+        }
+        case 'expand':
+          el2.closest('.mb-code')?.classList.remove('long');
+          return el2.remove();
+        case 'code':
+          return setCode(!draft.code, draft.code ? null : ta.value.trim() ? ta.value : null);
+        case 'astext':
+          return setCode(false);
+        case 'emoji':
+          return hideEmoji() || showEmoji();
+        case 'emojiclose':
+          hideEmoji();
+          return ta.focus();
+        case 'pick':
+          return pickEmoji(el2.dataset.e);
+        case 'etab': {
+          const h = q(`.mb-e-h[data-g="${el2.dataset.g}"]`);
+          if (!h) {
+            q('.mb-e-find').value = '';
+            showEmoji();
+            q(`.mb-e-h[data-g="${el2.dataset.g}"]`)?.scrollIntoView({ block: 'start' });
+          } else h.scrollIntoView({ block: 'start' });
+          return;
+        }
+        case 'sugg':
+          return takeSuggest(Number(el2.dataset.i));
+        case 'mreply': {
+          const m = conv(current).list.find((x) => keyOf(x) === q('.mb-menu').__key);
+          hideMenu();
+          return m && setReply(m);
+        }
+        case 'mcopy': {
+          const m = conv(current).list.find((x) => keyOf(x) === q('.mb-menu').__key);
+          hideMenu();
+          if (m) post({ type: 'copyText', text: m.body });
+          return flash('copied');
+        }
+        case 'mcode': {
+          const row = q(`.mb-msg[data-key="${CSS.escape(q('.mb-menu').__key)}"]`);
+          hideMenu();
+          const codes = row ? [...row.querySelectorAll('.mb-code')].map((b) => b.__code) : [];
+          if (codes.length) post({ type: 'copyText', text: codes.join('\n\n') });
+          return flash('code copied');
+        }
+        case 'sc':
+          return showCode();
+        case 'scok':
+          return Social.keys('seen', { id: current });
+        case 'scyes':
+        case 'scun':
+          return Social.keys('verify', { id: current, on: act === 'scyes' }).then(showCode);
+        case 'scclose':
+          q('.mb-sc').hidden = true;
+          return ta.focus();
       }
     });
-    win.addEventListener('input', (e) => e.target.matches('textarea') && grow(e.target));
-    win.addEventListener('keydown', (e) => {
+    win.addEventListener('input', (e) => {
+      if (e.target.matches('.mb-e-find')) return findEmoji(e.target.value);
       if (!e.target.matches('textarea')) return;
+      grow(e.target);
+      suggest();
+    });
+    win.addEventListener('change', (e) => {
+      if (e.target.matches('.mb-lang')) draft.lang = e.target.value;
+    });
+    win.addEventListener('keydown', (e) => {
+      if (e.target.matches('.mb-e-find')) {
+        if (e.key === 'Enter') {
+          const first = q('.mb-emoji .mb-e');
+          if (first) pickEmoji(first.dataset.e);
+          e.preventDefault();
+        }
+        return;
+      }
+      if (!e.target.matches('textarea')) return;
+      if (suggested.length) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          suggestAt = (suggestAt + (e.key === 'ArrowDown' ? 1 : suggested.length - 1)) % suggested.length;
+          e.preventDefault();
+          return suggest();
+        }
+        if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          return takeSuggest(suggestAt);
+        }
+      }
+      if (draft.code) {
+        // Code: Tab indents, Enter is a new line, ⌘↩ sends.
+        if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          return insertAtCaret('  ');
+        }
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) {
+          e.preventDefault();
+          return send();
+        }
+        return;
+      }
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        send(e.target);
+        send();
       }
+    });
+    win.addEventListener('keyup', (e) => {
+      if (e.target.matches('textarea') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) suggest();
     });
   }
 
   addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (CHAT && isOpen) close();
-    else if (NOTICES && peek) hidePeek();
+    if (CHAT && isOpen) {
+      // The nearest thing first: a menu, the emoji, a suggestion, the security code, code mode, the reply; then the chat.
+      if (hideMenu() || hideEmoji() || hideSuggest()) return;
+      const sc = q('.mb-sc');
+      if (sc && !sc.hidden) return void (sc.hidden = true);
+      if (draft.code) return setCode(false);
+      if (draft.reply) return clearReply();
+      close();
+    } else if (NOTICES && peek) hidePeek();
   });
 
   Social.on((ev) => {
@@ -1238,6 +2033,11 @@ window.Messages = (() => {
   function pasteText(text) {
     const ta = typing();
     if (!ta || !text) return false;
+    // Code pasted into an empty chat box: it goes as code (send as text undoes it).
+    if (CHAT && ta.closest('#chatwin') && !draft.code && !ta.value.trim() && looksLikeCode(text)) {
+      setCode(true, text.replace(/\s+$/, ''));
+      return true;
+    }
     ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     return true;

@@ -19,11 +19,30 @@ final class Social {
     private var away = false
     private var awayTimer: Timer?
 
+    /// Live events go through E2EE (messages opened, key changes taken in) one at a time, in the order they came.
+    private var delivering: Task<Void, Never>?
+
+    init() {
+        // What changes in the message keys reaches the pages the way live events do.
+        E2EE.shared.onState = { [weak self] json in self?.onEvent?(json) }
+    }
+
     /// Cloud's state changed: keep the line open while signed in and the API answers.
     func sync(_ s: Cloud.State) {
         signedIn = s.registered == true
-        if signedIn, s.reachable { open() }
+        if signedIn, s.reachable {
+            open()
+            E2EE.shared.wake()
+        }
         if !signedIn { close() }
+    }
+
+    private func deliver(_ json: String) {
+        let before = delivering
+        delivering = Task { @MainActor in
+            await before?.value
+            for out in await E2EE.shared.incoming(json) { self.onEvent?(out) }
+        }
     }
 
     /// The network came back or the Mac woke up: a line opened before may be dead without anyone noticing (no
@@ -72,7 +91,7 @@ final class Social {
                 switch result {
                 case let .success(.string(text)):
                     self.delay = 2
-                    if let json = Self.pageJSON(text) { self.onEvent?(json) }
+                    if let json = Self.pageJSON(text) { self.deliver(json) }
                     self.receive(t)
                 case .success:
                     self.receive(t)

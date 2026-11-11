@@ -37,7 +37,7 @@
 
 /* header strip: what this is, from whom, when */
 .mb-head { position: relative; display: flex; align-items: center; gap: 8px; height: 28px; flex: none; padding: 0 6px 0 0; background: repeating-linear-gradient(90deg, rgba(var(--glow), 0.07) 0 1px, transparent 1px 18px), linear-gradient(180deg, rgba(var(--glow), 0.16), transparent); }
-.mb-tag { display: flex; align-items: center; height: 100%; padding: 0 9px; background: var(--accent); color: var(--ink); font-weight: 700; letter-spacing: 0.1em; font-size: 0.86em; clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%); padding-right: 14px; }
+.mb-tag { display: flex; flex: none; align-items: center; height: 100%; padding: 0 9px; white-space: nowrap; background: var(--accent); color: var(--ink); font-weight: 700; letter-spacing: 0.1em; font-size: 0.86em; clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%); padding-right: 14px; }
 .mb-who { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: var(--hi); font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
 .mb-who small { color: var(--dim); font-weight: 400; }
 .mb-time { margin-left: auto; color: var(--dim); font-size: 0.9em; white-space: nowrap; }
@@ -105,16 +105,128 @@
 .mb-list { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 4px; scrollbar-width: thin; scrollbar-color: var(--dim2) transparent; }
 .mb-more { display: block; margin: 0 auto 10px; padding: 2px 10px; border: 1px solid rgba(var(--glow), 0.3); border-radius: 10px; background: transparent; color: var(--dim); font: inherit; font-size: 0.9em; cursor: pointer; }
 .mb-day { margin: 10px 0 6px; color: var(--dim2); font-size: 0.85em; text-align: center; letter-spacing: 0.12em; }
-.mb-msg { display: flex; flex-direction: column; align-items: flex-start; margin: 0 0 6px; animation: mb-line 0.25s ease-out both; }
+.mb-msg { position: relative; display: flex; flex-direction: column; align-items: flex-start; margin: 0 0 6px; }
+/* only a message that just arrived slides in (messages.js paintList); the others stay still */
+.mb-msg.new { animation: mb-line 0.25s ease-out both; }
 .mb-msg.mine { align-items: flex-end; }
 .mb-msg .b { max-width: 82%; padding: 6px 10px; border: 1px solid rgba(var(--cyan-rgb), 0.35); border-radius: 8px 8px 8px 2px; background: rgba(var(--cyan-rgb), 0.07); color: var(--hi); font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .mb-msg.mine .b { border-color: rgba(var(--glow), 0.5); border-radius: 8px 8px 2px 8px; background: rgba(var(--glow), 0.13); }
-.mb-msg .t { margin-top: 2px; color: var(--dim2); font-size: 0.82em; }
+.mb-msg .t { display: flex; align-items: center; gap: 8px; margin-top: 2px; color: var(--dim2); font-size: 0.82em; }
+.mb-msg.mine .t { flex-direction: row-reverse; }
+.mb-msg .mb-rep { padding: 0 4px; border: 0; background: none; color: var(--dim); font: inherit; cursor: pointer; opacity: 0; transition: opacity 0.12s; }
+.mb-msg.canreply:hover .mb-rep, .mb-msg .mb-rep:focus-visible { opacity: 1; }
+.mb-msg .mb-rep:hover { color: var(--accent); }
+.mb-msg:not(.canreply) .mb-rep { display: none; }
+.mb-msg.flash .b { animation: mb-flash 1.2s ease-out; }
+@keyframes mb-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px rgba(var(--accent-rgb), 0.6); } 100% { box-shadow: none; } }
+.mb-msg.jumbo .b { padding: 0 2px; border: 0; background: none; font-size: 34px; line-height: 1.15; }
+.mb-msg.locked .b, .mb-msg.bad .b { border-style: dashed; }
+.mb-lockmsg { color: var(--dim); font-style: italic; }
+.mb-msg.bad .mb-lockmsg { color: var(--red); }
+/* a reply: the message it answers, above it; a click shows that one */
+.mb-quote { display: flex; flex-direction: column; gap: 1px; width: 100%; margin: 0 0 5px; padding: 3px 8px; border: 0; border-left: 3px solid var(--accent); border-radius: 4px; background: rgba(0, 0, 0, 0.28); color: var(--txt); font: inherit; font-size: 0.86em; text-align: left; cursor: pointer; }
+.mb-quote b { color: var(--accent); font-weight: 700; }
+.mb-quote span { overflow: hidden; color: var(--dim); white-space: nowrap; text-overflow: ellipsis; }
+.mb-quote:hover { background: rgba(0, 0, 0, 0.4); }
+.mb-q { margin: 2px 0; padding: 1px 8px; border-left: 3px solid var(--dim2); color: var(--dim); white-space: pre-wrap; }
+/* code: `inline` and fenced blocks, coloured, with Copy */
+.mb-ic { padding: 0 4px; border-radius: 3px; background: rgba(0, 0, 0, 0.45); color: rgb(var(--accent-soft-rgb)); font: 0.92em/1.4 var(--font); }
+.mb-msg .b:has(.mb-code) { max-width: 94%; }
+.mb-code { position: relative; margin: 4px 0; overflow: hidden; border: 1px solid rgba(var(--glow), 0.28); border-radius: 6px; background: rgba(0, 0, 0, 0.55); white-space: normal; }
+.mb-code-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px 3px 9px; border-bottom: 1px solid rgba(var(--glow), 0.18); color: var(--dim); font-size: 0.82em; letter-spacing: 0.04em; }
+.mb-copy { min-height: 24px; padding: 0 9px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 4px; background: rgba(var(--glow), 0.1); color: var(--txt); font: inherit; cursor: pointer; }
+.mb-copy:hover { border-color: var(--accent); color: var(--hi); }
+.mb-copy.done { border-color: var(--green); color: var(--green); }
+.mb-code pre { margin: 0; padding: 7px 10px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--dim2) transparent; }
+.mb-code code { display: block; color: var(--hi); font: 12px/1.5 var(--font); white-space: pre; tab-size: 4; }
+.mb-code.long pre { max-height: 270px; overflow-y: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.mb-code-more { display: block; width: 100%; min-height: 26px; border: 0; border-top: 1px solid rgba(var(--glow), 0.18); background: rgba(var(--glow), 0.08); color: var(--accent); font: inherit; font-size: 0.86em; cursor: pointer; }
+.mb-code .hljs-keyword, .mb-code .hljs-selector-tag, .mb-code .hljs-built_in, .mb-code .hljs-name { color: var(--accent); }
+.mb-code .hljs-string, .mb-code .hljs-regexp, .mb-code .hljs-addition { color: var(--green); }
+.mb-code .hljs-number, .mb-code .hljs-literal, .mb-code .hljs-symbol { color: var(--amber); }
+.mb-code .hljs-comment, .mb-code .hljs-quote { color: var(--dim2); font-style: italic; }
+.mb-code .hljs-title, .mb-code .hljs-section, .mb-code .hljs-selector-id, .mb-code .hljs-selector-class { color: var(--cyan); }
+.mb-code .hljs-type, .mb-code .hljs-title.class_ { color: var(--magenta); }
+.mb-code .hljs-attr, .mb-code .hljs-attribute, .mb-code .hljs-variable, .mb-code .hljs-template-variable, .mb-code .hljs-params { color: rgb(var(--accent-soft-rgb)); }
+.mb-code .hljs-meta, .mb-code .hljs-doctag { color: var(--dim); }
+.mb-code .hljs-deletion { color: var(--red); }
+/* the line where a conversation starts being end-to-end encrypted */
+.mb-sealed { margin: 8px 18px 10px; padding: 5px 10px; border: 1px solid rgba(var(--amber-rgb), 0.3); border-radius: 6px; background: rgba(var(--amber-rgb), 0.06); color: var(--amber); font-size: 0.85em; text-align: center; }
 .mb-msg.sending .b { opacity: 0.6; }
 .mb-msg.failed .b { border-color: var(--red); cursor: pointer; }
 .mb-msg.failed .t { color: var(--red); }
 .mb-empty { padding: 40px 20px; color: var(--dim); text-align: center; }
 .mb-sub { color: var(--dim); font-weight: 400; font-size: 0.9em; }
+.mb-lock { padding: 0; border: 0; background: none; color: var(--amber); font: inherit; cursor: pointer; }
+.mb-lock:hover { text-decoration: underline; }
+/* above the conversation: a changed security code, messages locked here, or not encrypted yet */
+.mb-note { display: flex; align-items: center; gap: 8px; flex: none; margin: 6px 10px 0; padding: 5px 9px; border: 1px solid rgba(var(--glow), 0.3); border-radius: 6px; font-size: 0.88em; line-height: 1.35; }
+.mb-note[hidden] { display: none; }
+.mb-note span { flex: 1; }
+.mb-note.open { border-color: rgba(var(--accent-rgb), 0.25); color: var(--dim); }
+.mb-note.lock { border-color: rgba(var(--amber-rgb), 0.45); background: rgba(var(--amber-rgb), 0.07); color: var(--amber); }
+.mb-note.warn { border-color: rgba(var(--red-rgb), 0.5); background: rgba(var(--red-rgb), 0.08); color: var(--red); }
+.mb-note button, .mb-codebar button { flex: none; min-height: 24px; padding: 0 8px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: var(--txt); font: inherit; cursor: pointer; }
+.mb-note button:hover, .mb-codebar button:hover { border-color: var(--accent); color: var(--hi); }
+/* writing: the message it answers, code mode, emoji */
+.mb-reply { display: flex; align-items: center; gap: 8px; flex: none; margin: 6px 10px 0; padding: 4px 4px 4px 9px; border-left: 3px solid var(--accent); border-radius: 4px; background: rgba(0, 0, 0, 0.35); }
+.mb-reply[hidden] { display: none; }
+.mb-reply-t { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.mb-reply-t b { color: var(--accent); font-size: 0.88em; }
+.mb-reply-t small { overflow: hidden; color: var(--dim); white-space: nowrap; text-overflow: ellipsis; }
+.mb-codebar { display: flex; align-items: center; gap: 8px; flex: none; margin: 6px 10px 0; color: var(--dim); font-size: 0.86em; }
+.mb-codebar[hidden] { display: none; }
+.mb-codebar-t { color: var(--accent); font-weight: 700; }
+.mb-codebar-k { flex: 1; color: var(--dim2); }
+.mb-lang { min-height: 24px; max-width: 150px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 4px; background: rgba(0, 0, 0, 0.45); color: var(--txt); font: inherit; }
+.mb.coding .mb-input textarea { white-space: pre; overflow-x: auto; tab-size: 2; font-size: 12px; }
+.mb.coding .mb-input .pr { color: var(--cyan); }
+.mb-tool { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 26px; height: 20px; padding: 0; border: 1px solid rgba(var(--glow), 0.3); border-radius: 3px; background: transparent; color: var(--dim); cursor: pointer; }
+.mb-tool svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.mb-tool svg .f { fill: currentColor; stroke: none; }
+.mb-tool:hover, .mb-tool.on { border-color: var(--accent); color: var(--hi); }
+.mb-tool.on { background: rgba(var(--glow), 0.16); }
+.mb-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: none; margin: 6px 10px 0; padding: 4px; border: 1px solid rgba(var(--glow), 0.3); border-radius: 6px; background: rgba(var(--bg-rgb), 0.92); }
+.mb-suggest[hidden] { display: none; }
+.mb-suggest button { display: flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--txt); font: inherit; cursor: pointer; }
+.mb-suggest button span { font-size: 17px; }
+.mb-suggest button.on, .mb-suggest button:hover { border-color: var(--accent); background: rgba(var(--glow), 0.14); }
+.mb-suggest small { margin-left: auto; padding-right: 4px; color: var(--dim2); }
+.mb-emoji { position: absolute; left: 10px; right: 10px; bottom: 54px; z-index: 6; display: flex; flex-direction: column; height: 300px; border: 1px solid rgba(var(--glow), 0.45); border-radius: 8px; background: rgb(var(--bg-rgb)); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(var(--glow), 0.25); }
+.mb-emoji[hidden] { display: none; }
+.mb-e-top { display: flex; align-items: center; gap: 6px; padding: 7px 8px 4px; }
+.mb-e-find { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid rgba(var(--glow), 0.35); border-radius: 4px; outline: 0; background: rgba(0, 0, 0, 0.45); color: var(--hi); font: inherit; }
+.mb-e-find:focus { border-color: var(--accent); }
+.mb-e-tabs { display: flex; gap: 2px; padding: 0 6px 4px; border-bottom: 1px solid rgba(var(--glow), 0.18); }
+.mb-e-tabs button { flex: 1; min-height: 26px; padding: 0; border: 0; border-radius: 4px; background: none; font-size: 16px; cursor: pointer; }
+.mb-e-tabs button:hover { background: rgba(var(--glow), 0.16); }
+.mb-e-grid { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 6px 8px; scrollbar-width: thin; scrollbar-color: var(--dim2) transparent; }
+.mb-e-h { position: sticky; top: 0; z-index: 1; padding: 6px 2px 3px; background: rgb(var(--bg-rgb)); color: var(--dim); font-size: 0.82em; letter-spacing: 0.08em; text-transform: uppercase; }
+.mb-e-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(32px, 1fr)); }
+.mb-e { height: 32px; padding: 0; border: 0; border-radius: 5px; background: none; font-size: 21px; line-height: 32px; cursor: pointer; }
+.mb-e:hover { background: rgba(var(--glow), 0.18); }
+.mb-e-none { padding: 30px 10px; color: var(--dim); text-align: center; }
+/* right-click on a message */
+.mb-menu { position: absolute; z-index: 7; display: flex; flex-direction: column; min-width: 130px; padding: 4px; border: 1px solid rgba(var(--glow), 0.45); border-radius: 6px; background: rgb(var(--bg-rgb)); box-shadow: 0 6px 22px rgba(0, 0, 0, 0.6); }
+.mb-menu[hidden] { display: none; }
+.mb-menu button { min-height: 26px; padding: 0 10px; border: 0; border-radius: 4px; background: none; color: var(--txt); font: inherit; text-align: left; cursor: pointer; }
+.mb-menu button:hover { background: rgba(var(--glow), 0.2); color: var(--hi); }
+/* a friend's security code, over the chat */
+.mb-sc { position: absolute; inset: 40px 14px auto; z-index: 8; }
+.mb-sc[hidden] { display: none; }
+.mb-sc-in { padding: 12px 14px; border: 1px solid rgba(var(--amber-rgb), 0.5); border-radius: 8px; background: rgb(var(--bg-rgb)); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.65); }
+.mb-sc-in > b { color: var(--amber); }
+.mb-sc-in p { margin: 8px 0; color: var(--dim); font-size: 0.92em; line-height: 1.45; }
+.mb-sc-code { margin: 10px 0 4px; color: var(--hi); font: 15px/1.6 var(--font); letter-spacing: 0.06em; text-align: center; }
+.mb-sc-ok { align-self: center; color: var(--green); }
+.mb-toast { position: absolute; left: 50%; bottom: 58px; z-index: 9; padding: 3px 10px; border: 1px solid rgba(var(--glow), 0.4); border-radius: 10px; background: rgba(var(--bg-rgb), 0.95); color: var(--hi); font-size: 0.88em; transform: translateX(-50%); pointer-events: none; }
+.mb-toast[hidden] { display: none; }
+/* notices: another computer asking for your messages, and the code the two compare */
+.mb.peek.sas, .mb.peek.sas.waiting { --glow: var(--amber-rgb); }
+.mb.peek.sas.done { --glow: var(--green-rgb); }
+.mb.peek.sas.failed { --glow: var(--red-rgb); }
+.mb-sas { display: block; margin: 8px 0 2px; color: var(--hi); font: 700 20px/1.3 var(--font); letter-spacing: 0.14em; text-align: center; }
+.mb.peek.sas .mb-text small { display: block; color: var(--dim); text-align: center; }
 
 /* ===== your progress (messages.js): the daily bonus strip and the level-up fanfare ===== */
 .mb.peek.xp { width: auto; max-width: 372px; cursor: pointer; --glow: var(--amber-rgb); }

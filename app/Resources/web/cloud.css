@@ -727,6 +727,16 @@
 .acct-menu button.danger:hover { background: rgba(var(--red-rgb), 0.14); }
 /* the account section's last row: sign out, delete */
 .acct-end { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+/* end-to-end encrypted messages (account.js keysHTML) */
+.acct-e2ee { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid rgba(var(--amber-rgb), 0.3); border-radius: 6px; background: rgba(var(--amber-rgb), 0.04); }
+.acct-e2ee-h { display: flex; flex-direction: column; gap: 2px; }
+.acct-e2ee-h b { color: var(--amber); }
+.acct-e2ee-h small { color: var(--dim); line-height: 1.4; }
+.acct-e2ee .hk-row small { display: block; color: var(--dim); }
+.acct-rk { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acct-rk code { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid rgba(var(--amber-rgb), 0.45); border-radius: 4px; background: rgba(0, 0, 0, 0.4); color: var(--hi); font: 12px/1.4 var(--font); letter-spacing: 0.04em; user-select: all; -webkit-user-select: all; overflow-wrap: anywhere; }
+.acct-rk-btns { display: flex; gap: 6px; flex: none; }
+.acct-rk-new small { color: var(--amber) !important; }
 .acct-del { color: var(--red); border-color: rgba(var(--red-rgb), 0.5); }
 .acct-ask .acct-warn { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid rgba(var(--red-rgb), 0.45); border-radius: 6px; background: rgba(var(--red-rgb), 0.08); color: var(--txt); line-height: 1.55; }
 .acct-ask.danger { border-color: rgba(var(--red-rgb), 0.6); }

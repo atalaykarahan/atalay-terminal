@@ -66,6 +66,140 @@ window.Account = (() => {
     return A;
   }
 
+  // ---------- end-to-end encryption (E2EE.swift) ----------
+  // Messages are sealed on this computer before they go. Here: whether this computer has the key, the recovery key one
+  // click away, another of your computers waiting for the key, and the recovery key typed in when nothing else can help.
+  let E = null; // E2EE.swift's state: phase, recovery, waiting, sas, friends
+  const ef = { show: false, key: '', confirmNew: false, confirmOver: false, msg: '', bad: false, busy: false };
+  const keysCall = (action, extra) => cloud({ type: 'e2ee', action, ...(extra || {}) }).then((r) => r || { error: 'offline' });
+  const KEY_ERRORS = {
+    bad_recovery: "that isn't a recovery key (ORBI- and 32 letters and digits)",
+    wrong_recovery: "that recovery key isn't this account's",
+    no_backup: 'this account has no recovery copy',
+    locked: 'this computer has no key to give yet',
+    not_found: 'that computer is gone',
+  };
+  async function loadKeys() {
+    const r = await keysCall('state');
+    if (r && !r.error) {
+      E = r;
+      render();
+    }
+  }
+  window.Social?.on?.((ev) => {
+    if (ev.type !== 'e2ee_state') return;
+    const { type, ...st } = ev;
+    E = st;
+    render();
+  });
+  const keySay = (msg, bad = false) => {
+    ef.msg = msg;
+    ef.bad = bad;
+    render();
+  };
+  const where = (d) => [d.os, d.app ? `app ${d.app}` : ''].filter(Boolean).join(' · ');
+
+  function keysHTML() {
+    if (!E) return '';
+    let html = '<div class="acct-e2ee"><div class="acct-e2ee-h"><b>🔒 end-to-end encrypted messages</b>';
+    if (E.phase === 'ready') {
+      html += '<small>on · your messages are sealed on this computer before they leave it: only you and the friend you write to can read them, the server can\'t</small></div>';
+      if (ef.show && ef.key) {
+        html +=
+          `<div class="acct-rk"><code>${esc(ef.key)}</code><button type="button" class="mn-btn" data-acct="rk-copy">copy</button><button type="button" class="mn-btn" data-acct="rk-hide">hide</button></div>` +
+          '<p class="acct-why">Keep it somewhere safe, like a password manager. It opens your messages on a new computer when none of yours is around to approve it.</p>';
+      } else {
+        const hint = E.recovery === 'new'
+          ? 'new · save it now: it opens your messages if you lose your computers'
+          : E.recovery === 'elsewhere' ? 'it was made on another of your computers' : 'opens your messages on a new computer when no other one is around';
+        html +=
+          `<div class="hk-row${E.recovery === 'new' ? ' acct-rk-new' : ''}"><span>recovery key<small>${hint}</small></span><span class="acct-rk-btns">` +
+          (E.recovery !== 'elsewhere' ? '<button type="button" class="mn-btn go" data-acct="rk-show">show</button>' : '') +
+          `<button type="button" class="mn-btn" data-acct="rk-new">${ef.confirmNew ? 'sure? the old one stops working' : 'new key…'}</button></span></div>`;
+      }
+      for (const d of E.waiting || []) {
+        html +=
+          `<div class="hk-row"><span>${isWin(d.os) ? 'a Windows PC' : 'a Mac'} of yours is waiting for your messages<small>${esc(where(d))}</small></span>` +
+          `<button type="button" class="mn-btn go" data-acct="approve" data-id="${esc(d.id)}">approve…</button></div>`;
+      }
+    } else if (E.phase === 'locked') {
+      html +=
+        '<small>locked on this computer · your messages are sealed with a key it doesn\'t have yet</small></div>' +
+        '<p class="acct-why">Open Orbiterm on another of your computers: it offers to approve this one, and both screens show a code to compare. Or enter your recovery key:</p>' +
+        '<div class="acct-form"><label class="hk-field"><span class="hk-prompt">⚿</span><input class="acct-rk-in" spellcheck="false" autocomplete="off" placeholder="ORBI-XXXX-XXXX-…"></label>' +
+        `<button type="button" class="mn-btn go" data-acct="rk-open"${ef.busy ? ' disabled' : ''}>unlock</button></div>` +
+        '<div class="hk-row"><span>lost every computer and the recovery key?<small>start over with a new key: messages sealed before stay closed, and your friends see your security code change</small></span>' +
+        `<button type="button" class="mn-btn acct-del" data-acct="rk-over">${ef.confirmOver ? 'sure? start over' : 'start over…'}</button></div>`;
+    } else {
+      html += `<small>${E.phase === 'starting' ? 'getting ready…' : 'starts once this computer reaches the server'}</small></div>`;
+    }
+    if (ef.msg) html += `<p class="hk-status acct-status ${ef.bad ? 'bad' : 'ok'}">${esc(ef.msg)}</p>`;
+    return html + '</div>';
+  }
+
+  async function keysClick(act, b) {
+    if (act === 'rk-show') {
+      const r = await keysCall('recovery', { seen: true });
+      ef.key = r.key || '';
+      ef.show = !!r.key;
+      return render();
+    }
+    if (act === 'rk-hide') {
+      ef.show = false;
+      ef.key = '';
+      return render();
+    }
+    if (act === 'rk-copy') {
+      try {
+        await navigator.clipboard.writeText(ef.key);
+        return keySay('recovery key copied');
+      } catch {
+        return keySay("couldn't copy it · select it and copy", true);
+      }
+    }
+    if (act === 'rk-new') {
+      if (!ef.confirmNew) {
+        ef.confirmNew = true;
+        render();
+        return setTimeout(() => ((ef.confirmNew = false), render()), 5000);
+      }
+      ef.confirmNew = false;
+      const r = await keysCall('newRecovery');
+      if (r.error) return keySay(errText(r.error), true);
+      ef.key = r.key;
+      ef.show = true;
+      keysCall('recovery', { seen: true });
+      return keySay('new recovery key · the old one no longer opens anything');
+    }
+    if (act === 'rk-open') {
+      const input = host.querySelector('.acct-rk-in');
+      const key = (input && input.value.trim()) || '';
+      if (!key) return input && input.focus();
+      ef.busy = true;
+      keySay('opening…');
+      const r = await keysCall('recover', { key });
+      ef.busy = false;
+      if (r.error) return keySay(KEY_ERRORS[r.error] || errText(r.error), true);
+      return keySay('unlocked · your messages open on this computer now');
+    }
+    if (act === 'rk-over') {
+      if (!ef.confirmOver) {
+        ef.confirmOver = true;
+        render();
+        return setTimeout(() => ((ef.confirmOver = false), render()), 5000);
+      }
+      ef.confirmOver = false;
+      const r = await keysCall('startOver');
+      if (r.error) return keySay(errText(r.error), true);
+      return keySay('a new key is ready · save the new recovery key');
+    }
+    if (act === 'approve') {
+      const r = await keysCall('approve', { device: b.dataset.id });
+      if (r.error) return keySay(KEY_ERRORS[r.error] || errText(r.error), true);
+      return keySay('compare the code on both screens (bottom right)');
+    }
+  }
+
   // ---------- Settings → ACCOUNT ----------
   const ago = (at) => {
     const s = Math.max(0, (Date.now() - new Date(at)) / 1000);
@@ -96,6 +230,7 @@ window.Account = (() => {
           '</div>' +
           mail +
           status +
+          keysHTML() +
           '<div class="acct-end"><button type="button" class="mn-btn acct-del" data-acct="delete">delete my data…</button></div>',
       );
       const input = host.querySelector('.acct-email, .acct-code');
@@ -136,6 +271,7 @@ window.Account = (() => {
         '<div class="hk-row"><span>sync settings across your computers<small>theme, interface font and size, terminal text size, sound, token savers, AI colours, updates · as VS Code\'s Settings Sync</small></span>' +
         `<button type="button" class="hk-sw acct-sync${on ? ' on' : ''}" role="switch" aria-checked="${on}" title="Sync settings across your computers"><i></i></button></div>` +
         status +
+        keysHTML() +
         '<div class="acct-end"><button type="button" class="mn-btn" data-acct="signout">sign out on this computer</button>' +
         '<button type="button" class="mn-btn acct-del" data-acct="delete">delete account…</button></div>',
     );
@@ -303,6 +439,7 @@ window.Account = (() => {
       }
       if (act === 'signout') return signOut();
       if (act === 'delete') return deleteData();
+      if (act.startsWith('rk-') || act === 'approve') return keysClick(act, b);
     }
     if (e.target.closest('.acct-sync')) {
       Sync.enable(!Sync.enabled());
@@ -314,6 +451,7 @@ window.Account = (() => {
     if (e.key !== 'Enter') return;
     if (e.target.closest('.acct-email')) sendCode();
     if (e.target.closest('.acct-code')) verify();
+    if (e.target.closest('.acct-rk-in')) keysClick('rk-open');
   }
 
   // cloud.js's Settings page gives the section to fill while the menu is open.
@@ -324,6 +462,7 @@ window.Account = (() => {
     host.addEventListener('keydown', onKey);
     render();
     load();
+    loadKeys();
   }
 
   // ---------- the activity bar's menu ----------

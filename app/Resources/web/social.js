@@ -15,6 +15,14 @@ window.Social = (() => {
     offline: { label: 'offline', hint: '' },
   };
   const dot = (p) => `<i class="pdot p-${p || 'offline'}" title="${PRESENCE[p || 'offline'].label}"></i>`;
+  // The app's own id for a message (a random UUID): its row in the chat, and a message sent twice counts once.
+  const uuid = () => {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  };
   const handle = (p) => `${p.name}#${String(p.tag).padStart(4, '0')}`;
 
   let S = null; // { me: {id, name, tag, status}, friends, incoming, outgoing }
@@ -100,7 +108,7 @@ window.Social = (() => {
       case 'message': {
         const f = friend(ev.with);
         if (!f) break;
-        f.last = { body: ev.message.body, at: ev.message.at, mine: ev.message.mine };
+        f.last = { body: ev.message.body, at: ev.message.at, mine: ev.message.mine, enc: ev.message.enc };
         if (!ev.message.mine) f.unread = (f.unread || 0) + 1;
         S.friends = [f, ...S.friends.filter((x) => x !== f)];
         break;
@@ -128,6 +136,18 @@ window.Social = (() => {
       case 'nickname': {
         const f = friend(ev.id);
         if (f) f.nick = ev.nick || null;
+        break;
+      }
+      // End-to-end encryption (E2EE.swift): this computer's keys, friends' security codes; a friend got a key.
+      case 'e2ee_state': {
+        const { type, ...st } = ev;
+        S.me.e2ee = st;
+        for (const f of S.friends) f.sc = st.friends[f.id] || null;
+        break;
+      }
+      case 'e2ee_keys': {
+        const f = friend(ev.id);
+        if (f) f.e2ee = true;
         break;
       }
       case 'friend_xp': {
@@ -200,7 +220,22 @@ window.Social = (() => {
         return r;
       }),
     history: (id, before) => api('GET', `v1/messages/${id}${before ? `?before=${before}` : ''}`),
-    send: (to, body) => api('POST', 'v1/messages', { to, body }),
+    // `extra`: { uuid, reply: { uuid, mine, text } }. Swift seals it on the way (E2EE.swift).
+    send: (to, body, extra) => api('POST', 'v1/messages', { to, body, uuid: (extra && extra.uuid) || uuid(), ...(extra && extra.reply ? { reply: extra.reply } : {}) }),
+    uuid,
+    // This computer's end-to-end keys as Swift last said (phase ready · locked · starting · off, approvals, recovery key).
+    e2ee: () => (S && S.me && S.me.e2ee) || null,
+    // Asks E2EE.swift: state, recovery, newRecovery, recover, startOver, approve, confirm, code, verify, seen.
+    keys: (action, extra) => h.postMessage({ type: 'e2ee', action, ...(extra || {}) }).catch(() => ({ error: 'offline' })),
+    // A message in one line, for previews: code says so, a sealed one that didn't open says that.
+    preview: (m) => {
+      if (!m) return '';
+      if (m.enc === 'locked') return '🔒 encrypted message';
+      if (m.enc === 'bad') return "⚠ a message that didn't open";
+      const body = m.body || '';
+      const text = body.replace(/```[\s\S]*?(```|$)/g, ' ').replace(/^> .*$/gm, '').replace(/\s+/g, ' ').trim();
+      return text || (body.includes('```') ? '</> code' : '');
+    },
     read: (id) => api('POST', 'v1/messages/read', { with: id }),
     // Whether friends see your active time (today, this week, in total); your level shows either way.
     setActivity: (show) => api('PATCH', 'v1/me/activity', { show }),

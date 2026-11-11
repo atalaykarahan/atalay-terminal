@@ -814,7 +814,7 @@ window.Cloud = (() => {
     const friendRow = (f) => {
       const x = f.xp;
       const r = Xp.rank(x ? x.level : 1);
-      const line = f.last ? `${f.last.mine ? 'you: ' : ''}${esc(f.last.body)}` : `${esc(Social.PRESENCE[f.presence].label)}${x ? ` · Lv ${x.level} · ${esc(r.name)}` : ''}`;
+      const line = f.last ? `${f.last.mine ? 'you: ' : ''}${esc(Social.preview(f.last))}` : `${esc(Social.PRESENCE[f.presence].label)}${x ? ` · Lv ${x.level} · ${esc(r.name)}` : ''}`;
       // Their last 24 hours, not their today: that ends at their own midnight, wherever they live.
       const last24 = x && x.last24;
       const today = last24 ? `<span class="mn-today" title="Active in the last 24 hours"><b>${Xp.dur(last24)}</b><small>24h</small></span>` : '';
