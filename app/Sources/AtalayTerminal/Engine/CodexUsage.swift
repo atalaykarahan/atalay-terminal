@@ -88,7 +88,7 @@ enum CodexUsage {
                 "plan": (snapshot["planType"] ?? snapshot["plan_type"]) as? String ?? "", "source": "Codex"]
     }
 
-    private static func codexExecutable() -> String? {
+    static func codexExecutable() -> String? {
         let env = ProcessInfo.processInfo.environment
         var candidates = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex",
                           (HOME as NSString).appendingPathComponent(".npm-global/bin/codex"),

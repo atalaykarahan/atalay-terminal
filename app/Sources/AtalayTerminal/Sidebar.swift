@@ -4,7 +4,9 @@ import WebKit
 @MainActor
 final class SidebarModel: ObservableObject {
     @Published var items: [ChatItem] = []
-    @Published var briefs: [String: SessionBrief] = [:]
+    @Published var briefs: [String: SessionBrief] = [:] {
+        didSet { reviveRunning() }
+    }
     @Published var openInTabs: Set<String> = []
     @Published var activeSessionId: String?
     @Published var query = ""
@@ -41,6 +43,19 @@ final class SidebarModel: ObservableObject {
     @Published var folded = Set(UserDefaults.standard.stringArray(forKey: "chatFolded") ?? []) {
         didSet { UserDefaults.standard.set(Array(folded), forKey: "chatFolded") }
     }
+    /// Chats deleted from the list (ChatTrash.swift): out of it, and in Settings' deleted chats for 30 days, where they
+    /// can be put back; then their files are deleted from the Mac. Kept across launches.
+    @Published var trash = ChatTrash.load() {
+        didSet { ChatTrash.save(trash) }
+    }
+    /// Chats whose files are being deleted right now: out of the trash already, not back in the list.
+    @Published private var erasing: Set<String> = []
+    /// Chats picked (⌘-click; ⇧-click for all up to it) for deleting or archiving several at once.
+    @Published var selectedChats: Set<String> = []
+    /// The chat picked last: where a ⇧-click's run starts.
+    private var lastPicked: String?
+    /// Files of chats were deleted: the engine reads the list again.
+    var onErased: (() -> Void)?
 
     /// The same folder however it's written (a trailing slash, `..`).
     static func folderKey(_ cwd: String) -> String {
@@ -80,12 +95,182 @@ final class SidebarModel: ObservableObject {
     @Published var selectedFolders: Set<String> = []
 
     func selectFolder(_ cwd: String) {
+        selectedChats = []
         if selectedFolders.remove(cwd) == nil { selectedFolders.insert(cwd) }
     }
 
     func setSelectedFolders(archived on: Bool) {
         for cwd in selectedFolders { setFolder(cwd, archived: on) }
         selectedFolders = []
+    }
+
+    // MARK: picking chats
+
+    /// The chats as the list shows them now, top to bottom (a folded folder's and those behind "+N more" aren't shown).
+    private var shownChats: [ChatItem] {
+        var out = sections.favorites
+        for card in cards where !(folded.contains(Self.folderKey(card.cwd)) && query.isEmpty) {
+            out += expanded.contains(card.cwd) || !query.isEmpty ? card.items : Array(card.items.prefix(5))
+        }
+        return out
+    }
+
+    /// The picked chats still in the list.
+    var pickedChats: [ChatItem] { everything.filter { selectedChats.contains($0.id) } }
+
+    /// ⌘-click, or a click while some are picked: this chat in or out of the picked ones.
+    func pick(_ item: ChatItem) {
+        selectedFolders = []
+        if selectedChats.remove(item.id) == nil { selectedChats.insert(item.id) }
+        lastPicked = item.id
+    }
+
+    /// ⇧-click: every chat shown from the one picked last to this one.
+    func pick(upTo item: ChatItem) {
+        let shown = shownChats.map(\.id)
+        guard let from = lastPicked.flatMap({ shown.firstIndex(of: $0) }), let to = shown.firstIndex(of: item.id) else {
+            if !selectedChats.contains(item.id) { pick(item) }
+            return
+        }
+        selectedFolders = []
+        selectedChats.formUnion(shown[min(from, to)...max(from, to)])
+    }
+
+    func clearPicked() {
+        selectedChats = []
+        selectedFolders = []
+        lastPicked = nil
+    }
+
+    /// The picked chats into the archive.
+    func archivePicked() {
+        for item in pickedChats where !isArchived(item) { toggleArchived(item) }
+        clearPicked()
+    }
+
+    /// The chats a folder's card shows (not its archived or starred ones), for deleting a whole folder's.
+    func chats(inFolders cwds: Set<String>) -> [String] {
+        let keys = Set(cwds.map(Self.folderKey))
+        return cards.filter { keys.contains(Self.folderKey($0.cwd)) }.flatMap { $0.items.map(\.id) }
+    }
+
+    // MARK: deleting chats
+
+    /// Whether a chat can be deleted here: a saved conversation of Claude Code's, Codex's or Antigravity's, not running
+    /// (a running one is ended first).
+    func canDelete(_ item: ChatItem) -> Bool {
+        guard brief(for: item)?.live != true else { return false }
+        switch item.tool {
+        case "claude": return ChatTrash.isTranscript(item.path)
+        case "codex": return ChatTrash.isCodexLog(item.path, id: item.id)
+        case "antigravity": return ChatTrash.isSessionId(item.id)
+        default: return false
+        }
+    }
+
+    /// Of the chats named: those that can be deleted, how many can't because they run, and how many others can't.
+    func deletable(_ ids: [String]) -> (chats: [ChatItem], running: Int, others: Int) {
+        let wanted = Set(ids)
+        var chats: [ChatItem] = [], running = 0, others = 0
+        for item in everything where wanted.contains(item.id) {
+            if canDelete(item) {
+                chats.append(item)
+            } else if brief(for: item)?.live == true {
+                running += 1
+            } else {
+                others += 1
+            }
+        }
+        return (chats, running, others)
+    }
+
+    /// Into the trash: out of the list (and the favorites), kept 30 days.
+    func delete(_ chats: [ChatItem]) {
+        let now = nowMs()
+        var next = trash
+        for item in chats where canDelete(item) {
+            next[item.id] = TrashedChat(id: item.id, title: title(of: item), cwd: item.cwd, tool: item.tool, path: item.path, at: now)
+        }
+        favorites.subtract(chats.map(\.id))
+        trash = next
+        clearPicked()
+    }
+
+    /// Out of the trash, back where it was in the list.
+    func putBack(_ id: String) { trash[id] = nil }
+
+    func putBackAll() { trash = [:] }
+
+    /// A deleted chat that runs again (continued in a terminal: `claude --resume`, `codex resume`, `agy --conversation`)
+    /// comes back: it's in use.
+    private func reviveRunning() {
+        guard !trash.isEmpty else { return }
+        for b in briefs.values where b.live {
+            if trash[b.id] != nil { trash[b.id] = nil }
+            if let conv = b.convId, trash[conv] != nil { trash[conv] = nil }
+        }
+    }
+
+    /// Deleted from the disk, for good: these chats of the trash. Their names and marks here go with them. One that
+    /// couldn't be deleted just now (its tool held its list) stays in the trash, to be tried again.
+    func erase(_ ids: [String]) {
+        let chats = ids.compactMap { trash[$0] }
+        guard !chats.isEmpty else { return }
+        let gone = Set(chats.map(\.id))
+        erasing.formUnion(gone)
+        trash = trash.filter { !gone.contains($0.key) }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let failed = chats.filter { !ChatTrash.erase($0) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.erasing.subtract(gone)
+                    for chat in failed where self.trash[chat.id] == nil { self.trash[chat.id] = chat }
+                    let done = gone.subtracting(failed.map(\.id))
+                    self.favorites.subtract(done)
+                    self.archived.subtract(done)
+                    self.restored.subtract(done)
+                    self.customTitles = self.customTitles.filter { !done.contains($0.key) }
+                    self.onErased?()
+                }
+            }
+        }
+    }
+
+    /// The chats whose 30 days are over are deleted from the disk. One written to since it was deleted (continued while
+    /// the app was closed) comes back instead.
+    func emptyExpiredTrash() {
+        let all = trash, now = nowMs()
+        guard all.values.contains(where: { ChatTrash.expired($0, now: now) }) else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let due = ChatTrash.due(all, now: now)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    // Only what is still as it was read: one put back meanwhile stays.
+                    for chat in due.putBack where self.trash[chat.id] == chat { self.trash[chat.id] = nil }
+                    self.erase(due.erase.filter { self.trash[$0.id] == $0 }.map(\.id))
+                }
+            }
+        }
+    }
+
+    /// For Settings (TrashBridge): the deleted chats by folder, the one deleted last first, each with the days it has left.
+    func trashList() -> [[String: Any]] {
+        let now = nowMs()
+        var order: [String] = []
+        var map: [String: [TrashedChat]] = [:]
+        for chat in trash.values.sorted(by: { $0.at > $1.at }) {
+            if map[chat.cwd] == nil { order.append(chat.cwd) }
+            map[chat.cwd, default: []].append(chat)
+        }
+        let names = labels(for: order)
+        return order.map { cwd in
+            ["cwd": cwd, "label": names[cwd] ?? projectLabel(cwd),
+             "chats": (map[cwd] ?? []).map {
+                 ["id": $0.id, "title": $0.title, "tool": $0.tool, "days": ChatTrash.daysLeft($0.at, now: now)]
+             }]
+        }
     }
 
     func isArchived(_ item: ChatItem) -> Bool {
@@ -165,9 +350,12 @@ final class SidebarModel: ObservableObject {
         briefs[item.id] ?? briefs.values.first { $0.convId == item.id }
     }
 
-    /// Every chat, newest first; live sessions without a saved title too.
+    /// The saved chats in the list or its archive: not the deleted ones (Settings · deleted chats).
+    var savedCount: Int { items.filter { trash[$0.id] == nil && !erasing.contains($0.id) }.count }
+
+    /// Every chat, newest first; live sessions without a saved title too. The deleted ones aren't among them.
     private var everything: [ChatItem] {
-        var all = items
+        var all = items.filter { trash[$0.id] == nil && !erasing.contains($0.id) }
         let known = Set(items.map(\.id))
         for b in briefs.values where b.live && !known.contains(b.id) && (b.convId.map { !known.contains($0) } ?? true) && !b.cwd.isEmpty {
             let tool = b.name == "Antigravity" ? "antigravity" : b.name == "Codex" ? "codex" : "claude"
@@ -245,6 +433,8 @@ struct SidebarActions {
     let newTerminal: (String) -> Void
     let reveal: (String) -> Void
     let copyId: (String) -> Void
+    /// Delete, for these chats: the app asks first, then they go to Settings' deleted chats for 30 days.
+    let delete: ([String]) -> Void
     /// One of the app's terminals (its car id): shows it, or ends it.
     let openTerminal: (String) -> Void
     let endTerminal: (String) -> Void
@@ -268,7 +458,7 @@ struct SidebarView: View {
                     .padding(.horizontal, 8)
                     .frame(height: 19)
                     .background(Theme.cAccent)
-                Text("\(model.items.count) saved · \(model.briefs.values.filter(\.live).count) live")
+                Text("\(model.savedCount) saved · \(model.briefs.values.filter(\.live).count) live")
                     .font(.mono(9.5))
                     .foregroundColor(Theme.cDim)
                 Spacer()
@@ -317,17 +507,26 @@ struct SidebarView: View {
             .help("Open a folder: it stays at the top of the list, and a terminal opens in it")
             .padding(10)
 
-            // Folders picked (a click on their headers): archive or unarchive them all at once.
-            if !model.selectedFolders.isEmpty {
+            // Chats picked (⌘-click on them) or folders (on their headers): archive or delete them all at once.
+            if !model.selectedFolders.isEmpty || !model.selectedChats.isEmpty {
+                let folders = !model.selectedFolders.isEmpty
                 HStack(spacing: 8) {
-                    Text("\(model.selectedFolders.count) selected")
+                    Text("\(folders ? model.selectedFolders.count : model.pickedChats.count) selected")
                         .font(.mono(10, .semibold))
                         .lineLimit(1)
                         .foregroundColor(Theme.cAccentSoft)
                     Spacer()
-                    bulkButton("archive") { model.setSelectedFolders(archived: true) }
+                    bulkButton("archive") {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            if folders { model.setSelectedFolders(archived: true) } else { model.archivePicked() }
+                        }
+                    }
+                    // The app asks first; what's deleted leaves the list then.
+                    bulkButton("delete", danger: true) {
+                        actions.delete(folders ? model.chats(inFolders: model.selectedFolders) : model.pickedChats.map(\.id))
+                    }
                     Button {
-                        model.selectedFolders = []
+                        model.clearPicked()
                     } label: {
                         Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundColor(Theme.cDim)
                     }
@@ -428,16 +627,18 @@ struct SidebarView: View {
             }
     }
 
-    private func bulkButton(_ title: String, _ action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.25)) { action() }
-        } label: {
+    /// A button of the bar over the list while chats or folders are picked. `danger`: it deletes, so it isn't the filled
+    /// one (the likely action is), only outlined in red.
+    private func bulkButton(_ title: String, danger: Bool = false, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Text(title)
                 .font(.mono(10, .semibold))
-                .foregroundColor(Theme.cInk)
+                .foregroundColor(danger ? Theme.cRed : Theme.cInk)
                 .padding(.horizontal, 8)
                 .frame(height: 18)
-                .background(RoundedRectangle(cornerRadius: 3).fill(Theme.cAccent))
+                .background(RoundedRectangle(cornerRadius: 3).fill(danger ? Color.clear : Theme.cAccent))
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(danger ? Theme.cRed : Color.clear, lineWidth: 1))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -449,6 +650,11 @@ struct SidebarView: View {
                              pinned: card.pinned, shut: shut, archived: false, selected: model.selectedFolders.contains(cwd),
                              bulk: model.selectedFolders.count, onNew: { actions.newTerminal(cwd) },
                              onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.setFolder(cwd, archived: true) } },
+                             // Its chats, or those of every folder picked with it.
+                             onDelete: {
+                                 let picked = model.selectedFolders.count > 1 && model.selectedFolders.contains(cwd)
+                                 actions.delete(model.chats(inFolders: picked ? model.selectedFolders : [cwd]))
+                             },
                              onSelect: { model.selectFolder(cwd) },
                              onFold: { withAnimation(.easeInOut(duration: 0.2)) { model.toggleFold(cwd) } },
                              onUnpin: { withAnimation(.easeInOut(duration: 0.25)) { model.unpin(cwd) } },
@@ -461,16 +667,30 @@ struct SidebarView: View {
         let b = model.brief(for: item)
         let inTab = model.openInTabs.contains(item.id) || (b.map { model.openInTabs.contains($0.id) } ?? false)
         let isActive = model.activeSessionId == item.id || (b != nil && model.activeSessionId == b?.id)
+        let selected = model.selectedChats.contains(item.id)
+        // With others picked too, its menu's Delete is for all of them.
+        let picked = selected ? model.pickedChats.map(\.id) : []
         return ChatRow(item: item, title: model.title(of: item), renaming: model.renaming == item.id,
                        onRename: { name in
                            if let name { model.rename(item.id, to: name) } else { model.renaming = nil }
                        },
                        brief: b, inTab: inTab,
                        isActive: isActive, favorite: favorite,
-                       archived: archived,
+                       archived: archived, selected: selected,
                        onStar: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleFavorite(item) } },
                        onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.toggleArchived(item) } })
-            .onTapGesture { actions.open(item.id) }
+            .onTapGesture {
+                // ⇧-click picks all up to it, ⌘-click picks it; while some are picked a click picks too, so one that
+                // misses its key doesn't open a chat (and start Claude). Else a click opens it.
+                let keys = NSEvent.modifierFlags
+                if keys.contains(.shift) {
+                    model.pick(upTo: item)
+                } else if keys.contains(.command) || !model.selectedChats.isEmpty {
+                    model.pick(item)
+                } else {
+                    actions.open(item.id)
+                }
+            }
             .contextMenu {
                 Button("Rename…") { model.renaming = item.id }
                 Button(favorite ? "Remove from Favorites" : "Add to Favorites") {
@@ -479,6 +699,7 @@ struct SidebarView: View {
                 Button(archived ? "Unarchive" : "Archive") {
                     withAnimation(.easeInOut(duration: 0.25)) { model.toggleArchived(item) }
                 }
+                Button(selected ? "Deselect" : "Select") { model.pick(item) }
                 Divider()
                 Button("Open in a Window") { actions.open(item.id) }
                 if item.tool == "claude" {
@@ -488,6 +709,10 @@ struct SidebarView: View {
                 Divider()
                 Button("Show Folder in Finder") { actions.reveal(item.cwd) }
                 Button("Copy Session ID") { actions.copyId(item.id) }
+                Divider()
+                Button(picked.count > 1 ? "Delete the \(picked.count) Selected Chats…" : "Delete…") {
+                    actions.delete(picked.count > 1 ? picked : [item.id])
+                }
             }
     }
 }
@@ -527,6 +752,7 @@ private struct ProjectHeader: View {
     let bulk: Int
     let onNew: () -> Void
     let onArchive: () -> Void
+    let onDelete: () -> Void
     let onSelect: () -> Void
     let onFold: () -> Void
     let onUnpin: () -> Void
@@ -587,7 +813,7 @@ private struct ProjectHeader: View {
             if NSEvent.modifierFlags.contains(.command) { onSelect() } else { onFold() }
         }
         .help(selected ? "Selected · ⌘-click again to leave it out"
-              : "\(tildify(cwd)) · click to fold \(shut ? "open" : "shut") · ⌘-click to select, for archiving several at once")
+              : "\(tildify(cwd)) · click to fold \(shut ? "open" : "shut") · ⌘-click to select, for archiving or deleting several at once")
         .onHover { hover = $0 }
         .contextMenu {
             if bulk > 1 && selected {
@@ -601,6 +827,9 @@ private struct ProjectHeader: View {
             Button(archived ? "Unarchive Folder" : "Archive Folder", action: onArchive)
             Button(selected ? "Deselect" : "Select", action: onSelect)
             if pinned { Button("Remove from the List", action: onUnpin) }
+            Divider()
+            Button(bulk > 1 && selected ? "Delete the Chats in the \(bulk) Selected Folders…" : "Delete the Chats in This Folder…",
+                   action: onDelete)
         }
     }
 }
@@ -681,6 +910,8 @@ private struct ChatRow: View {
     let isActive: Bool
     let favorite: Bool
     let archived: Bool
+    /// Picked (⌘-click) for deleting or archiving several at once: a tick in its light's place, and a brighter row.
+    let selected: Bool
     let onStar: () -> Void
     let onArchive: () -> Void
     @State private var hover = false
@@ -694,6 +925,12 @@ private struct ChatRow: View {
         HStack(spacing: 8) {
             StatusDot(status: status ?? "ended", size: 7, hollow: !live)
                 .id(status ?? "ended")
+                .opacity(selected ? 0 : 1)
+                .overlay {
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundColor(Theme.cAccent)
+                    }
+                }
             VStack(alignment: .leading, spacing: 1) {
                 if renaming {
                     // Enter keeps it, Esc calls it off; an empty name gives the chat back its own.
@@ -758,7 +995,8 @@ private struct ChatRow: View {
         .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(isActive ? Theme.cAccent.opacity(0.18) : (inTab ? Theme.cAccent.opacity(0.10) : (hover ? Theme.cAccent.opacity(0.06) : .clear)))
+                .fill(selected ? Theme.cAccent.opacity(0.26)
+                      : isActive ? Theme.cAccent.opacity(0.18) : (inTab ? Theme.cAccent.opacity(0.10) : (hover ? Theme.cAccent.opacity(0.06) : .clear)))
         )
         .overlay(alignment: .leading) {
             if isActive {
@@ -818,6 +1056,46 @@ final class ArchiveBridge: NSObject, WKScriptMessageHandlerWithReply {
             default: return replyHandler(nil, "unknown request")
             }
             replyHandler(["folders": model.archivedList()], nil)
+        }
+    }
+}
+
+/// Settings' deleted chats (web/cloud.js): the chats deleted from the chats list, by folder, with the days each has
+/// left of its 30; putting one or all back, and deleting one or all from the disk now (`confirm` asks first: that
+/// can't be undone).
+final class TrashBridge: NSObject, WKScriptMessageHandlerWithReply {
+    private weak var model: SidebarModel?
+    private let confirm: @MainActor (_ title: String, _ text: String) -> Bool
+
+    init(model: SidebarModel, confirm: @escaping @MainActor (_ title: String, _ text: String) -> Bool) {
+        self.model = model
+        self.confirm = confirm
+    }
+
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        let body = message.body as? [String: Any] ?? [:]
+        MainActor.assumeIsolated {
+            guard let model else { return replyHandler(nil, "no chats list") }
+            switch body["type"] as? String {
+            case "list": model.emptyExpiredTrash()
+            case "putBack": if let id = body["id"] as? String { model.putBack(id) }
+            case "putBackAll": model.putBackAll()
+            case "erase":
+                if let id = body["id"] as? String, let chat = model.trash[id],
+                   confirm("Delete “\(clip(chat.title.isEmpty ? "untitled" : chat.title, 60))” now?",
+                           "It's deleted from this Mac for good. This can't be undone.") {
+                    model.erase([id])
+                }
+            case "eraseAll":
+                let n = model.trash.count
+                if n > 0, confirm(n == 1 ? "Delete the chat now?" : "Delete all \(n) chats now?",
+                                  "\(n == 1 ? "It's" : "They're") deleted from this Mac for good. This can't be undone.") {
+                    model.erase(Array(model.trash.keys))
+                }
+            default: return replyHandler(nil, "unknown request")
+            }
+            replyHandler(["folders": model.trashList(), "days": Int(ChatTrash.keep / 86_400_000)], nil)
         }
     }
 }

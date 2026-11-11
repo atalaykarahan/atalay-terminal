@@ -95,6 +95,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         t.tolerance = 0.5
         RunLoop.main.add(t, forMode: .common)
+        // The deleted chats whose 30 days are over go from the disk: a minute after the app starts, then every hour.
+        let trash = Timer(timeInterval: 3600, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sidebar.emptyExpiredTrash() }
+        }
+        trash.tolerance = 60
+        RunLoop.main.add(trash, forMode: .common)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in self?.sidebar.emptyExpiredTrash() }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -117,6 +124,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString($0, forType: .string)
             },
+            delete: { [weak self] in self?.deleteChats($0) },
             openTerminal: { [weak self] in self?.openTerminal($0) },
             endTerminal: { [weak self] in self?.endTerminal($0) },
             openFolder: { [weak self] in self?.openFolder() },
@@ -124,6 +132,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebarHost = side
         ThemeStore.glow(side, on: ThemeStore.shared.glows, soft: true)
         radar.handleArchive(ArchiveBridge(model: sidebar))
+        radar.handleTrash(TrashBridge(model: sidebar) { [weak self] title, text in
+            self?.ask(title, text, ["Delete", "Cancel"], style: .warning) == 0
+        })
+        // A deleted chat's files are gone: the list is read again now, not at the engine's next look.
+        sidebar.onErased = { [weak self] in self?.engine.refreshHistorySoon() }
 
         let split = ThemedSplitView()
         split.isVertical = true
@@ -618,6 +631,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         makeChat(cwd: cwd, claudeArgs: nil, sessionId: nil, title: (cwd as NSString).lastPathComponent, frame: frame)
     }
 
+    /// Delete in the chats list (a chat's menu, a folder's, or the bar over the list while some are picked): asks first,
+    /// then the chats (Claude Code's, Codex's, Antigravity's) leave the list for Settings' deleted chats, where they stay
+    /// 30 days before they're deleted from the Mac. Running chats stay: they're ended first.
+    private func deleteChats(_ ids: [String]) {
+        let pick = sidebar.deletable(ids)
+        var stay: [String] = []
+        if pick.running > 0 {
+            stay.append(pick.running == 1 ? "1 running chat stays in the list: end it first."
+                                          : "\(pick.running) running chats stay in the list: end them first.")
+        }
+        if pick.others > 0 {
+            stay.append(pick.others == 1 ? "1 chat that isn't saved yet stays too." : "\(pick.others) chats that aren't saved yet stay too.")
+        }
+        guard !pick.chats.isEmpty else {
+            if pick.running + pick.others == 0 { return alert("Nothing to delete", "There are no saved chats here.") }
+            let one = pick.running + pick.others == 1
+            return alert(one ? "This chat can't be deleted" : "These chats can't be deleted",
+                         pick.others == 0 ? (one ? "It's running: end it first." : "They're running: end them first.") : stay.joined(separator: "\n"))
+        }
+        let one = pick.chats.count == 1
+        let title = one ? "Delete “\(clip(sidebar.title(of: pick.chats[0]), 60))”?" : "Delete \(pick.chats.count) chats?"
+        let text = (one ? "It stays in Settings › deleted chats for 30 days, where you can put it back. Then it's deleted from this Mac for good."
+                        : "They stay in Settings › deleted chats for 30 days, where you can put them back. Then they're deleted from this Mac for good.")
+            + (stay.isEmpty ? "" : "\n\n" + stay.joined(separator: "\n"))
+        guard ask(title, text, ["Delete", "Cancel"], style: .warning) == 0 else { return }
+        withAnimation(.easeInOut(duration: 0.25)) { sidebar.delete(pick.chats) }
+    }
+
     private func openFromNotice(_ sid: String) {
         if !sid.hasPrefix("ai:"), let b = briefs[sid], b.live, b.host == "term", let pid = b.pid,
            Detached.sessionName(hosting: pid, anyBuild: true) == nil {
@@ -690,6 +731,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if item?.tool == "antigravity" {
             guard !fork else { return }
             return makeChat(cwd: cwd, claudeArgs: ["agy", "--conversation", sid], sessionId: sid, title: title)
+        }
+        // A Codex conversation that isn't running (a running one opened its pane above): Codex resumes it.
+        if item?.tool == "codex" {
+            guard !fork else { return }
+            return makeChat(cwd: cwd, claudeArgs: ["codex", "resume", sid], sessionId: sid, title: title)
         }
         let resume = ["--resume", sid]
         if fork {

@@ -342,9 +342,11 @@ window.Cloud = (() => {
               <button type="button" class="hk-sw ts" data-which="rtk" role="switch" aria-checked="false" title="Turn rtk on or off"><i></i></button></div>
             <div class="hk-row ts-row"><span>caveman · short answers from Claude Code, Codex and Antigravity<small class="ts-note" data-which="caveman">…</small></span>
               <button type="button" class="hk-sw ts" data-which="caveman" role="switch" aria-checked="false" title="Turn caveman on or off"><i></i></button></div>` : ''}
-            ${ARCHIVE() ? `<div class="hk-h">CHATS</div>
-            <div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
+            ${ARCHIVE() || TRASH() ? '<div class="hk-h">CHATS</div>' : ''}
+            ${ARCHIVE() ? `<div class="hk-row"><span>archived chats<small>out of the chats list · they show only when you open them here</small></span>
               <button type="button" class="arc-btn arc-open">manage</button></div>` : ''}
+            ${TRASH() ? `<div class="hk-row"><span>deleted chats<small>kept 30 days, then deleted for good · put one back from here</small></span>
+              <button type="button" class="arc-btn trash-open">manage</button></div>` : ''}
             ${window.__powerSave ? `<div class="hk-h">POWER</div>
             <div class="hk-row"><span>power save on by itself at low battery<small>below ${window.__powerSave.threshold}% on battery, and in ${window.__powerSave.saver || 'Low Power Mode'}, the map draws fewer and smaller frames · the switch on the map turns it off again</small></span>
               <button type="button" class="hk-sw pwr-auto" role="switch" aria-checked="true" title="Power save on by itself at low battery"><i></i></button></div>` : ''}
@@ -366,6 +368,7 @@ window.Cloud = (() => {
     // settings: the hacker name
     const settings = q('.mn-settings');
     settings.querySelector('.arc-open')?.addEventListener('click', openArchive);
+    settings.querySelector('.trash-open')?.addEventListener('click', openTrash);
     const own = S.hackerName || '';
     settings.querySelector('.hk-input').value = own;
     const ok = q('.mn-save');
@@ -509,21 +512,25 @@ window.Cloud = (() => {
   const archiveCall = (msg) => window.webkit.messageHandlers.archive.postMessage(msg);
   function openArchive() {
     if (!ARCHIVE()) return;
+    chatsWindow('ARCHIVED CHATS');
+    renderArchive();
+  }
+  // The window the archived chats and the deleted ones (below) open in, one at a time.
+  function chatsWindow(title) {
     let layer = document.getElementById('arcmodal');
     if (!layer) {
       layer = document.createElement('div');
       layer.id = 'arcmodal';
       document.body.appendChild(layer);
+      addEventListener('keydown', archiveKey, true);
     }
     layer.innerHTML =
       '<div class="pk hk arc-pk crt-on"><div class="pk-border"></div>' +
-      '<div class="pk-title"><img class="hk-logo" src="logo.png" alt=""><b>ARCHIVED CHATS</b></div>' +
+      `<div class="pk-title"><img class="hk-logo" src="logo.png" alt=""><b>${title}</b></div>` +
       '<div class="hk-body"><div class="arc"></div></div>' +
       '<div class="pk-foot"><span class="pk-sel note">esc to close</span><button type="button" class="pk-cancel arc-close">close</button></div></div>';
     layer.onmousedown = (e) => e.target === layer && closeArchive();
     layer.querySelector('.arc-close').onclick = closeArchive;
-    addEventListener('keydown', archiveKey, true);
-    renderArchive();
   }
   function closeArchive() {
     document.getElementById('arcmodal')?.remove();
@@ -559,6 +566,50 @@ window.Cloud = (() => {
       const act = b.dataset.act;
       const msg = act === 'all' ? { type: 'restoreAll' } : act === 'folder' ? { type: 'restoreFolder', cwd: b.dataset.cwd } : { type: 'restore', id: b.dataset.id };
       renderArchive(await archiveCall(msg).catch(() => null));
+    };
+  }
+
+  // ---------- deleted chats ----------
+  // A chat deleted from the chats list leaves it at once, and the Mac app (Sidebar.swift, ChatTrash.swift) keeps it 30
+  // days before its files go. Until then it's here, in the same window as the archived ones: by folder, each with the
+  // days it has left, to put back in the list (one or all) or to delete now (the app asks first: that can't be undone).
+  const TRASH = () => !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.trash);
+  const trashCall = (msg) => window.webkit.messageHandlers.trash.postMessage(msg);
+  function openTrash() {
+    if (!TRASH()) return;
+    chatsWindow('DELETED CHATS');
+    renderTrash();
+  }
+  async function renderTrash(r) {
+    const box = document.querySelector('#arcmodal .arc');
+    if (!box) return;
+    if (!r) r = await trashCall({ type: 'list' }).catch(() => null);
+    const folders = (r && r.folders) || [];
+    const keep = (r && r.days) || 30;
+    const total = folders.reduce((n, f) => n + f.chats.length, 0);
+    const left = (d) => (d <= 1 ? 'last day' : `${d} days left`);
+    box.innerHTML = !total
+      ? `<p class="arc-none">nothing deleted · right-click a chat in the chats list to delete it: it stays here ${keep} days</p>`
+      : `<div class="arc-head"><span>${total} deleted chat${total === 1 ? '' : 's'}</span><span class="arc-acts">` +
+        '<button type="button" class="arc-btn" data-act="backAll">put all back</button>' +
+        '<button type="button" class="arc-btn arc-del" data-act="eraseAll">delete all now</button></span></div>' +
+        '<div class="arc-list arc-trash">' +
+        folders.map((f) =>
+          `<div class="arc-folder"><div class="arc-f"><span title="${esc(f.cwd)}">${esc(f.label)}<i>${f.chats.length}</i></span></div>` +
+          f.chats.map((c) => `<div class="arc-c"><span title="${esc(c.title || '')}">${esc(c.title || 'untitled')}</span>` +
+            (c.tool === 'codex' || c.tool === 'antigravity' ? `<i class="arc-tool">${c.tool === 'codex' ? 'codex' : 'agy'}</i>` : '') +
+            `<i class="arc-left">${left(c.days)}</i>` +
+            `<button type="button" class="arc-btn" data-act="back" data-id="${esc(c.id)}">put back</button>` +
+            `<button type="button" class="arc-btn arc-del" data-act="erase" data-id="${esc(c.id)}">delete now</button></div>`).join('') +
+          '</div>').join('') +
+        '</div>';
+    box.onclick = async (e) => {
+      const b = e.target.closest('.arc-btn');
+      if (!b) return;
+      const act = b.dataset.act;
+      const msg = act === 'backAll' ? { type: 'putBackAll' } : act === 'eraseAll' ? { type: 'eraseAll' }
+        : { type: act === 'back' ? 'putBack' : 'erase', id: b.dataset.id };
+      renderTrash(await trashCall(msg).catch(() => null));
     };
   }
 

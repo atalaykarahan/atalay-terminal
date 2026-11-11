@@ -57,6 +57,11 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, W
         webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "archive")
     }
 
+    /// Settings' deleted chats (web/cloud.js) go to the chats list too (Sidebar.swift's trash).
+    func handleTrash(_ bridge: TrashBridge) {
+        webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "trash")
+    }
+
     /// Source Control's requests (web/git.js) go to Git.swift.
     func handleGit(_ bridge: GitBridge) {
         webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "git")

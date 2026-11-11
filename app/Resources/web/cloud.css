@@ -657,6 +657,13 @@
 .arc-f i { margin-left: 6px; color: var(--dim2); font-style: normal; font-weight: 400; }
 .arc-btn { flex: none; padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--dim); font: 11px var(--font); cursor: pointer; }
 .arc-btn:hover { border-color: var(--accent); color: var(--hi); }
+/* the deleted chats, in the same window (cloud.js openTrash): each with the days it has left, to put back or delete now */
+.arc-acts { display: flex; flex: none; gap: 6px; }
+.arc-trash .arc-c span { flex: 0 1 auto; }
+.arc-left { flex: none; margin-left: auto; color: var(--dim); font-style: normal; font-size: 0.92em; }
+/* a Codex or Antigravity chat's tag, as the chats list shows it */
+.arc-tool { flex: none; padding: 0 4px; border-radius: 2px; background: rgba(var(--accent-rgb), 0.12); color: var(--accent); font-style: normal; font-size: 0.8em; }
+.arc-del:hover { border-color: var(--red); color: var(--red); }
 
 /* ===== Settings → ACCOUNT (account.js): sign in with GitHub or an e-mail code, the account's computers, settings sync;
    and the two questions it may ask, over the page: which name to keep when two accounts merge, and which settings win. */

@@ -2325,8 +2325,10 @@ final class RadarEngine {
             // One that quit (Ctrl+C, its terminal closed) leaves the dashboard now, its planet blowing up, as Claude's does;
             // it stayed two minutes as a dim "ended" planet. Only its window still hears of it, to turn back into a terminal.
             if live { list.append(item) }
+            // A Codex's conversation is its log's: the chats list shows a running one once, as that saved conversation.
+            let conv = O.convId ?? (O.tool == "Codex" ? O.log.flatMap(CodexHooks.session(ofLog:)) : nil)
             var brief = SessionBrief(id: O.id, name: O.tool, title: !O.title.isEmpty ? O.title : O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
-                                     cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab, convId: O.convId)
+                                     cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab, convId: conv)
             brief.model = O.model.isEmpty ? O.tool : O.model
             brief.effort = O.effort
             brief.ctx = O.ctx
@@ -2551,12 +2553,14 @@ final class RadarEngine {
                 changed = true
             }
         }
-        for sid in history.keys where !present.contains(sid) && history[sid]?.tool != "antigravity" {
+        for sid in history.keys where !present.contains(sid) && history[sid]?.tool == "claude" {
             history.removeValue(forKey: sid)
             changed = true
         }
         // Scan Antigravity conversations from its SQLite database and merge into the same list.
         changed = scanAgyHistory(present: &present) || changed
+        // And Codex's.
+        changed = scanCodexHistory() || changed
         guard changed else { return }
         let items = history.values
             .filter { !$0.cwd.isEmpty && (!$0.title.isEmpty || !$0.lastPrompt.isEmpty) }
@@ -2609,6 +2613,11 @@ final class RadarEngine {
             cwd = URL(fileURLWithPath: cwd).standardizedFileURL.path
             let tPath = "\(agyRoot)/brain/\(id)/.system_generated/logs/transcript.jsonl"
             let tStat = fileStat(tPath) ?? fileStat("\(agyRoot)/conversations/\(id).db")
+            // Listed with nothing of it on disk any more (deleted from the chats list, ChatTrash.swift): it wouldn't open.
+            guard fileStat("\(agyRoot)/conversations/\(id).db") != nil || tStat != nil else {
+                present.remove(id)
+                continue
+            }
             let size = Int(tStat?.size ?? 0)
             let mtime = max(row.mtime, tStat?.mtime ?? 0)
             // Only update when mtime or transcript size changed.
@@ -2648,6 +2657,60 @@ final class RadarEngine {
             changed = true
         }
         return changed
+    }
+
+    /// Codex's saved conversations, from its own state database (~/.codex/state_<n>.sqlite, as `codex resume` lists
+    /// them), into the same list: the ones begun in a terminal (its TUI), not its desktop app's or `codex exec`'s, nor
+    /// those it archived, each with its log still on disk. A running one shows as this conversation too (its brief's
+    /// convId). Returns true when anything changed.
+    private func scanCodexHistory() -> Bool {
+        let home = ChatTrash.codexHome
+        var present = Set<String>()
+        var changed = false
+        func prune() -> Bool {
+            for sid in history.keys where history[sid]?.tool == "codex" && !present.contains(sid) {
+                history.removeValue(forKey: sid)
+                changed = true
+            }
+            return changed
+        }
+        // The newest schema's database (state_5.sqlite today). One that can't be read just now keeps the list as it was.
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: home)) ?? []
+        let newest = names.compactMap { n -> (Int, String)? in
+            guard n.hasPrefix("state_"), n.hasSuffix(".sqlite"), let v = Int(n.dropFirst(6).dropLast(7)) else { return nil }
+            return (v, n)
+        }.max { $0.0 < $1.0 }
+        guard let newest else { return prune() }
+        guard let db = Self.agyOpen(home + "/" + newest.1) else { return false }
+        defer { sqlite3_close(db) }
+        var cols = Set<String>()
+        Self.agyRows(db, "SELECT name FROM pragma_table_info('threads')") { col in
+            cols.insert(col(0))
+            return true
+        }
+        guard ["id", "rollout_path", "cwd", "source"].allSatisfy(cols.contains) else { return prune() }
+        let text = { (name: String) in cols.contains(name) ? "IFNULL(\(name), '')" : "''" }
+        let number = { (name: String) in cols.contains(name) ? "IFNULL(\(name), 0)" : "0" }
+        // Its TUI: "cli" before, and since it runs on Codex's app server, that server's source with the TUI as originator.
+        let terminal = cols.contains("originator") ? "(source = 'cli' OR originator = 'codex-tui')" : "source = 'cli'"
+        let sql = "SELECT id, rollout_path, cwd, \(text("name")), \(text("title")), \(text("first_user_message")), \(text("preview")), "
+            + "\(number("updated_at_ms")) FROM threads WHERE \(number("archived")) = 0 AND \(terminal) ORDER BY \(number("updated_at_ms")) DESC LIMIT 300"
+        Self.agyRows(db, sql) { col in
+            let id = col(0), path = col(1)
+            guard ChatTrash.isCodexLog(path, id: id, home: home), let st = fileStat(path) else { return true }
+            let cwd = col(2)
+            guard !cwd.isEmpty else { return true }
+            present.insert(id)
+            let mtime = max(Double(col(7)) ?? 0, st.mtime)
+            if let old = history[id], old.mtime == mtime, old.size == Int(st.size) { return true }
+            let title = [col(3), col(4), col(5)].first { !$0.isEmpty } ?? ""
+            let prompt = col(6).isEmpty ? col(5) : col(6)
+            history[id] = ChatItem(id: id, path: path, cwd: URL(fileURLWithPath: cwd).standardizedFileURL.path, mtime: mtime, size: Int(st.size),
+                                   title: clip(title, 90), lastPrompt: clip(prompt, 160), tool: "codex")
+            changed = true
+            return true
+        }
+        return prune()
     }
 
     private func readTail(_ item: inout ChatItem) {

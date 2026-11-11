@@ -407,7 +407,8 @@ enum TerminalFactory {
     /// without, it is a plain terminal (where Claude can be started or resumed by hand).
     nonisolated static func shellArgs(_ shell: String, cwd: String, claudeArgs: [String]?) -> [String] {
         guard let claudeArgs else { return ["-il"] }
-        let cmd = (claudeArgs.first == "agy" ? claudeArgs : ["claude"] + claudeArgs).map(shellQuote).joined(separator: " ")
+        // Antigravity's and Codex's own command lines (a saved conversation opened from the chats list), else Claude's.
+        let cmd = (["agy", "codex"].contains(claudeArgs.first) ? claudeArgs : ["claude"] + claudeArgs).map(shellQuote).joined(separator: " ")
         return ["-ilc", "cd -- \(shellQuote(cwd)) && \(cmd); exec \(shellQuote(shell)) -il"]
     }
 
