@@ -5,13 +5,28 @@ import WebKit
 /// when it's ⌘-clicked in a terminal (rather than in its app, VS Code), and a new one on ⌘N. This reads and writes the
 /// files for the page, only the ones opened there (and the pictures a Markdown file shows), and asks where a new one goes.
 final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
-    weak var web: WKWebView?
-    /// The files the page may read and write: those opened in it (a ⌘-click, a link in a Markdown preview, a Save As).
+    weak var web: WKWebView? { didSet { watchInput() } }
+    /// The files the page may read: those opened in it (a ⌘-click, a link in a Markdown preview, a Save As).
     private var allowed: Set<String> = []
+    /// Those it may also write: the ones the app opened (a ⌘-click, a Save As), and one opened from a link in a Markdown
+    /// preview once the user agreed to save it (confirmWrite). The page alone never makes a file writable.
+    private var writable: Set<String> = []
+    /// When the system last delivered a click (or Return or Space) to the dashboard, and any key or click: the user's,
+    /// since a page can't make these. A link opens only right after one, and a save is asked about only after one.
+    private var lastPress = -Double.infinity, lastInput = -Double.infinity
+    private var monitor: Any?
     /// Asks the page to open a file (GitView.openFile): a link in a Markdown preview to a text file beside it.
     var onOpen: (@MainActor (URL, Int?, String) -> Void)?
+    /// Asks the user before the first save of a file opened from a Markdown link: true to save it.
+    var confirmWrite: @MainActor (String) -> Bool = FilesBridge.askToSave
 
-    func allow(_ url: URL) { allowed.insert(url.standardizedFileURL.path) }
+    func allow(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        allowed.insert(path)
+        writable.insert(path)
+    }
+
+    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
 
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
@@ -32,6 +47,11 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
             return ["text": file.text, "bom": file.bom, "mtime": Self.mtime(path) ?? 0, "app": Self.appName(for: path) ?? ""]
         case "write":
             guard mine, let text = body["text"] as? String else { return ["error": "not a file opened here"] }
+            // Opened from a Markdown link: written once the user agrees, right after typing or clicking here.
+            if !writable.contains(path) {
+                guard userActed(within: 10), confirmWrite(path) else { return ["error": "the save wasn't confirmed (it was opened from a Markdown link)"] }
+                writable.insert(path)
+            }
             // Changed on disk since the page read it: the user picks (the page's banner).
             if let base = body["base"] as? Double, let now = Self.mtime(path), abs(now - base) > 0.0005 { return ["conflict": true] }
             do {
@@ -47,7 +67,7 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "image":
             return Self.image(at: path).map { ["url": $0] } ?? ["error": "no picture"]
         case "external":
-            if mine { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+            if mine, userActed(within: 1, press: true) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
         case "reveal":
             if mine { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
         case "openURL":
@@ -55,11 +75,16 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
                 NSWorkspace.shared.open(url)
             }
         case "openPath":
-            // A link in a Markdown preview: a text file in the editor, anything else in its app, unless it starts
-            // something (SafeOpen: an app or a script is shown in the Finder).
+            // A link in a Markdown preview, clicked: a text file in the editor, anything else in its app, unless it starts
+            // something (SafeOpen: an app or a script is shown in the Finder). Only right after a click the system
+            // delivered here; a text file only from a Markdown file the page may already read, and only inside its
+            // repository (or its folder), read only until a save is agreed to.
+            guard userActed(within: 1, press: true) else { return ["error": "not clicked"] }
             let url = URL(fileURLWithPath: path)
             if Self.canOpen(url) {
-                allow(url)
+                guard let from = (body["from"] as? String).map({ URL(fileURLWithPath: $0).standardizedFileURL.path }), allowed.contains(from),
+                      Self.isMarkdown(from), Self.linkable(path, from: from) else { return ["error": "not beside the Markdown file"] }
+                allowed.insert(path)
                 onOpen?(url, body["line"] as? Int, body["cwd"] as? String ?? url.deletingLastPathComponent().path)
             } else if FileManager.default.fileExists(atPath: path) {
                 SafeOpen.file(url)
@@ -93,7 +118,75 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
+    // MARK: the user's input
+
+    /// Watches the clicks and keys the system delivers to the dashboard (a local monitor: this app's events only).
+    private func watchInput() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp, .keyDown]) { [weak self] event in
+            MainActor.assumeIsolated { self?.saw(event) }
+            return event
+        }
+    }
+
+    @MainActor
+    private func saw(_ event: NSEvent) {
+        guard let web, let window = web.window, event.window === window else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if event.type == .leftMouseUp {
+            guard web.bounds.contains(web.convert(event.locationInWindow, from: nil)) else { return }
+            lastPress = now
+            lastInput = now
+        } else if let responder = window.firstResponder as? NSView, responder.isDescendant(of: web) {
+            lastInput = now
+            // Return, Enter and Space activate a link.
+            if [36, 76, 49].contains(event.keyCode) { lastPress = now }
+        }
+    }
+
+    /// Whether the user clicked here (`press`), or did anything here, in the last `seconds`.
+    private func userActed(within seconds: Double, press: Bool = false) -> Bool {
+        ProcessInfo.processInfo.systemUptime - (press ? lastPress : lastInput) < seconds
+    }
+
+    /// The question before the first save of a file opened from a Markdown link: its name and folder, Save or Cancel.
+    @MainActor
+    static func askToSave(_ path: String) -> Bool {
+        let folder = ((path as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath
+        let alert = NSAlert()
+        alert.messageText = "Save changes to \((path as NSString).lastPathComponent)?"
+        alert.informativeText = "It was opened from a link in a Markdown preview, in \(folder)."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     // MARK: the files
+
+    /// A file the editor shows as Markdown, with its preview (web/tm/languages.js's text.html.markdown).
+    nonisolated static func isMarkdown(_ path: String) -> Bool {
+        ["md", "mkd", "mkdn", "mdwn", "mdown", "markdown", "markdn", "mdtxt", "mdtext", "copilotmd", "litcoffee", "ron", "ronn",
+         "workbook"].contains((path as NSString).pathExtension.lowercased())
+    }
+
+    /// Whether a link in the Markdown file `from` may open `path` in the editor, both as the files they really are (links
+    /// followed): inside the repository holding `from` (the folder with .git above it, not the home folder); outside any,
+    /// below `from`'s folder and in no hidden folder (.ssh) nor a hidden file (.env), only that folder itself when it's the
+    /// home folder or the disk's root.
+    nonisolated static func linkable(_ path: String, from: String, home: String = NSHomeDirectory()) -> Bool {
+        let real = { (p: String) in URL(fileURLWithPath: p).resolvingSymlinksInPath().path }
+        let target = real(path), folder = real((from as NSString).deletingLastPathComponent), home = real(home)
+        var dir = folder
+        while dir != "/", !dir.isEmpty {
+            if dir != home, FileManager.default.fileExists(atPath: dir + "/.git") { return target.hasPrefix(dir + "/") }
+            dir = (dir as NSString).deletingLastPathComponent
+        }
+        let base = folder == "/" ? "/" : folder + "/"
+        guard target.hasPrefix(base) else { return false }
+        let rest = target.dropFirst(base.count).split(separator: "/")
+        if rest.contains(where: { $0.hasPrefix(".") }) { return false }
+        return (folder != home && folder != "/") || rest.count == 1
+    }
 
     /// The largest file the editor opens; a bigger one opens in its app.
     nonisolated static let largest = 10 << 20

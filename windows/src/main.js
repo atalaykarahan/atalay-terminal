@@ -318,11 +318,22 @@ const notesStore = createNotesStore({
   safeStorage,
 });
 // Source Control's files (files.js, the Mac's FileEditor.swift): the ones the dashboard's editor may read and write.
+// When Windows last delivered a click (or Enter or Space) and any key or click to the dashboard's page (its input-event,
+// in createDashboard): the user's, since a page can't make these. files.js opens a Markdown link's file only right after
+// one, and asks before the first save of such a file only after one.
+const userInput = { press: 0, any: 0 };
 const files = createFiles({
   shell,
   saveDialog: (options) => dialog.showSaveDialog(dash || undefined, options),
   // A link in a Markdown preview to a text file beside it.
   onOpen: (p, line, cwd) => showFileInEditor(p, line, null, cwd),
+  userActed: (ms, press) => Date.now() - (press ? userInput.press : userInput.any) < ms,
+  confirmWrite: async (p) =>
+    (await dialog.showMessageBox(dash || undefined, {
+      type: 'question', message: `Save changes to ${path.basename(p)}?`, detail: `It was opened from a link in a Markdown preview, in ${path.dirname(p)}.`,
+      buttons: ['Save', 'Cancel'], defaultId: 0, cancelId: 1, noLink: true,
+    })).response === 0,
+  home: os.homedir(),
 });
 
 // Power save (the Mac's PowerSaver): the map's switch, and on by itself at low battery or in Windows' Energy Saver.
@@ -525,6 +536,16 @@ function createDashboard() {
       }
     });
   }
+  // The clicks and keys Windows delivers to the dashboard's page (userInput, for files.js).
+  dashView.webContents.on('input-event', (_e, input) => {
+    const now = Date.now();
+    if (input.type === 'mouseUp' && (!input.button || input.button === 'left')) userInput.press = userInput.any = now;
+    else if (input.type === 'keyDown' || input.type === 'rawKeyDown') {
+      userInput.any = now;
+      // A key comes with `code` and `key` (Electron 45 sends no keyCode here): Enter and Space activate a link.
+      if (['Enter', 'NumpadEnter', 'Space'].includes(input.code) || ['Enter', ' '].includes(input.key)) userInput.press = now;
+    }
+  });
   chatsView.setVisible(chatsList.shown);
   layout();
   for (const ev of ['resize', 'maximize', 'unmaximize', 'restore', 'enter-full-screen', 'leave-full-screen']) win.on(ev, layout);

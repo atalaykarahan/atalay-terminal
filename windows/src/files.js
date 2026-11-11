@@ -161,13 +161,55 @@ const RUNS = new Set(['exe', 'com', 'scr', 'pif', 'msi', 'msp', 'msix', 'appx', 
   // Scripts too: one that isn't valid UTF-8 text isn't shown in the editor, so it would come here and run.
   'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'msc', 'chm', 'py', 'rb', 'sh']);
 
+// A file the editor shows as Markdown, with its preview (web/tm/languages.js's text.html.markdown).
+const MARKDOWN = new Set(['md', 'mkd', 'mkdn', 'mdwn', 'mdown', 'markdown', 'markdn', 'mdtxt', 'mdtext', 'copilotmd', 'litcoffee', 'ron', 'ronn', 'workbook']);
+const isMarkdown = (p) => MARKDOWN.has(path.extname(p).slice(1).toLowerCase());
+
+// Whether a link in the Markdown file `from` may open `p` in the editor, both as the files they really are (links and
+// junctions followed): inside the repository holding `from` (the folder with .git above it, not the home folder);
+// outside any, below `from`'s folder and in no hidden folder nor a hidden file, only that folder itself when it's the
+// home folder or a drive's root. Windows' names don't care about case.
+function linkable(p, from, home) {
+  const real = (q) => {
+    try {
+      return fs.realpathSync(q);
+    } catch {
+      return null;
+    }
+  };
+  const target = real(p), folder = real(path.dirname(from)), own = real(home) || home;
+  if (!target || !folder) return false;
+  const fold = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);
+  const under = (dir) => fold(target).startsWith(fold(dir.endsWith(path.sep) ? dir : dir + path.sep));
+  for (let dir = folder; ; ) {
+    if (fold(dir) !== fold(own) && exists(path.join(dir, '.git'))) return under(dir);
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  if (!under(folder)) return false;
+  const rest = path.relative(folder, target).split(/[\\/]/);
+  if (rest.some((part) => part.startsWith('.'))) return false;
+  return (fold(folder) !== fold(own) && path.parse(folder).root !== folder) || rest.length === 1;
+}
+
 // - shell: Electron's (openPath, showItemInFolder, openExternal); dialog(options): showSaveDialog over the dashboard
 // - appName(path): the app a file opens in otherwise, for the page's "Open in …" (VS Code, for most), or ''
 // - onOpen(path, line, cwd): the page should open this file (a link in a Markdown preview to a text file beside it)
-function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {} }) {
-  // The files the page may read and write: those opened in it (a Ctrl-click, a link in a Markdown preview, a Save As).
+// - userActed(ms, press): whether Windows delivered a click (press: or Enter or Space), or any key or click, to the
+//   dashboard in the last `ms` (main.js's input-event): the user's own, since a page can't make these
+// - confirmWrite(path): asks the user before the first save of a file opened from a Markdown link; true to save it
+// - home: the user's folder (os.homedir())
+function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {}, userActed = () => false, confirmWrite = async () => false, home = '' }) {
+  // The files the page may read: those opened in it (a Ctrl-click, a link in a Markdown preview, a Save As). Those it
+  // may also write: the ones the app opened (a Ctrl-click, a Save As), and one opened from a Markdown link once the user
+  // agreed to save it. The page alone never makes a file writable.
   const allowed = new Set();
-  const allow = (p) => allowed.add(keyOf(p));
+  const writable = new Set();
+  const allow = (p) => {
+    allowed.add(keyOf(p));
+    writable.add(keyOf(p));
+  };
   const mine = (p) => !!p && allowed.has(keyOf(p));
 
   // Not a file the editor shows: in its app, or (a program) shown in its folder.
@@ -189,6 +231,11 @@ function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {} 
       }
       case 'write': {
         if (!mine(p) || typeof b.text !== 'string') return { error: 'not a file opened here' };
+        // Opened from a Markdown link: written once the user agrees, right after typing or clicking here.
+        if (!writable.has(keyOf(p))) {
+          if (!userActed(10000) || !(await confirmWrite(p))) return { error: "the save wasn't confirmed (it was opened from a Markdown link)" };
+          writable.add(keyOf(p));
+        }
         // Changed on disk since the page read it: the user picks (the page's banner).
         const now = mtime(p);
         if (typeof b.base === 'number' && now !== null && Math.abs(now - b.base) > 0.0005) return { conflict: true };
@@ -209,7 +256,7 @@ function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {} 
         return url ? { url } : { error: 'no picture' };
       }
       case 'external':
-        if (mine(p)) openOutside(p);
+        if (mine(p) && userActed(1000, true)) openOutside(p);
         return null;
       case 'reveal':
         if (mine(p)) shell.showItemInFolder(p);
@@ -222,14 +269,19 @@ function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {} 
         if (u && ['http:', 'https:', 'mailto:'].includes(u.protocol)) shell.openExternal(u.href).catch(() => {});
         return null;
       }
-      case 'openPath':
-        // A link in a Markdown preview: a text file in the editor, anything else in its app.
-        if (!p) return null;
+      case 'openPath': {
+        // A link in a Markdown preview, clicked: a text file in the editor, anything else in its app. Only right after a
+        // click Windows delivered here; a text file only from a Markdown file the page may already read, and only inside
+        // its repository (or its folder), read only until a save is agreed to.
+        if (!p || !userActed(1000, true)) return { error: 'not clicked' };
         if (canOpen(p)) {
-          allow(p);
+          const from = typeof b.from === 'string' && b.from && !isUnc(b.from) ? path.resolve(b.from) : '';
+          if (!from || !mine(from) || !isMarkdown(from) || !linkable(p, from, home)) return { error: 'not beside the Markdown file' };
+          allowed.add(keyOf(p));
           onOpen(p, Number.isInteger(b.line) ? b.line : null, typeof b.cwd === 'string' && b.cwd ? b.cwd : path.dirname(p));
         } else openOutside(p);
         return null;
+      }
       default:
         return null;
     }
@@ -261,4 +313,4 @@ function fileFromURL(url) {
   return p && !isUnc(p) && fs.existsSync(p) ? path.resolve(p) : null;
 }
 
-module.exports = { createFiles, canOpen, linkTarget, fileFromURL, LARGEST };
+module.exports = { createFiles, canOpen, linkTarget, fileFromURL, linkable, isMarkdown, LARGEST };

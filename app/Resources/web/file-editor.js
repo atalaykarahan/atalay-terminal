@@ -628,7 +628,8 @@ window.FileEditor = (() => {
     const [rel, frag] = href.replace(/^file:\/\//i, '').split('#');
     const path = absolute(rel) ? fromLink(decodeURI(rel)) : resolve(folder(t.path), decodeURI(rel));
     const line = /^L(\d+)/.exec(frag || '');
-    files('openPath', { path, line: line ? +line[1] : null, cwd: t.cwd });
+    // `from`: the Markdown file the link is in; the app opens only what's beside it (its repository), after this click.
+    files('openPath', { path, line: line ? +line[1] : null, cwd: t.cwd, from: t.path });
   });
 
   // ---------- the banner: a file changed on disk while it had unsaved changes, or a save that failed ----------
