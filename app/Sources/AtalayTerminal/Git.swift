@@ -16,6 +16,8 @@ final class GitBridge: NSObject, WKScriptMessageHandlerWithReply {
     private let engine: RadarEngine
     /// The folders the app's terminals are in now.
     private let terminalFolders: @MainActor () -> [String]
+    /// The user picked an item in one of the page's native menus: a click the page never sees (FilesBridge.pressed).
+    var onMenuPick: (@MainActor () -> Void)?
 
     init(engine: RadarEngine, terminalFolders: @escaping @MainActor () -> [String]) {
         self.engine = engine
@@ -25,7 +27,7 @@ final class GitBridge: NSObject, WKScriptMessageHandlerWithReply {
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         let body = message.body as? [String: Any] ?? [:]
-        if MainActor.assumeIsolated({ Self.native(body, message.webView, replyHandler) }) { return }
+        if MainActor.assumeIsolated({ Self.native(body, message.webView, onMenuPick, replyHandler) }) { return }
         let terminals = MainActor.assumeIsolated { terminalFolders() }
         engine.gitSources { sessions, written in
             Git.queue.async {
@@ -39,9 +41,10 @@ final class GitBridge: NSObject, WKScriptMessageHandlerWithReply {
 extension GitBridge {
     /// The page's questions and menus, native as VS Code's are on a Mac: an alert over the dashboard ("confirm": message,
     /// detail, buttons; Cancel is added) or a menu at the pointer ("menu": items, "" for a line, x and y in the page).
-    /// Answers the index of the button or item picked, -1 for none.
+    /// Answers the index of the button or item picked, -1 for none. `onMenuPick`: told when a menu's item was picked.
     @MainActor
-    fileprivate static func native(_ body: [String: Any], _ web: WKWebView?, _ reply: @escaping @MainActor @Sendable (Any?, String?) -> Void) -> Bool {
+    fileprivate static func native(_ body: [String: Any], _ web: WKWebView?, _ onMenuPick: (@MainActor () -> Void)?,
+                                   _ reply: @escaping @MainActor @Sendable (Any?, String?) -> Void) -> Bool {
         switch body["type"] as? String {
         case "confirm":
             let alert = NSAlert()
@@ -78,6 +81,7 @@ extension GitBridge {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     if let web { menu.popUp(positioning: nil, at: NSPoint(x: x, y: web.isFlipped ? y : web.bounds.height - y), in: web) }
+                    if picked.index >= 0 { onMenuPick?() }
                     reply(picked.index, nil)
                 }
             }
@@ -108,6 +112,13 @@ enum Git {
     private static var roots: [String: (root: String?, at: Double)] = [:]
     /// The page asks every few seconds; the repos are looked at again after two.
     private static var cache: (at: Double, repos: [[String: Any]]) = (0, [])
+
+    /// The repos Source Control last listed: the ones its Open File may open a file in (FileEditor.swift).
+    static func listedRoots() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return cache.repos.compactMap { $0["root"] as? String }
+    }
 
     /// The user's git (Homebrew's before Apple's, as in their shell).
     private static let executable = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]

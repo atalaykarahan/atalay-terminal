@@ -699,7 +699,10 @@ function createGit({ folders = () => [], written = null, confirm = async () => -
     }
   }
 
-  return { handle };
+  // The repos Source Control last listed: the ones its Open File may open a file in (files.js).
+  const listed = () => cache.repos.map((r) => r.root).filter((root) => typeof root === 'string' && root);
+
+  return { handle, listed };
 }
 
 module.exports = { createGit };

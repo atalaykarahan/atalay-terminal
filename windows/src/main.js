@@ -251,7 +251,15 @@ function popupMenu(items, at, view) {
     const off = view ? view.getBounds() : { x: 0, y: 0 };
     const z = (view && !view.webContents.isDestroyed() && view.webContents.getZoomFactor()) || 1;
     const pos = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: Math.round(at.x * z + off.x), y: Math.round(at.y * z + off.y) } : {};
-    Menu.buildFromTemplate(build(items)).popup({ window: dash || undefined, ...pos, callback: () => resolve(picked) });
+    Menu.buildFromTemplate(build(items)).popup({
+      window: dash || undefined, ...pos,
+      callback: () => {
+        // An item picked: a click like any other, though it went to the menu and not to the page (Source Control's ⋯,
+        // with its Open File).
+        if (picked != null) userInput.press = userInput.any = Date.now();
+        resolve(picked);
+      },
+    });
   });
 }
 
@@ -319,20 +327,22 @@ const notesStore = createNotesStore({
 });
 // Source Control's files (files.js, the Mac's FileEditor.swift): the ones the dashboard's editor may read and write.
 // When Windows last delivered a click (or Enter or Space) and any key or click to the dashboard's page (its input-event,
-// in createDashboard): the user's, since a page can't make these. files.js opens a Markdown link's file only right after
+// in createDashboard), or the user picked an item in one of its native menus (popupMenu): the user's, since a page can't
+// make these. files.js opens a file the page asks for (a Markdown link's, Source Control's Open File) only right after
 // one, and asks before the first save of such a file only after one.
 const userInput = { press: 0, any: 0 };
 const files = createFiles({
   shell,
   saveDialog: (options) => dialog.showSaveDialog(dash || undefined, options),
-  // A link in a Markdown preview to a text file beside it.
+  // A link in a Markdown preview to a text file beside it, or Source Control's Open File.
   onOpen: (p, line, cwd) => showFileInEditor(p, line, null, cwd),
   userActed: (ms, press) => Date.now() - (press ? userInput.press : userInput.any) < ms,
-  confirmWrite: async (p) =>
+  confirmWrite: async (p, from) =>
     (await dialog.showMessageBox(dash || undefined, {
-      type: 'question', message: `Save changes to ${path.basename(p)}?`, detail: `It was opened from a link in a Markdown preview, in ${path.dirname(p)}.`,
+      type: 'question', message: `Save changes to ${path.basename(p)}?`, detail: `It was opened from ${from}, in ${path.dirname(p)}.`,
       buttons: ['Save', 'Cancel'], defaultId: 0, cancelId: 1, noLink: true,
     })).response === 0,
+  repositories: () => git.listed(),
   home: os.homedir(),
 });
 

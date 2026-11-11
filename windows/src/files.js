@@ -193,19 +193,42 @@ function linkable(p, from, home) {
   return (fold(folder) !== fold(own) && path.parse(folder).root !== folder) || rest.length === 1;
 }
 
+// Whether `p` is inside one of `roots` (the repositories Source Control lists), as the file it really is (links and
+// junctions followed): a link in a repository to a file outside it isn't. Windows' names don't care about case.
+function inside(p, roots) {
+  const real = (q) => {
+    try {
+      return fs.realpathSync(q);
+    } catch {
+      return null;
+    }
+  };
+  const fold = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);
+  const target = real(p);
+  if (!target) return false;
+  return (Array.isArray(roots) ? roots : []).some((root) => {
+    const dir = typeof root === 'string' && root && !isUnc(root) ? real(root) : null;
+    return !!dir && fold(target).startsWith(fold(dir.endsWith(path.sep) ? dir : dir + path.sep));
+  });
+}
+
 // - shell: Electron's (openPath, showItemInFolder, openExternal); dialog(options): showSaveDialog over the dashboard
 // - appName(path): the app a file opens in otherwise, for the page's "Open in …" (VS Code, for most), or ''
 // - onOpen(path, line, cwd): the page should open this file (a link in a Markdown preview to a text file beside it)
 // - userActed(ms, press): whether Windows delivered a click (press: or Enter or Space), or any key or click, to the
 //   dashboard in the last `ms` (main.js's input-event): the user's own, since a page can't make these
-// - confirmWrite(path): asks the user before the first save of a file opened from a Markdown link; true to save it
+// - confirmWrite(path, from): asks the user before the first save of a file the page asked for (`from`: where it was
+//   opened from, "a link in a Markdown preview" or "Source Control"); true to save it
+// - repositories(): the repositories Source Control lists (git.js's): its Open File opens a file in one of them
 // - home: the user's folder (os.homedir())
-function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {}, userActed = () => false, confirmWrite = async () => false, home = '' }) {
-  // The files the page may read: those opened in it (a Ctrl-click, a link in a Markdown preview, a Save As). Those it
-  // may also write: the ones the app opened (a Ctrl-click, a Save As), and one opened from a Markdown link once the user
-  // agreed to save it. The page alone never makes a file writable.
+function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {}, userActed = () => false, confirmWrite = async () => false, repositories = () => [], home = '' }) {
+  // The files the page may read: those opened in it (a Ctrl-click, a link in a Markdown preview, Source Control's Open
+  // File, a Save As). Those it may also write: the ones the app opened (a Ctrl-click, a Save As), and one the page asked
+  // for (a Markdown link, Open File) once the user agreed to save it. The page alone never makes a file writable.
   const allowed = new Set();
   const writable = new Set();
+  // Where each file the page asked for was opened from, as that question says it.
+  const askedFrom = new Map();
   const allow = (p) => {
     allowed.add(keyOf(p));
     writable.add(keyOf(p));
@@ -231,9 +254,11 @@ function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {},
       }
       case 'write': {
         if (!mine(p) || typeof b.text !== 'string') return { error: 'not a file opened here' };
-        // Opened from a Markdown link: written once the user agrees, right after typing or clicking here.
+        // One the page asked for (a Markdown link, Open File): written once the user agrees, right after typing or
+        // clicking here.
         if (!writable.has(keyOf(p))) {
-          if (!userActed(10000) || !(await confirmWrite(p))) return { error: "the save wasn't confirmed (it was opened from a Markdown link)" };
+          const from = askedFrom.get(keyOf(p)) || 'the dashboard';
+          if (!userActed(10000) || !(await confirmWrite(p, from))) return { error: `the save wasn't confirmed (it was opened from ${from})` };
           writable.add(keyOf(p));
         }
         // Changed on disk since the page read it: the user picks (the page's banner).
@@ -270,13 +295,19 @@ function createFiles({ shell, saveDialog, appName = () => '', onOpen = () => {},
         return null;
       }
       case 'openPath': {
-        // A link in a Markdown preview, clicked: a text file in the editor, anything else in its app. Only right after a
-        // click Windows delivered here; a text file only from a Markdown file the page may already read, and only inside
-        // its repository (or its folder), read only until a save is agreed to.
+        // A link in a Markdown preview or Source Control's Open File, clicked: a text file in the editor, anything else in
+        // its app. Only right after a click Windows delivered here. A text file from a link: only from a Markdown file the
+        // page may already read (`from`), and only inside its repository (or its folder). From Open File (no `from`): only
+        // inside a repository Source Control lists. Either way read only until a save is agreed to.
         if (!p || !userActed(1000, true)) return { error: 'not clicked' };
         if (canOpen(p)) {
-          const from = typeof b.from === 'string' && b.from && !isUnc(b.from) ? path.resolve(b.from) : '';
-          if (!from || !mine(from) || !isMarkdown(from) || !linkable(p, from, home)) return { error: 'not beside the Markdown file' };
+          let origin = 'Source Control';
+          if (typeof b.from === 'string' && b.from) {
+            const from = isUnc(b.from) ? '' : path.resolve(b.from);
+            if (!from || !mine(from) || !isMarkdown(from) || !linkable(p, from, home)) return { error: 'not beside the Markdown file' };
+            origin = 'a link in a Markdown preview';
+          } else if (!inside(p, repositories())) return { error: 'not in a repository Source Control lists' };
+          if (!writable.has(keyOf(p))) askedFrom.set(keyOf(p), origin);
           allowed.add(keyOf(p));
           onOpen(p, Number.isInteger(b.line) ? b.line : null, typeof b.cwd === 'string' && b.cwd ? b.cwd : path.dirname(p));
         } else openOutside(p);
@@ -313,4 +344,4 @@ function fileFromURL(url) {
   return p && !isUnc(p) && fs.existsSync(p) ? path.resolve(p) : null;
 }
 
-module.exports = { createFiles, canOpen, linkTarget, fileFromURL, linkable, isMarkdown, LARGEST };
+module.exports = { createFiles, canOpen, linkTarget, fileFromURL, linkable, inside, isMarkdown, LARGEST };

@@ -6,24 +6,39 @@ import WebKit
 /// files for the page, only the ones opened there (and the pictures a Markdown file shows), and asks where a new one goes.
 final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
     weak var web: WKWebView? { didSet { watchInput() } }
-    /// The files the page may read: those opened in it (a ⌘-click, a link in a Markdown preview, a Save As).
+    /// The files the page may read: those opened in it (a ⌘-click, a link in a Markdown preview, Source Control's Open
+    /// File, a Save As).
     private var allowed: Set<String> = []
-    /// Those it may also write: the ones the app opened (a ⌘-click, a Save As), and one opened from a link in a Markdown
-    /// preview once the user agreed to save it (confirmWrite). The page alone never makes a file writable.
+    /// Those it may also write: the ones the app opened (a ⌘-click, a Save As), and one the page asked for (a link in a
+    /// Markdown preview, Source Control's Open File) once the user agreed to save it (confirmWrite). The page alone never
+    /// makes a file writable.
     private var writable: Set<String> = []
+    /// Where each file the page asked for was opened from, as that question says it ("a link in a Markdown preview").
+    private var askedFrom: [String: String] = [:]
     /// When the system last delivered a click (or Return or Space) to the dashboard, and any key or click: the user's,
     /// since a page can't make these. A link opens only right after one, and a save is asked about only after one.
     private var lastPress = -Double.infinity, lastInput = -Double.infinity
     private var monitor: Any?
     /// Asks the page to open a file (GitView.openFile): a link in a Markdown preview to a text file beside it.
     var onOpen: (@MainActor (URL, Int?, String) -> Void)?
-    /// Asks the user before the first save of a file opened from a Markdown link: true to save it.
-    var confirmWrite: @MainActor (String) -> Bool = FilesBridge.askToSave
+    /// The repositories Source Control lists (Git.listedRoots): its Open File opens a file in one of them.
+    var repositories: @MainActor () -> [String] = { [] }
+    /// Asks the user before the first save of a file the page asked for (its path, where it was opened from): true to
+    /// save it.
+    var confirmWrite: @MainActor (String, String) -> Bool = FilesBridge.askToSave
 
     func allow(_ url: URL) {
         let path = url.standardizedFileURL.path
         allowed.insert(path)
         writable.insert(path)
+    }
+
+    /// The user picked an item in a menu the app showed for the page (Source Control's ⋯, with its Open File): a click
+    /// like any other, though it went to the menu and not to the page.
+    @MainActor
+    func pressed() {
+        lastPress = ProcessInfo.processInfo.systemUptime
+        lastInput = lastPress
     }
 
     deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
@@ -47,9 +62,11 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
             return ["text": file.text, "bom": file.bom, "mtime": Self.mtime(path) ?? 0, "app": Self.appName(for: path) ?? ""]
         case "write":
             guard mine, let text = body["text"] as? String else { return ["error": "not a file opened here"] }
-            // Opened from a Markdown link: written once the user agrees, right after typing or clicking here.
+            // One the page asked for (a Markdown link, Open File): written once the user agrees, right after typing or
+            // clicking here.
             if !writable.contains(path) {
-                guard userActed(within: 10), confirmWrite(path) else { return ["error": "the save wasn't confirmed (it was opened from a Markdown link)"] }
+                let from = askedFrom[path] ?? "the dashboard"
+                guard userActed(within: 10), confirmWrite(path, from) else { return ["error": "the save wasn't confirmed (it was opened from \(from))"] }
                 writable.insert(path)
             }
             // Changed on disk since the page read it: the user picks (the page's banner).
@@ -75,15 +92,23 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
                 NSWorkspace.shared.open(url)
             }
         case "openPath":
-            // A link in a Markdown preview, clicked: a text file in the editor, anything else in its app, unless it starts
-            // something (SafeOpen: an app or a script is shown in the Finder). Only right after a click the system
-            // delivered here; a text file only from a Markdown file the page may already read, and only inside its
-            // repository (or its folder), read only until a save is agreed to.
+            // A link in a Markdown preview or Source Control's Open File, clicked: a text file in the editor, anything else
+            // in its app, unless it starts something (SafeOpen: an app or a script is shown in the Finder). Only right after
+            // a click the system delivered here. A text file from a link: only from a Markdown file the page may already
+            // read (`from`), and only inside its repository (or its folder). From Open File (no `from`): only inside a
+            // repository Source Control lists. Either way read only until a save is agreed to.
             guard userActed(within: 1, press: true) else { return ["error": "not clicked"] }
             let url = URL(fileURLWithPath: path)
             if Self.canOpen(url) {
-                guard let from = (body["from"] as? String).map({ URL(fileURLWithPath: $0).standardizedFileURL.path }), allowed.contains(from),
-                      Self.isMarkdown(from), Self.linkable(path, from: from) else { return ["error": "not beside the Markdown file"] }
+                let origin: String
+                if let from = (body["from"] as? String).map({ URL(fileURLWithPath: $0).standardizedFileURL.path }) {
+                    guard allowed.contains(from), Self.isMarkdown(from), Self.linkable(path, from: from) else { return ["error": "not beside the Markdown file"] }
+                    origin = "a link in a Markdown preview"
+                } else {
+                    guard Self.inside(path, oneOf: repositories()) else { return ["error": "not in a repository Source Control lists"] }
+                    origin = "Source Control"
+                }
+                if !writable.contains(path) { askedFrom[path] = origin }
                 allowed.insert(path)
                 onOpen?(url, body["line"] as? Int, body["cwd"] as? String ?? url.deletingLastPathComponent().path)
             } else if FileManager.default.fileExists(atPath: path) {
@@ -149,13 +174,14 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
         ProcessInfo.processInfo.systemUptime - (press ? lastPress : lastInput) < seconds
     }
 
-    /// The question before the first save of a file opened from a Markdown link: its name and folder, Save or Cancel.
+    /// The question before the first save of a file the page asked for: its name, where it was opened from (`from`: "a
+    /// link in a Markdown preview", "Source Control") and its folder, Save or Cancel.
     @MainActor
-    static func askToSave(_ path: String) -> Bool {
+    static func askToSave(_ path: String, _ from: String) -> Bool {
         let folder = ((path as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath
         let alert = NSAlert()
         alert.messageText = "Save changes to \((path as NSString).lastPathComponent)?"
-        alert.informativeText = "It was opened from a link in a Markdown preview, in \(folder)."
+        alert.informativeText = "It was opened from \(from), in \(folder)."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
@@ -186,6 +212,14 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
         let rest = target.dropFirst(base.count).split(separator: "/")
         if rest.contains(where: { $0.hasPrefix(".") }) { return false }
         return (folder != home && folder != "/") || rest.count == 1
+    }
+
+    /// Whether `path` is inside one of `roots` (the repositories Source Control lists), as the file it really is (links
+    /// followed): a link in a repository to a file outside it isn't.
+    nonisolated static func inside(_ path: String, oneOf roots: [String]) -> Bool {
+        let real = { (p: String) in URL(fileURLWithPath: p).resolvingSymlinksInPath().path }
+        let target = real(path)
+        return roots.contains { !$0.isEmpty && target.hasPrefix(real($0) + "/") }
     }
 
     /// The largest file the editor opens; a bigger one opens in its app.

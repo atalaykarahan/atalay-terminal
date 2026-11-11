@@ -58,10 +58,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         Self.shared = self
         window.delegate = self
         MessagePanel.dashboard = window
-        radar.handleGit(GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] }))
+        let git = GitBridge(engine: engine, terminalFolders: { [weak self] in self?.terminalFolders() ?? [] })
+        // Open File in Source Control's ⋯ menu: the pick is the click that opens the file.
+        git.onMenuPick = { [weak self] in self?.files.pressed() }
+        radar.handleGit(git)
         radar.handleSpend(SpendBridge(engine: engine))
         radar.handleFiles(files)
         files.onOpen = { [weak self] url, line, cwd in self?.radar.openFile(url, line: line, column: nil, cwd: cwd) }
+        files.repositories = { Git.listedRoots() }
         overlay.manager = self
         buildLayout()
         wireEngine()
