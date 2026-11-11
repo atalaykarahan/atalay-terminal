@@ -241,6 +241,14 @@ function transitions(next) {
     lastStatus.set(s.id, s.status);
     lastPrompts.set(s.id, s.prompts || 0);
   }
+  // A chat that left the list (Claude quit, or it was ended from its window) says so here, as its "ended" card did.
+  const here = new Set(next.sessions.map((s) => s.id));
+  for (const [id, prev] of lastStatus) {
+    if (here.has(id)) continue;
+    if (prev !== 'ended') logState({ id }, 'session ended', 'state');
+    lastStatus.delete(id);
+    lastPrompts.delete(id);
+  }
 }
 
 // ---------- sound ----------

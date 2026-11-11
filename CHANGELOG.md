@@ -6,6 +6,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 ## Next
 
 - Windows: Atalay's Terminal is now Orbiterm. Your settings, sign-in and chats carry over
+- Orbit: a Claude, Codex or Antigravity you quit with Ctrl+C (or /exit) blows up and leaves the list at once, as End Session does; it stayed as a dim "ended" planet (Claude up to 30 minutes, the others two) (Mac)
 
 ## 0.20.0
 

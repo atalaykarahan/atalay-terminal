@@ -994,7 +994,11 @@ final class RadarEngine {
             }
             guard let data = FileManager.default.contents(atPath: path),
                   let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let sid = j["sessionId"] as? String, let pidNum = j["pid"] as? NSNumber else { continue }
+                  let sid = j["sessionId"] as? String, let pidNum = j["pid"] as? NSNumber else {
+                // Caught half written: the chat is still what it said last (unseen, its planet would blow up and come back).
+                if let c = regCache[n], c.chat, alive(c.pid) { seen.insert(c.sid) }
+                continue
+            }
             let pid = pidNum.int32Value
             // Only the user's chats: Claude Code also registers background jobs and daemons (`kind`), pre-started
             // spare processes and sessions hosted inside another session.
@@ -1014,6 +1018,7 @@ final class RadarEngine {
             S.regUpdated = updated
             stateDirty = true
             S.live = true
+            S.endedAt = 0
             S.pid = pid
             if let name = j["name"] as? String { S.name = name }
             S.reg = j["status"] as? String ?? "busy"
@@ -1068,8 +1073,8 @@ final class RadarEngine {
 
     /// The other AI tools running in terminals (Proc.otherAIs), each a session: busy while it, or anything it runs, works
     /// the CPU (its screen redrawing as it streams, its tools; Codex's npm launcher only waits while its own binary works),
-    /// idle once it has been quiet for 10 seconds; one that quits shows as ended for two minutes, so its window turns back
-    /// into a terminal.
+    /// idle once it has been quiet for 10 seconds; one that quits leaves the dashboard at once and is kept two more minutes
+    /// as ended, so its window turns back into a terminal.
     private func pollOthers() {
         let me = getuid(), now = ProcessInfo.processInfo.systemUptime, ms = nowMs()
         if codexRunning { refreshCodexWaits() } else { codexWaits = [:] }
@@ -1086,6 +1091,11 @@ final class RadarEngine {
             let O: OtherAI
             if let known = others[id] {
                 O = known
+                // Missed for one look, not gone: it is the same session again, not an ended one for good.
+                if O.endedAt != 0 {
+                    O.endedAt = 0
+                    stateDirty = true
+                }
             } else {
                 O = OtherAI(id: id, tool: f.tool, pid: pid)
                 if f.tool == "Antigravity" { O.turnOpen = false }
@@ -2185,6 +2195,25 @@ final class RadarEngine {
             }
             // A compacted conversation shows once, as the session it continues in.
             if S.supersededBy != nil, !S.live { continue }
+            // Claude quit (Ctrl+C, /exit, its terminal closed): the chat leaves the dashboard now, its planet blowing up,
+            // as one ended from a chat window does. It stayed 30 more minutes as a dim "ended" planet. Its window still
+            // hears that it ended, and it comes back if the conversation is resumed.
+            if !S.live, S.endedAt > 0 {
+                guard now - S.lastTs < 30 * Self.MIN else { continue }
+                var brief = SessionBrief(id: S.id, name: S.name.isEmpty ? String(S.id.prefix(8)) : S.name, title: S.title.isEmpty ? S.lastPrompt : S.title,
+                                         status: "ended", waitingFor: nil, cwd: S.cwd, live: false, pid: S.pid, host: nil, tab: nil)
+                brief.model = shortModel(S.model)
+                brief.effort = S.effort
+                brief.ctx = S.ctx
+                brief.ctxMax = S.ctxMax
+                brief.cost = S.cost
+                brief.tools = S.tools
+                brief.web = S.web
+                brief.errors = S.errors
+                brief.statusSince = S.endedAt
+                briefs.append(brief)
+                continue
+            }
             var status = statusOf(S, now)
             // Claude ended its turn to wait for its background subagents: not the user's turn yet. Nor right after
             // one has finished; Claude picks its result up a moment later.
@@ -2268,7 +2297,7 @@ final class RadarEngine {
             let agents = live ? O.agents : O.agents.map { var a = $0; a["running"] = false; a["pending"] = [[String: Any]](); return a }
             let agentsRunning = agents.filter { $0["running"] as? Bool == true }.count
             runningAgents += agentsRunning
-            for p in (running.map { [$0.dict] } ?? []) + agents.flatMap({ $0["pending"] as? [[String: Any]] ?? [] }) {
+            for p in (running.map { [$0.dict] } ?? []) + agents.flatMap({ $0["pending"] as? [[String: Any]] ?? [] }) where live {
                 pendingByCat[p["c"] as? String ?? "plan", default: 0] += 1
             }
             let host: String? = O.hostTab != nil ? "app" : (live ? "term" : nil)
@@ -2293,7 +2322,9 @@ final class RadarEngine {
             item["host"] = orNull(host)
             item["tab"] = orNull(O.hostTab)
             item["convId"] = orNull(O.convId)
-            list.append(item)
+            // One that quit (Ctrl+C, its terminal closed) leaves the dashboard now, its planet blowing up, as Claude's does;
+            // it stayed two minutes as a dim "ended" planet. Only its window still hears of it, to turn back into a terminal.
+            if live { list.append(item) }
             var brief = SessionBrief(id: O.id, name: O.tool, title: !O.title.isEmpty ? O.title : O.prompt.isEmpty ? folder : O.prompt, status: status, waitingFor: waiting,
                                      cwd: O.cwd, live: live, pid: O.pid, host: host, tab: O.hostTab, convId: O.convId)
             brief.model = O.model.isEmpty ? O.tool : O.model
