@@ -1695,7 +1695,7 @@ window.Cloud = (() => {
 
   // ---------- the activity bar's views (git.js): the leaderboard and the themes, where the dashboard's middle is ----------
   const views = {};
-  for (const v of ['friends', 'board', 'themes', 'notifications', ...(window.Roadmap ? ['roadmap'] : [])]) {
+  for (const v of [...(window.Notes ? ['notes'] : []), 'friends', 'board', 'themes', 'notifications', ...(window.Roadmap ? ['roadmap'] : [])]) {
     const el = document.createElement('section');
     el.id = `${v}-view`;
     el.className = 'cv';
@@ -1708,6 +1708,8 @@ window.Cloud = (() => {
   views.board.querySelector('.lb-host').addEventListener('click', boardAction);
   // The Roadmap: what comes next, and the users' votes on it (roadmap.js).
   if (views.roadmap) window.Roadmap.mount(views.roadmap);
+  // Every note as a small panel on a board (notes.js).
+  if (views.notes) window.Notes.mountBoard(views.notes);
   const fq = (sel) => views.friends.querySelector(sel);
   views.friends.innerHTML =
     '<section class="panel cv-friends"><header><span class="tag">friends</span><span class="meta"></span></header><div class="body">' +
@@ -1827,6 +1829,8 @@ window.Cloud = (() => {
     if (v === 'notifications') openNotes();
     if (v === 'roadmap') window.Roadmap.show();
     else window.Roadmap?.hide();
+    if (v === 'notes') window.Notes.showBoard();
+    else window.Notes?.hideBoard();
   }
 
   function close() {

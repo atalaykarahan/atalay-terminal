@@ -100,6 +100,8 @@ window.GitView = (() => {
   bar.innerHTML =
     `<a class="vs-ab on" data-view="dash" title="Dashboard">${ci('files')}</a>` +
     `<a class="vs-ab" data-view="git" title="Source Control (${window.__platform === 'win32' ? 'Ctrl+Shift+G' : '⌃⇧G'})">${ci('source-control')}<b class="vs-badge" hidden></b></a>` +
+    // Notes (notes.js): every note, each a small panel on a board; its icon is notes.js's own notepad.
+    (window.Notes ? `<a class="vs-ab" data-view="notes" title="Notes">${window.Notes.icon}</a>` : '') +
     // The Roadmap (roadmap.js): vote for what comes next; its badge counts the votes left.
     (window.Roadmap ? `<a class="vs-ab" data-view="roadmap" title="Roadmap: vote for what comes next">${ci('rocket')}<b class="vs-badge" hidden></b></a>` : '') +
     `<a class="vs-ab" data-view="friends" title="Friends and messages">${ci('organization')}<b class="vs-badge" hidden></b></a>` +
@@ -1281,7 +1283,7 @@ window.GitView = (() => {
     }
     if (v === 'git') view.classList.remove('side-off');
     setOpen(v === 'git');
-    if (['friends', 'board', 'themes', 'notifications', 'roadmap'].includes(v)) {
+    if (['notes', 'friends', 'board', 'themes', 'notifications', 'roadmap'].includes(v)) {
       window.Cloud?.showView(v);
       mark(v);
     } else window.Cloud?.showView(null);

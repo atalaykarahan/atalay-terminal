@@ -1,7 +1,7 @@
 'use strict';
 
-// The dashboard's small panels, laid out as you like: the right column's (research.feed, files.heat, tool.mix) and the
-// bottom row's (session.log, workers, spend.ledger, your.call).
+// The dashboard's small panels, laid out as you like: the right column's (research.feed, notes.pad, files.heat,
+// tool.mix) and the bottom row's (session.log, workers, spend.ledger, your.call).
 //   move     drag a panel by its strip: to another place in its column or row, or over to the other one
 //   hide     the "–" on its strip; the top bar's panels menu brings it back (and resets the whole layout)
 //   size     drag the lines between panels, and between the map and the right column, the bottom row and the sessions
@@ -11,11 +11,11 @@
 window.PanelLayout = (() => {
   const KEY = 'radar.layout';
   const AREAS = {
-    right: { el: () => document.getElementById('right'), axis: 'y', ids: ['p-research', 'p-files', 'p-mix'] },
+    right: { el: () => document.getElementById('right'), axis: 'y', ids: ['p-research', 'p-notes', 'p-files', 'p-mix'] },
     bottom: { el: () => document.getElementById('bottom'), axis: 'x', ids: ['p-log', 'p-workers', 'p-spend', 'p-call'] },
   };
   // Each panel's share of its column or row as the page has it (style.css); tool.mix takes what it needs.
-  const DEFAULT_GROW = { 'p-research': 1.35, 'p-files': 1, 'p-mix': 0, 'p-log': 1.6, 'p-workers': 1, 'p-spend': 0.95, 'p-call': 1 };
+  const DEFAULT_GROW = { 'p-research': 1.35, 'p-notes': 1.2, 'p-files': 1, 'p-mix': 0, 'p-log': 1.6, 'p-workers': 1, 'p-spend': 0.95, 'p-call': 1 };
   const ALL = [...AREAS.right.ids, ...AREAS.bottom.ids];
   const MIN_PANEL = 60;
   const app = document.getElementById('app');
@@ -31,12 +31,20 @@ window.PanelLayout = (() => {
     } catch {}
     const L = fresh();
     if (!s || s.v !== 1) return L;
-    // Every known panel once, where it was put; a panel this build doesn't know is dropped, a new one goes home.
+    // Every known panel once, where it was put; a panel this build doesn't know is dropped. A new one goes home, to its
+    // place there: right after the panel the page has before it (notes.pad under research.feed), or first.
     const seen = new Set();
     for (const a of ['right', 'bottom']) {
       L[a] = (Array.isArray(s[a]) ? s[a] : []).filter((id) => ALL.includes(id) && !seen.has(id) && seen.add(id));
     }
-    for (const a of ['right', 'bottom']) for (const id of AREAS[a].ids) if (!seen.has(id)) L[a].push(id);
+    for (const a of ['right', 'bottom']) {
+      AREAS[a].ids.forEach((id, i) => {
+        if (seen.has(id)) return;
+        const before = AREAS[a].ids.slice(0, i).reverse().find((p) => L[a].includes(p));
+        L[a].splice(before ? L[a].indexOf(before) + 1 : 0, 0, id);
+        seen.add(id);
+      });
+    }
     L.hidden = (Array.isArray(s.hidden) ? s.hidden : []).filter((id) => ALL.includes(id));
     if (s.grow && typeof s.grow === 'object') for (const [id, g] of Object.entries(s.grow)) if (ALL.includes(id) && g > 0) L.grow[id] = g;
     for (const k of ['rightW', 'bottomH', 'sessW']) L[k] = Number(s[k]) > 0 ? Number(s[k]) : null;
