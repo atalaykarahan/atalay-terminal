@@ -506,6 +506,8 @@ function createRunaways({ onChange, onRead, onPower }) {
       for (const c of level) {
         const p = table.get(c);
         if (!p || !/^(powershell|pwsh|cmd|bash|sh|zsh)$/i.test(p.name)) continue;
+        // The app's own Codex hook (codexhooks.js) is no command of the user's: it would answer the request it keeps.
+        if (/[\\/]atalay-terminal[\\/]codex-(hook\.ps1|waiting)/i.test(p.cmd || '')) continue;
         const m = /\s(?:-Command|-c|-lc|\/c)\s+(.+)$/i.exec(p.cmd || '');
         if (m && (!found || p.started >= found.started)) found = { line: m[1].replace(/^"(.*)"$/, '$1').slice(0, 120), started: p.started };
       }

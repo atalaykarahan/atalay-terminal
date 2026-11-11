@@ -17,6 +17,7 @@ const os = require('node:os');
 const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { createLedger, agg: ledgerAgg, addCall: ledgerAdd } = require('./ledger');
+const { createCodexHooks, codexSession } = require('./codexhooks');
 
 const HOME = os.homedir();
 const WIN = process.platform === 'win32';
@@ -399,6 +400,16 @@ function readNewLines(O) {
     } catch {}
   }
   return out;
+}
+
+// A glog line's time ("I1111 00:00:39.359043 …", local, without a year), in ms; null for a line without one.
+function glogTime(line) {
+  const m = /^[IWEF](\d\d)(\d\d) (\d\d):(\d\d):(\d\d)(\.\d+)?/.exec(line);
+  if (!m) return null;
+  const now = new Date();
+  const at = (year) => new Date(year, +m[1] - 1, +m[2], +m[3], +m[4], +m[5], m[6] ? Math.floor(Number(m[6]) * 1000) : 0).getTime();
+  const t = at(now.getFullYear());
+  return t > now.getTime() + 86_400_000 ? at(now.getFullYear() - 1) : t;
 }
 
 // node:sqlite (Electron's Node has it); without it, Antigravity's planets keep their CPU-made status.
@@ -1381,6 +1392,21 @@ class RadarEngine {
     this.agyUsagePending = false;
     this.agyWasRunning = false;
     this.agyModel = (this.agyUsage && this.agyUsage.model) || '';
+    // Codex's approval requests the user hasn't answered yet (codexhooks.js), by Codex session id, and when each Codex
+    // last logged a tool's output (an answer to them), by its id.
+    this.codexHooks = opts.codexHooks || createCodexHooks({
+      ownDir: path.join(process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local'), 'atalay-terminal'),
+      codexDir: process.env.CODEX_HOME || path.join(HOME, '.codex'),
+    });
+    this.codexWaits = new Map();
+    this.codexOutputAt = new Map();
+    this.codexWaitTimer = null;
+    // Each Antigravity CLI's own log, read on, by its session id: the confirmation or question it shows right now (the
+    // step it asks about, the tool, since when), and its turn as the log tells it (working, or idle since when) with the
+    // conversation it sent the user's message to.
+    this.agyConfirms = new Map();
+    this.agyTurns = new Map();
+    this.agyAgainTimer = null;
     // Their chats and subagents that worked today (the top bar's "today" counts), by id.
     this.otherChatsToday = new Set();
     this.otherAgentsToday = new Set();
@@ -1414,7 +1440,7 @@ class RadarEngine {
     this.firstCwd = new Map();
     this.bootPumps = [];
     this.timers = [];
-    this.watchers = { projects: null, registry: null, agy: null };
+    this.watchers = { projects: null, registry: null, agy: null, codex: null, codexWaiting: null, codexHome: null };
     this.lastRun = {};
     this.lastScan = 0;
     this.scanning = false;
@@ -1446,6 +1472,9 @@ class RadarEngine {
     clearTimeout(this.flushTimer);
     clearTimeout(this.historyTimer);
     clearTimeout(this.ledgerTimer);
+    clearTimeout(this.codexWaitTimer);
+    clearTimeout(this.agyTimer);
+    clearTimeout(this.agyAgainTimer);
     for (const k of Object.keys(this.watchers)) {
       try {
         this.watchers[k]?.close();
@@ -1732,6 +1761,8 @@ class RadarEngine {
   // runaways.js knows for no chat of the user's.
   refreshAgyUsage() {
     if (this.agyUsagePending || this.stopped || !this.agyRunning()) return;
+    // Not while an Antigravity turn works: each `agy -p /usage` writes the conversation's summary back as idle.
+    for (const O of this.others.values()) if (O.tool === 'Antigravity' && O.endedAt === 0 && O.turnOpen === true) return;
     this.agyUsagePending = true;
     const child = spawn('agy -p "/usage" --output-format json --log-file NUL', [], {
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -1767,6 +1798,44 @@ class RadarEngine {
   agyRunning() {
     for (const O of this.others.values()) if (O.tool === 'Antigravity' && O.endedAt === 0) return true;
     return false;
+  }
+
+  // Codex's approval requests still waiting for the user: its hook's, less those its own log says were answered.
+  refreshCodexWaits() {
+    const waits = this.codexHooks.waiting();
+    for (const [session, wait] of waits) {
+      if (!this.codexHooks.answered(session, wait.since)) continue;
+      waits.delete(session);
+      this.codexHooks.drop(session, wait.since);
+    }
+    const key = (m) => JSON.stringify([...m].map(([s, w]) => [s, w.since, w.command]));
+    if (key(waits) !== key(this.codexWaits)) this.stateDirty = true;
+    this.codexWaits = waits;
+  }
+
+  // A Codex asked for an approval, or its answer came: its planet waits, or works again, now.
+  codexWaitChanged() {
+    if (this.codexWaitTimer || this.stopped) return;
+    this.codexWaitTimer = setTimeout(() => {
+      this.codexWaitTimer = null;
+      if (this.stopped) return;
+      try {
+        this.refreshCodexWaits();
+        const now = Date.now();
+        for (const O of this.others.values()) {
+          if (O.tool !== 'Codex' || O.endedAt !== 0) continue;
+          const shown = this.otherStatus(O, now).status;
+          if (shown !== O.shown) {
+            O.shown = shown;
+            O.statusSince = now;
+            this.stateDirty = true;
+          }
+        }
+        this.publishState();
+      } catch (e) {
+        report(e);
+      }
+    }, 50);
   }
 
   every(seconds, fn) {
@@ -1830,11 +1899,17 @@ class RadarEngine {
       if (!this.cursors.has(this.cursorKey(fp))) this.historySoon();
       this.pumpSoon(fp);
     });
-    watch('codex', path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'sessions'), { recursive: true }, (_event, name) => {
+    const codexSessions = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'sessions');
+    watch('codex', codexSessions, { recursive: true }, (_event, name) => {
       if (!name || !String(name).endsWith('.jsonl') || this.stopped) return;
       try {
       const now = Date.now();
+      // A log no Codex follows yet: a new session's, begun with its first prompt. One still looking for its own looks now,
+      // not at its next 30 s look (its first approval would pass unseen), once a second at most.
+      const file = path.join(codexSessions, String(name));
+      const unclaimed = ![...this.others.values()].some((x) => x.log && path.resolve(x.log).toLowerCase() === path.resolve(file).toLowerCase());
       for (const O of this.others.values()) if (O.tool === 'Codex' && O.endedAt === 0 && O.cwd) {
+        if (!O.log && unclaimed && now - (O.logChecked || 0) > 1000) O.logChecked = 0;
         this.readCodexLog(O, O.cwd, O.firstTs, now);
         const shown = this.otherStatus(O, now).status;
         if (shown !== O.shown) { O.shown = shown; O.statusSince = now; this.stateDirty = true; }
@@ -1843,6 +1918,12 @@ class RadarEngine {
       } catch (e) { report(e); }
     });
     watch('registry', this.registry, {}, () => this.registryChanged());
+    // Codex's approval requests (codexhooks.js), the moment its hook writes or drops one, and its own log, where the
+    // user's answer to one lands.
+    watch('codexWaiting', this.codexHooks.dir, {}, () => this.codexWaitChanged());
+    watch('codexHome', path.dirname(this.codexHooks.logDatabase), {}, (_event, name) => {
+      if (this.codexWaits.size && String(name || '').startsWith(path.basename(this.codexHooks.logDatabase))) this.codexWaitChanged();
+    });
     watch('agy', path.join(HOME, '.gemini', 'antigravity-cli'), { recursive: true }, (_event, name) => {
       this.agyChanged();
       const s = String(name || '');
@@ -2784,6 +2865,8 @@ class RadarEngine {
   // readAntigravity): their turn, their calls and tokens, counted with Claude's (otherTool). No cost: no list price.
   setOthers(list) {
     const now = Date.now(), seen = new Set();
+    if (this.codexRunning()) this.refreshCodexWaits();
+    else this.codexWaits = new Map();
     for (const a of [...list].sort((x, y) => (x.started || 0) - (y.started || 0))) {
       const id = `ai:${a.pid}:${a.started}`;
       seen.add(id);
@@ -2830,6 +2913,9 @@ class RadarEngine {
       }
       if (O.endedAt > 0 && now - O.endedAt >= 120_000) {
         this.others.delete(O.id);
+        this.codexOutputAt.delete(O.id);
+        this.agyConfirms.delete(O.id);
+        this.agyTurns.delete(O.id);
         this.stateDirty = true;
       }
     }
@@ -2877,14 +2963,31 @@ class RadarEngine {
       return { status: 'waiting', waiting: `approval: ${p ? p.l : 'a step'}` };
     }
     const command = this.otherCommand(O);
-    // Recorded turn boundaries are authoritative; CPU and persistent children cannot restart a turn.
-    if (O.tool === 'Codex' && O.turnOpen != null) return { status: O.turnOpen ? 'busy' : 'idle', waiting: null };
+    // A recorded Codex turn is authoritative: screen redraws, MCP servers and leftover shells can't restart a finished one,
+    // nor does low CPU prove that a tool waits for approval (its PermissionRequest hook says so).
+    if (O.tool === 'Codex' && O.turnOpen != null) {
+      const asked = O.turnOpen ? this.codexWait(O) : null;
+      if (asked) return { status: 'waiting', waiting: `approval: ${asked}` };
+      return { status: O.turnOpen ? 'busy' : 'idle', waiting: null };
+    }
     if (O.turnOpen === false) return { status: (O.tool !== 'Antigravity' && command) || (O.agents || []).some((a) => a.running) ? 'busy' : 'idle', waiting: null };
     if (O.turnOpen === true) {
       if (O.tool !== 'Antigravity' && !O.stepsKnown && !command && !O.busy && O.call && now - O.call.p.t > 4000) return { status: 'waiting', waiting: `approval: ${O.call.p.l}` };
       return { status: 'busy', waiting: null };
     }
     return { status: (O.tool !== 'Antigravity' && O.busy) || command ? 'busy' : 'idle', waiting: null };
+  }
+
+  // What a Codex waits for the user to approve (codexhooks.js): its session's request, until it's answered. Codex's own
+  // hooks drop it once the tool ran, the turn stopped or was interrupted, or a new prompt came; before those, a command
+  // it started after the request (allowed: a long one would keep the request on screen until it ends), a tool's output
+  // in its log after it (allowed and done, or denied), or a new turn answer it too.
+  codexWait(O) {
+    const session = O.log ? codexSession(O.log) : null;
+    const wait = session && this.codexWaits.get(session);
+    if (!wait) return null;
+    if ((O.commandStarted || 0) > wait.since || (this.codexOutputAt.get(O.id) || 0) > wait.since || (O.turnStart || 0) > wait.since) return null;
+    return clip(redact(wait.command), 120) || 'a step';
   }
 
   // The command it has a shell run, when that's work. Where its records tell its turns (Codex, Antigravity), a shell
@@ -3066,6 +3169,7 @@ class RadarEngine {
   readAntigravity(O, cwd, now) {
     const root = path.join(HOME, '.gemini', 'antigravity-cli');
     this.readAgyModel(O, root);
+    this.readAgyConfirmations(O, root);
     const db = agyOpen(path.join(root, 'conversation_summaries.db'));
     if (!db) return;
     try {
@@ -3077,7 +3181,10 @@ class RadarEngine {
         if (other.convId) claimed.add(other.convId);
         if (other.cwd && sameDir(other.cwd, cwd)) sharedFolder = true;
       }
-      const stickyId = sharedFolder && O.turnOpen === true && O.convId && !claimed.has(O.convId) ? O.convId : null;
+      let stickyId = sharedFolder && O.turnOpen === true && O.convId && !claimed.has(O.convId) ? O.convId : null;
+      // The conversation its CLI's log says it sent the user's message to.
+      const logged = this.agyTurns.get(O.id);
+      if (logged && logged.conversation && !claimed.has(logged.conversation)) stickyId = logged.conversation;
       const row = agyConversation(db, cwd, root, O.firstTs - 2000, O.cmd || '', claimed, stickyId);
       if (!row) {
         // Nothing sent from this folder yet: the user's turn (its screen redrawing is no work, as its CPU said).
@@ -3099,7 +3206,16 @@ class RadarEngine {
       }
       const summaryOpen = /_(RUNNING|BUSY|CANCELING)$/.test(row.status || '');
       const stepsActive = !!(steps && steps.active);
-      const open = summaryOpen || stepsActive || !!O.transcriptOpen || !!(O.runningBgTasks && O.runningBgTasks.size);
+      let open = summaryOpen || stepsActive || !!O.transcriptOpen || !!(O.runningBgTasks && O.runningBgTasks.size);
+      const turn = this.agyTurns.get(O.id);
+      if (turn && turn.working === true) open = true;
+      else if (turn && turn.working === false && Date.now() - turn.since >= 700) {
+        // Its CLI is back at its prompt (a declined tool's ERROR or a background step's RUNNING in the transcript say
+        // nothing then).
+        open = false;
+        O.transcriptOpen = false;
+        if (O.runningBgTasks) O.runningBgTasks.clear();
+      }
       if (O.turnOpen !== open || O.title !== row.title || O.convId !== id) {
         O.turnOpen = open;
         O.title = row.title || '';
@@ -3107,20 +3223,28 @@ class RadarEngine {
         this.stateDirty = true;
       }
       if (!open && O.plan) this.closeAgyCalls(O, id, O.plan, root, null);
-      // What runs, or waits for the user, right now: its steps not over yet.
+      // What runs, or waits for the user, right now: its steps not over yet, and what its CLI shows.
       const was = `${O.call ? O.call.p.l : ''}|${O.waitsForUser}`;
+      const confirm = this.agyConfirms.get(O.id);
+      const shown = confirm ? confirm.pending : null;
       if (!open) {
         O.call = null;
         O.waitsForUser = false;
+        // A turn over asks nothing any more.
+        if (confirm) confirm.pending = null;
       } else {
         O.stepsKnown = !!steps;
         if (steps) {
           const p = O.plan ? agyCall(O.plan, steps.waiting ?? steps.open) : null;
           if (p) O.call = { id: '', p };
+          // The CLI's own log says when it shows a confirmation, for any tool (writing a file outside the workspace asks
+          // too); without it, a waiting step of a tool that isn't a read, a search or an edit.
           const canWait = O.call && O.call.p ? !['read', 'search', 'edit'].includes(O.call.p.c) : true;
-          O.waitsForUser = steps.waiting != null && canWait;
+          O.waitsForUser = !!shown || (steps.waiting != null && canWait);
+          const asked = shown && O.plan ? agyCall(O.plan, shown.step) : null;
+          if (asked) O.call = { id: '', p: asked };
         } else {
-          O.waitsForUser = false;
+          O.waitsForUser = !!shown;
         }
       }
       if (was !== `${O.call ? O.call.p.l : ''}|${O.waitsForUser}`) this.stateDirty = true;
@@ -3154,6 +3278,108 @@ class RadarEngine {
       const status = ended.get(plan.idx + 1 + k);
       if (open(key) && status != null) this.otherResult(O, key, status === 3, Date.now(), null, A);
     });
+  }
+
+  // What an Antigravity CLI's own log says, as it writes it the moment it happens: its turn (`Sending user message to
+  // conversation <id>` starts one, as a background task's wake-up `[Sonar] Resolved active tags` does; the first
+  // `doRefreshQuota:` after it, not a forced one, ends it, as `Cancelling …` does: true of every turn end across 13 logs,
+  // a declined tool's too, and never mid-turn), and the confirmation or question it shows (`Surfacing tool
+  // confirmation: "WriteFile" at step 4`, `Surfacing ask_question at step 7`) until the user answers. Its log is the one
+  // whose first line names its pid ("Starting language server process with pid 17732"), read from the start once; one
+  // named for a time before the CLI started (cli-20261111_015629.log) is an earlier run's and isn't opened.
+  readAgyConfirmations(O, root) {
+    let c = this.agyConfirms.get(O.id);
+    if (!c) {
+      const dir = path.join(root, 'log'), tag = `with pid ${O.pid}`;
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((n) => /^cli-.*\.log$/.test(n)).sort().reverse();
+      } catch {
+        return;
+      }
+      const born = (n) => {
+        const m = /^cli-(\d{4})(\d\d)(\d\d)_(\d\d)(\d\d)(\d\d)/.exec(n);
+        return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : Infinity;
+      };
+      const name = names.find((n) => {
+        if (born(n) < (O.firstTs || 0) - 120_000) return false;
+        const head = Buffer.alloc(300);
+        let got = 0;
+        try {
+          const fd = fs.openSync(path.join(dir, n), 'r');
+          try {
+            got = fs.readSync(fd, head, 0, head.length, 0);
+          } finally {
+            fs.closeSync(fd);
+          }
+        } catch {
+          return false;
+        }
+        const first = head.subarray(0, got).toString('utf8').split('\n')[0].replace(/\r$/, '');
+        return first.endsWith(tag) || first.includes(`${tag} `);
+      });
+      if (!name) return;
+      c = { log: path.join(dir, name), offset: 0, pending: null };
+      this.agyConfirms.set(O.id, c);
+      this.agyTurns.set(O.id, { working: null, since: 0, conversation: null });
+    }
+    let st;
+    try {
+      st = fs.statSync(c.log);
+    } catch {
+      return;
+    }
+    if (st.size <= c.offset) return;
+    const from = Math.max(c.offset, st.size > 2 << 20 ? st.size - (2 << 20) : 0);
+    const buf = Buffer.alloc(st.size - from);
+    try {
+      const fd = fs.openSync(c.log, 'r');
+      try {
+        fs.readSync(fd, buf, 0, buf.length, from);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return;
+    }
+    const end = buf.lastIndexOf(0x0a);
+    if (end < 0) return;
+    c.offset = from + end + 1;
+    let turn = this.agyTurns.get(O.id) || { working: null, since: 0, conversation: null };
+    const mark = () => (c.pending ? `${c.pending.step}:${c.pending.tool}` : '');
+    const was = mark(), wasTurn = turn.working;
+    for (const raw of buf.subarray(0, end).toString('utf8').split('\n')) {
+      const line = raw.replace(/\r$/, '');
+      const at = glogTime(line) ?? Date.now();
+      let m;
+      if ((m = /Sending user message to conversation ([^\s(]+)/.exec(line))) {
+        turn = { working: true, since: at, conversation: m[1] };
+      } else if (line.includes('[Sonar] Resolved active tags') && turn.working !== true) {
+        turn = { working: true, since: at, conversation: turn.conversation };
+      } else if ((m = /Surfacing tool confirmation: "([^"]*)"(?:.*? at step (\d+))?/.exec(line))) {
+        c.pending = { step: m[2] != null ? Number(m[2]) : -1, tool: m[1], since: at };
+      } else if ((m = /Surfacing ask_question at step (\d+)/.exec(line))) {
+        c.pending = { step: Number(m[1]), tool: 'a question', since: at };
+      } else if (/Responding to tool confirmation|\] Tool confirmation for conversation|cleared pending tool confirmation|Responding to pending ask_question|AskQuestion response for conversation|cancelled ask_question|AskQuestion cancelled/.test(line)) {
+        c.pending = null;
+      } else if (
+        turn.working === true &&
+        ((line.includes('] doRefreshQuota:') && !line.includes('force=true') && !line.includes('not logged in')) ||
+          line.includes('Cancelling in-progress response') || line.includes('] Cancelling conversation '))
+      ) {
+        turn = { working: false, since: at, conversation: turn.conversation };
+        c.pending = null;
+      }
+    }
+    this.agyTurns.set(O.id, turn);
+    if (was !== mark() || wasTurn !== turn.working) this.stateDirty = true;
+    // Queued input goes out a moment after a turn ends: an idle that short is no turn of the user's. Look again then.
+    if (turn.working === false && Date.now() - turn.since < 700 && !this.agyAgainTimer) {
+      this.agyAgainTimer = setTimeout(() => {
+        this.agyAgainTimer = null;
+        this.agyChanged();
+      }, 750);
+    }
   }
 
   // The conversation's transcript, read on from where it was (a new conversation: from the start): the prompt, the
@@ -3207,7 +3433,8 @@ class RadarEngine {
             const m = /task-\d+/.exec(j.content);
             if (m) O.runningBgTasks.add(m[0]);
           }
-          O.transcriptOpen = step !== 'CANCELED';
+          // A tool the user declined ends the turn there, with no reply after it.
+          O.transcriptOpen = step !== 'CANCELED' && !(step === 'ERROR' && String(j.content || '').includes('user denied permission'));
         }
         // A tool's own step: done, it no longer waits; still running or waiting, it does. Its call's result counts.
         if (['DONE', 'ERROR', 'CANCELED'].includes(step)) {
@@ -3389,6 +3616,7 @@ class RadarEngine {
         const key = `codex:${p.call_id || at}`;
         if (p.type.endsWith('_call_output')) {
           if (O.call && O.call.id === p.call_id) O.call = null;
+          this.codexOutputAt.set(O.id, Math.max(this.codexOutputAt.get(O.id) || 0, ts));
           const call = this.otherCalls.get(key);
           this.otherResult(O, key, codexOk(p.output), ts, call ? Math.max(0, ts - call.t) : null);
         } else if (p.type === 'web_search_call') {

@@ -27,6 +27,7 @@ const { createFiles, linkTarget, fileFromURL } = require('./files');
 const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
+const { createCodexHooks } = require('./codexhooks');
 
 let autoUpdater = null;
 try {
@@ -171,6 +172,13 @@ const limits = createLimits({
   claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
 });
 
+// Codex's approval requests (src/codexhooks.js): its hooks keep them in the app's own folder, the same for every build and
+// profile.
+const codexHooks = createCodexHooks({
+  ownDir: path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'atalay-terminal'),
+  codexDir: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+});
+
 // Discord presence (discord.js, the Mac's DiscordPresence): your Discord profile shows what you're doing, on unless
 // Settings · DISCORD turns it off. Made before the engine and Cloud, whose changes it hears.
 const discord = createDiscord({ settings, xp: () => cloud.json().xp, onChange: () => pushDiscord() });
@@ -178,6 +186,7 @@ const discord = createDiscord({ settings, xp: () => cloud.json().xp, onChange: (
 const engine = createEngine({
   claudeDir: path.join(os.homedir(), '.claude'),
   limitsFile: limits.file,
+  codexHooks,
   // A Claude process under one of the app's terminals belongs to that window (its id becomes the session's `tab`).
   isAppPid: (pid) => (terminals.list().find((t) => t.pid === pid) || {}).id || false,
   onInit(json) {
@@ -1984,8 +1993,12 @@ app.whenReady().then(() => {
   if (PROBE && app.dock) app.dock.hide();
   buildMenu();
   createDashboard();
-  // Only the app's usual profile hooks Claude Code's settings: a profile of its own (npm run staging) leaves them be.
-  if (process.platform === 'win32' && !PROBE && !profileSuffix()) limits.install();
+  // Only the app's usual profile hooks Claude Code's and Codex's settings: a profile of its own (npm run staging) leaves
+  // them be.
+  if (process.platform === 'win32' && !PROBE && !profileSuffix()) {
+    limits.install();
+    codexHooks.install();
+  }
   engine.start();
   cloud.start();
   runaways.start();
