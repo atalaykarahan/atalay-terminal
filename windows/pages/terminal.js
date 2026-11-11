@@ -188,7 +188,7 @@
   atl.on('term:info', (i) => {
     tool = i.tool || null;
     document.getElementById('title').textContent = i.title || 'terminal';
-    document.title = `${i.title || 'terminal'} · Atalay's Terminal`;
+    document.title = `${i.title || 'terminal'} · Orbiterm`;
     const [label, color] = STATUS[i.status] || ['', '--dim'];
     document.getElementById('status').textContent = label;
     document.getElementById('where').textContent = i.cwd || '';

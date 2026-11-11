@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## Next
+
+- Windows: Atalay's Terminal is now Orbiterm. Your settings, sign-in and chats carry over
+
 ## 0.20.0
 
 - Top bar: every AI at once (Claude, Codex, Antigravity): today's totals of all of them and each one's 5-hour and weekly limits, whichever terminal you clicked

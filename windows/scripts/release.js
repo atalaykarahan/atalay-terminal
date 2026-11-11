@@ -153,7 +153,7 @@ let auth = '';
     return;
   }
 
-  const title = "Atalay's Terminal for Windows";
+  const title = 'Orbiterm for Windows';
   // The page new users land on, so it walks them past the warnings an installer without a code signature still meets
   // (the browser hasn't seen the file often, SmartScreen doesn't know its publisher).
   const body =

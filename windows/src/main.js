@@ -1,5 +1,5 @@
 'use strict';
-// Atalay's Terminal for Windows: the Mac app's dashboard (app/Resources/web, unchanged) in Electron. This file is the
+// Orbiterm for Windows: the Mac app's dashboard (app/Resources/web, unchanged) in Electron. This file is the
 // Mac app's MainWindowController and AppDelegate: the windows, the line between the pages and the parts that feed them
 // (engine.js, cloud.js, git.js, themes.js, terminals.js), the keys and the updates.
 const {
@@ -44,6 +44,11 @@ const PROBE = process.env.ATL_PROBE || '';
 
 // Run from the sources on a Mac (development), its data must not land in the Mac app's own folder.
 if (process.platform !== 'win32') app.setPath('userData', path.join(app.getPath('appData'), 'atalay-terminal-windows-dev'));
+// The data folder keeps the name the app had before it was Orbiterm (Atalay's Terminal; Atalay's Terminal Staging for a
+// staging build): under the new name the app would start without its settings, its sign-in and its chats. A folder
+// given with --user-data-dir (npm run staging's, a check's) stays as it is.
+const DATA = path.join(app.getPath('appData'), app.getName().replace(/^Orbiterm/, "Atalay's Terminal"));
+if (process.platform === 'win32' && !app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', DATA);
 if (!app.requestSingleInstanceLock()) return app.quit();
 // Sounds (the turn-finished chime when sound is on, the notices' pings) play without a click on the page first, as on the Mac.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -155,7 +160,7 @@ const terminals = createTerminals({
 // "" for the app's usual profile, else a short mark of the one it was given (--user-data-dir).
 function profileSuffix() {
   const own = app.getPath('userData').toLowerCase();
-  if (path.resolve(own) === path.resolve(path.join(app.getPath('appData'), app.getName())).toLowerCase()) return '';
+  if (path.resolve(own) === path.resolve(DATA).toLowerCase()) return '';
   return '-' + crypto.createHash('sha256').update(own).digest('hex').slice(0, 8);
 }
 
@@ -486,7 +491,7 @@ function createDashboard() {
   const bg = themes.color('--bg');
   dash = new BaseWindow({
     width: Math.min(1480, area.width), height: Math.min(900, area.height), minWidth: 980, minHeight: 600,
-    title: "Atalay's Terminal", backgroundColor: bg, show: false, autoHideMenuBar: true,
+    title: 'Orbiterm', backgroundColor: bg, show: false, autoHideMenuBar: true,
     ...(PROBE ? { x: -32000, y: -32000, frame: false, width: 1480, height: 900 } : {}),
   });
   const win = dash;
@@ -967,7 +972,7 @@ function openChatWindow({ id = crypto.randomUUID(), cwd, claudeArgs, claude = !!
   const place = wholeOnDisplay({ x: area.x + 120 + cascade, y: area.y + 80 + cascade, width: 960, height: 640 }, home);
   const win = new BrowserWindow({
     ...place, minWidth: 560, minHeight: 360,
-    title: title || "Atalay's Terminal", backgroundColor: themes.color('--code-bg'), show: false, autoHideMenuBar: true,
+    title: title || 'Orbiterm', backgroundColor: themes.color('--code-bg'), show: false, autoHideMenuBar: true,
     ...(PROBE ? { x: -32000, y: -32000, frame: false } : {}),
     webPreferences: webPrefs(),
   });

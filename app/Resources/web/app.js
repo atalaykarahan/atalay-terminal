@@ -1275,7 +1275,7 @@ function renderCall() {
     .sort((a, b) => (a.status === 'waiting' ? 0 : 1) - (b.status === 'waiting' ? 0 : 1) || a.statusSince - b.statusSince);
   const nW = need.filter((s) => s.status === 'waiting').length;
   $('p-call').classList.toggle('hot', nW > 0);
-  const title = nW ? `⚠ ${nW} needs you · Atalay's Terminal` : need.length ? `◆ ${need.length} your turn · Atalay's Terminal` : "Atalay's Terminal";
+  const title = nW ? `⚠ ${nW} needs you · Orbiterm` : need.length ? `◆ ${need.length} your turn · Orbiterm` : 'Orbiterm';
   if (document.title !== title) document.title = title;
   setText($('m-call'), nW ? `${nW} blocked on you` : need.length ? `${need.length} waiting for your next prompt` : 'nothing needs you');
   const box = $('call');

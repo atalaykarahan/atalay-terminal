@@ -1,7 +1,7 @@
 'use strict';
 
 // Discord's Rich Presence, the Mac app's DiscordPresence.swift: what the app is doing shows on your Discord profile
-// ("Playing Atalay's Terminal"), as games show theirs. On unless Settings · DISCORD turns it off. It says how many
+// ("Playing Orbiterm"), as games show theirs. On unless Settings · DISCORD turns it off. It says how many
 // sessions run, how many are at work or wait for you and the AI tools at work, never a prompt, code or a file's name.
 // Two more switches add the project's name (the folder of the session at work, "+2" for the other folders at work, all
 // of them under the tool's picture) and today's active time as XP counts it (Cloud's `xp.today`, with the level under
@@ -133,7 +133,7 @@ function createDiscord({ settings, xp = () => null, onChange = () => {} }) {
     const x = xp();
     if (showActive && x && Number.isInteger(x.today) && x.today >= 60) parts.push(`${duration(x.today)} today`);
 
-    const assets = { large_image: 'logo', large_text: x && x.level ? `Level ${x.level} · ${x.rank}` : "Atalay's Terminal" };
+    const assets = { large_image: 'logo', large_text: x && x.level ? `Level ${x.level} · ${x.rank}` : 'Orbiterm' };
     const lead = pool[0];
     const key = lead && asset(toolOf(lead));
     if (key) {

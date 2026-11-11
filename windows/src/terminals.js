@@ -73,7 +73,7 @@ function childEnvironment(extraPath) {
   // clearing the screen, which takes the top of a long conversation out of the terminal's scrollback. A user who chose
   // the classic one (/tui default) keeps it.
   if (claudeTUI() !== 'default') env.CLAUDE_CODE_NO_FLICKER = '1';
-  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'AtalaysTerminal' };
+  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'Orbiterm' };
 }
 
 /** The renderer the user picked in Claude Code (`/tui`, "tui" in its settings.json): "fullscreen", "default" or null. */

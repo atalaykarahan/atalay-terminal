@@ -54,7 +54,7 @@ window.Cloud = (() => {
     const x = s.xp, r = x && Xp.rank(x.level);
     const title = r ? `<small class="rk" style="--rc:${r.color}">${esc(r.name.toUpperCase())} · LV ${x.level}</small>` : '<small>HACKER</small>';
     const bar = r ? `<i class="xpb" style="--rc:${r.color}"><i style="width:${Xp.pct(x).toFixed(1)}%"></i></i>` : '';
-    setHTML(stack, s.hackerName ? `${title}<b${long}>${esc(s.hackerName)}<i class="htag">${tagText(s.tag)}</i></b>${bar}` : "<small>ATALAY'S</small><b>TERMINAL</b>");
+    setHTML(stack, s.hackerName ? `${title}<b${long}>${esc(s.hackerName)}<i class="htag">${tagText(s.tag)}</i></b>${bar}` : '<b>ORBITERM</b>');
     // The badge you display, beside your name (badges.js).
     window.Badges?.paintTop();
     brand.title = r
@@ -1621,7 +1621,7 @@ window.Cloud = (() => {
     const style = Object.entries(vars).map(([n, v]) => `${n}:${v}`).join(';');
     return (
       `<button type="button" class="th-card${t.id === kept ? ' on' : ''}" data-id="${esc(t.id)}" style="${esc(style)}">` +
-      '<span class="th-shot"><span class="th-top"><i></i><b>ATALAY\'S</b><em></em></span>' +
+      '<span class="th-shot"><span class="th-top"><i></i><b>ORBITERM</b><em></em></span>' +
       '<span class="th-side"><i class="busy"></i><i class="idle"></i><i class="wait"></i></span>' +
       `<span class="th-term"><span><b style="color:${a(2)}">❯</b> git status</span><span style="color:${a(1)}">  modified: app.js</span>` +
       `<span style="color:${a(2)}">  new file: themes.json</span><span><b style="color:${a(4)}">~/repo</b> <b style="color:${a(5)}">main</b> <i class="cur"></i></span></span>` +

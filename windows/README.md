@@ -1,4 +1,4 @@
-# Atalay's Terminal for Windows
+# Orbiterm for Windows
 
 **Out as a pre-release**: [the releases repo's windows release](https://github.com/atalaykarahan/atalay-terminal-releases/releases/tag/windows).
 It's built in the open, like the rest of the app, but its installers are built and published on the Windows PC, not on

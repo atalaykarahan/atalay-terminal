@@ -103,7 +103,7 @@
     const hub = el('g', { class: 'hub' }, svg);
     el('circle', { class: 'pulse', cx: C, cy: C, r: R0 - 6 }, hub);
     el('circle', { class: 'core', cx: C, cy: C, r: R0 - 6 }, hub);
-    el('text', { class: 'brand', x: C, y: C - 12 }, hub).textContent = "ATALAY'S";
+    el('text', { class: 'brand', x: C, y: C - 12 }, hub).textContent = 'ORBITERM';
     el('text', { class: 'title', x: C, y: C + 3 }, hub).textContent = 'SHORTCUTS';
     el('text', { class: 'sub', x: C, y: C + 16 }, hub).textContent = SLOTS.some(Boolean) ? 'pick a folder' : 'add your folders';
     hub.addEventListener('click', (e) => (e.stopPropagation(), close()));

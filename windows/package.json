@@ -1,6 +1,6 @@
 {
   "name": "atalay-terminal",
-  "productName": "Atalay's Terminal",
+  "productName": "Orbiterm",
   "version": "0.20.0",
   "description": "A HUD for running many Claude Code sessions: every session on a live orbit map, each chat in its own window",
   "author": "atalay karahan",
@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "com.atalaykarahan.atalay-terminal",
-    "productName": "Atalay's Terminal",
+    "productName": "Orbiterm",
     "artifactName": "Atalays-Terminal-Setup-${version}.${ext}",
     "directories": {
       "output": "dist",
@@ -70,7 +70,7 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "shortcutName": "Atalay's Terminal"
+      "shortcutName": "Orbiterm"
     },
     "publish": {
       "provider": "generic",
