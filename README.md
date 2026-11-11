@@ -102,4 +102,4 @@ npm run build              # → app/Resources/web/orbit.js
 
 [PolyForm Shield 1.0.0](LICENSE): use the app, read and change its code and send pull requests, for anything but a
 product that competes with it, paid or free. It's source-available, not open source. Versions up to and including
-0.19.2 were released under MIT and stay under it.
+0.20.0 were released under MIT and stay under it.
