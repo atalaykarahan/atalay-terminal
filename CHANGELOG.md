@@ -18,6 +18,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Messages: emoji: the emoji button (search, categories, recent ones first), :name: while typing (:fire → 🔥), and a message of only emoji shows big (Mac)
 - Messages: sending no longer makes the whole conversation blink and jump: only the new message slides in (Mac)
 - Party mode: the party switch next to power save: streamer mode's made-up names, and five made-up sessions on the map and in the sessions list among yours, busy all the time: their subagents (5, 12 and 6 of them) finishing one by one and new ones taking their places, their turns finishing, now and then a question for you, their cards changing places, and new sessions coming in as others are done, for a screen worth sharing. Your real sessions go on as they are, and the show goes when it's off (Mac)
+- Security fixes, found and fixed by @EmirCobanOfficial on GitHub (EmirMac#7124 in the app): a link in a terminal, a Markdown preview or the dashboard never starts an app or a script (it's shown in the Finder instead) and asks before it opens another app; a file opened from a link asks before its first save; on Windows the chats list's Show folder opens only folders
 
 ## 0.20.0
 
