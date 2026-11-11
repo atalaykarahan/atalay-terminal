@@ -24,6 +24,7 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, W
         ucc.addScriptMessageHandler(ThemeBridge(), contentWorld: .page, name: "theme")
         ucc.addScriptMessageHandler(KeysBridge(), contentWorld: .page, name: "keys")
         ucc.addScriptMessageHandler(SaversBridge(), contentWorld: .page, name: "savers")
+        ucc.addScriptMessageHandler(NotesBridge(), contentWorld: .page, name: "notes")
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -90,9 +91,10 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, W
     /// ⌘N: a new file in Source Control's editor, VS Code's Untitled-1.
     func newFile() { callPage("window.GitView && GitView.newFile()") }
 
-    /// What the editor hasn't saved yet goes to disk (the app quits), then `done`.
+    /// What the editor and the notes haven't saved yet goes to disk (the app quits), then `done`.
     func flushFiles(_ done: @escaping @MainActor () -> Void) {
-        webView.callAsyncJavaScript("return window.FileEditor ? await FileEditor.flush() : true", arguments: [:], in: nil, in: .page) { _ in done() }
+        let js = "await Promise.all([window.FileEditor ? FileEditor.flush() : true, window.Notes && Notes.flush ? Notes.flush() : true]); return true"
+        webView.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { _ in done() }
     }
 
     private func callPage(_ js: String, _ args: [String: Any] = [:]) {

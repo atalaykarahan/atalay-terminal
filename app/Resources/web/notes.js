@@ -13,13 +13,17 @@
 //   Tab        in and out a level (Shift+Tab); in code, two spaces
 //   Ctrl+A     once the block's text, twice every block: copied (Ctrl+C) as Markdown, deleted or cut together, moved in
 //              and out with Tab; Esc, a click or any other key lets go
-// What's written is kept as it's typed (notes.pad in this page's storage, on this computer only); Ctrl+Z and Ctrl+Y
-// (⌘Z, ⌘⇧Z) go back and forth through it. ⤢ on the strip opens the note in a window of its own over the dashboard, to
+// What's written is kept as it's typed, on this computer only: by the app, encrypted, in its own folder (in this page's
+// storage, notes.pad, when no app is behind the page); Ctrl+Z and Ctrl+Y (⌘Z, ⌘⇧Z) go back and forth through it. ⤢ on the strip opens the note in a window of its own over the dashboard, to
 // drag by its top and size by its corner; × puts it back in its place. Ctrl+Shift+J (⌘⇧J) brings the cursor to it from
 // anywhere on the page, in the window when the panel isn't showing.
 window.Notes = (() => {
   const KEY = 'notes.pad';
   const WIN_KEY = 'notes.pad.window';
+  // The app keeps the notes (NotesStore.swift on the Mac, notesstore.js on Windows); the page reads them once it
+  // starts, and writes nothing before.
+  const STORE = window.webkit?.messageHandlers?.notes || null;
+  let ready = !STORE;
   const host = document.getElementById('notes');
   const panel = document.getElementById('p-notes');
   const meta = document.getElementById('m-notes');
@@ -119,11 +123,15 @@ window.Notes = (() => {
   };
   const blocksOf = (n) => (n === cur ? plain(blocks) : n.blocks);
 
-  function loadAll() {
-    let v = null;
+  const readHere = () => {
     try {
-      v = JSON.parse(localStorage.getItem(KEY) || 'null');
-    } catch {}
+      return JSON.parse(localStorage.getItem(KEY) || 'null');
+    } catch {
+      return null;
+    }
+  };
+
+  function loadAll(v) {
     let list = [];
     if (v && Array.isArray(v.notes)) {
       list = v.notes
@@ -144,7 +152,7 @@ window.Notes = (() => {
     notes = list.length ? list : [blank('note1')];
     pinned = (notes.find((n) => n.id === (v?.pinned || v?.current)) || notes[0]).id;
     bind(pinnedNote());
-    if (unnamed || !v?.ordered) write();
+    if (v && (unnamed || !v.ordered)) write();
   }
 
   // The note being written from now on: its blocks become the live ones, with a history of their own.
@@ -158,11 +166,34 @@ window.Notes = (() => {
     lastFocus = null;
   }
 
+  // Every note goes to the app, one write after the other. One the app couldn't keep goes again with the next, and the
+  // panel's strip says so meanwhile (`unsaved`, the app's reason).
+  let writing = Promise.resolve(true);
+  let unsaved = '';
   function write() {
-    try {
-      const all = notes.map((n) => ({ id: n.id, name: n.name, created: n.created, at: n.at, blocks: blocksOf(n) }));
-      localStorage.setItem(KEY, JSON.stringify({ v: 3, ordered: true, pinned, current: cur.id, notes: all }));
-    } catch {}
+    if (!ready) return writing;
+    const all = notes.map((n) => ({ id: n.id, name: n.name, created: n.created, at: n.at, blocks: blocksOf(n) }));
+    const json = JSON.stringify({ v: 3, ordered: true, pinned, current: cur.id, notes: all });
+    if (!STORE) {
+      try {
+        localStorage.setItem(KEY, json);
+      } catch {}
+      return writing;
+    }
+    writing = writing
+      .then(() => STORE.postMessage({ type: 'save', json }))
+      .then(
+        (r) => {
+          unsaved = r && r.ok ? '' : (r && r.error) || 'no answer';
+          return !unsaved;
+        },
+        (err) => {
+          unsaved = String((err && err.message) || err);
+          return false;
+        },
+      );
+    writing.then(() => stamp());
+    return writing;
   }
 
   let saveTimer = 0;
@@ -217,7 +248,10 @@ window.Notes = (() => {
     if (!cur) return;
     const edited = (n) => (n.at && blocksOf(n).some((b) => b.text || b.type !== 'p') ? `edited ${ago(n.at)}` : '');
     const p = pinnedNote();
-    if (meta && p) meta.textContent = edited(p) ? `${nameOf(p)} · ${edited(p)}` : nameOf(p);
+    if (meta && p) {
+      meta.textContent = (unsaved ? 'not saved · ' : '') + (edited(p) ? `${nameOf(p)} · ${edited(p)}` : nameOf(p));
+      meta.title = unsaved ? `Not saved on this computer: ${unsaved}` : '';
+    }
     if (win) {
       const name = nameOf(cur);
       const tag = win.querySelector('.npw-name');
@@ -2106,17 +2140,51 @@ window.Notes = (() => {
     refocus();
   });
 
-  // Another dashboard window writing notes shows here too, unless this one is being written in.
+  // Another dashboard window writing notes in this page's storage shows here too, unless this one is being written in.
   addEventListener('storage', (e) => {
-    if (e.key !== KEY || ed.contains(document.activeElement)) return;
-    loadAll();
+    if (STORE || e.key !== KEY || ed.contains(document.activeElement)) return;
+    loadAll(readHere());
     render(null);
     drawBoard();
   });
   // "5m ago" stays true, on the strip and on the board.
   setInterval(() => (stamp(), drawBoard()), 30000);
 
-  loadAll();
-  render(null);
-  return { focus: refocus, open: undock, close: dock, mountBoard, showBoard, hideBoard, newNote, icon: ICON };
+  // What was typed in the last moment is kept before the app quits.
+  function flush() {
+    save();
+    if (unsaved && ready) write();
+    return writing;
+  }
+
+  if (STORE) {
+    // An empty note until the app's are read (nothing is written till then), and nothing of them in the page's storage.
+    loadAll(null);
+    render(null);
+    try {
+      localStorage.removeItem(KEY);
+    } catch {}
+    STORE.postMessage({ type: 'load' })
+      .then(
+        (r) => {
+          if (r && r.error) unsaved = r.error;
+          return r && !r.error && r.json ? JSON.parse(r.json) : null;
+        },
+        (err) => {
+          unsaved = String((err && err.message) || err);
+          return null;
+        },
+      )
+      .then((v) => {
+        ready = true;
+        loadAll(v);
+        render(null);
+        stamp();
+        drawBoard();
+      });
+  } else {
+    loadAll(readHere());
+    render(null);
+  }
+  return { focus: refocus, open: undock, close: dock, mountBoard, showBoard, hideBoard, newNote, flush, icon: ICON };
 })();

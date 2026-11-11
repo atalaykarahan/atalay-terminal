@@ -6,7 +6,7 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 ## Next
 
 - Windows: Atalay's Terminal is now Orbiterm. Your settings, sign-in and chats carry over
-- Notes: a note on the dashboard, between research.feed and files.heat, and all your notes on a board (the notepad in the activity bar). Write as in Notion (headings, to-dos, lists, quotes, code; type / for the menu), open a note in a window of its own, drag the notes into your own order, pin the one the dashboard shows
+- Notes: a note on the dashboard, between research.feed and files.heat, and all your notes on a board (the notepad in the activity bar). Write as in Notion (headings, to-dos, lists, quotes, code; type / for the menu), open a note in a window of its own, drag the notes into your own order, pin the one the dashboard shows. Notes stay on this computer, encrypted in the app's own folder
 - Orbit: a Claude, Codex or Antigravity you quit with Ctrl+C (or /exit) blows up and leaves the list at once, as End Session does; it stayed as a dim "ended" planet (Claude up to 30 minutes, the others two) (Mac)
 - Chats list: delete chats, Claude Code's, Codex's and Antigravity's: right-click one → Delete…, ⌘-click (or ⇧-click) to pick several, or a whole folder's from its menu. A deleted chat stays 30 days in Settings · CHATS · deleted chats, where you can put it back; then it's deleted from the Mac for good. A running one is ended first (Mac)
 - Chats list: a Codex chat stays in the list once Codex is closed, as Claude's and Antigravity's do, and a click resumes it (Mac)

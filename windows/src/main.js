@@ -4,7 +4,7 @@
 // (engine.js, cloud.js, git.js, themes.js, terminals.js), the keys and the updates.
 const {
   app, BaseWindow, BrowserWindow, WebContentsView, webContents, ipcMain, dialog, Menu, shell, screen, powerMonitor, nativeTheme, net,
-  clipboard, nativeImage,
+  clipboard, nativeImage, safeStorage,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -28,6 +28,7 @@ const { createSavers } = require('./savers');
 const { createChatList } = require('./chatlist');
 const { createLimits } = require('./limits');
 const { createCodexHooks } = require('./codexhooks');
+const { createNotesStore } = require('./notesstore');
 
 let autoUpdater = null;
 try {
@@ -310,6 +311,12 @@ function loadClientKey() {
 }
 
 const overlay = createOverlay({ dataDir: app.getPath('userData'), claudeDir: path.join(os.homedir(), '.claude') });
+// The dashboard's notes (web/notes.js), encrypted in the app's data folder (notesstore.js).
+const notesStore = createNotesStore({
+  dir: path.join(app.getPath('userData'), 'Notes'),
+  keyFile: path.join(app.getPath('userData'), 'notes.key'),
+  safeStorage,
+});
 // Source Control's files (files.js, the Mac's FileEditor.swift): the ones the dashboard's editor may read and write.
 const files = createFiles({
   shell,
@@ -1866,6 +1873,10 @@ ipcMain.handle('atl:post', async (e, name, body) => {
       case 'files':
         if (e.sender !== pageOf(dashView)) throw new Error('not this page');
         return await files.handle(body);
+      // The notes (web/notes.js): the dashboard's page only, as on the Mac.
+      case 'notes':
+        if (e.sender !== pageOf(dashView)) throw new Error('not this page');
+        return await notesStore.handle(body);
       case 'theme':
         return themes.handle(body);
       case 'messages':
@@ -2047,13 +2058,15 @@ app.on('before-quit', (e) => {
     });
     if (r !== 0) return e.preventDefault();
   }
-  // A file edited in the last second is saved first (Source Control's editor saves a second after a change), as on the
-  // Mac: the quit goes on once the page says so, 2 s at most (a page that doesn't answer).
+  // A file edited in the last second is saved first (Source Control's editor saves a second after a change), and so is
+  // a note just typed, as on the Mac: the quit goes on once the page says so, 2 s at most (a page that doesn't answer).
   const wc = !PROBE && pageOf(dashView);
   if (wc) {
     e.preventDefault();
     savingFiles = true;
-    const saved = wc.executeJavaScript('window.FileEditor ? FileEditor.flush() : true').catch(() => {});
+    const saved = wc
+      .executeJavaScript('Promise.all([window.FileEditor ? FileEditor.flush() : true, window.Notes && Notes.flush ? Notes.flush() : true])')
+      .catch(() => {});
     Promise.race([saved, new Promise((r) => setTimeout(r, 2000))]).then(() => {
       savingFiles = false;
       leave();
