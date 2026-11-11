@@ -55,13 +55,14 @@ final class FilesBridge: NSObject, WKScriptMessageHandlerWithReply {
                 NSWorkspace.shared.open(url)
             }
         case "openPath":
-            // A link in a Markdown preview: a text file in the editor, anything else in its app.
+            // A link in a Markdown preview: a text file in the editor, anything else in its app, unless it starts
+            // something (SafeOpen: an app or a script is shown in the Finder).
             let url = URL(fileURLWithPath: path)
             if Self.canOpen(url) {
                 allow(url)
                 onOpen?(url, body["line"] as? Int, body["cwd"] as? String ?? url.deletingLastPathComponent().path)
             } else if FileManager.default.fileExists(atPath: path) {
-                NSWorkspace.shared.open(url)
+                SafeOpen.file(url)
             }
         default:
             break

@@ -157,7 +157,7 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, W
         if action.request.url?.isFileURL == true {
             decisionHandler(.allow)
         } else {
-            if let url = action.request.url { NSWorkspace.shared.open(url) }
+            if let url = action.request.url { SafeOpen.open(url) }
             decisionHandler(.cancel)
         }
     }

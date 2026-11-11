@@ -175,14 +175,14 @@ final class ChatTerminalView: LocalProcessTerminalView {
     }
 
     /// ⌘-click on a link: a web address opens in the browser; a text file in Source Control's editor (onOpenFile), as
-    /// VS Code would open it; any other file in its app, as in iTerm2. Claude wraps its own
+    /// VS Code would open it; any other file in its app, as in iTerm2, unless it starts something (SafeOpen). Claude wraps its own
     /// text, so a long path it printed can sit on two or three lines the terminal doesn't know belong together: a
     /// piece that isn't a file is joined with the path text ending the line above or starting the line below.
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         if link.hasPrefix("file:"), let url = URL(string: link), url.isFileURL {
             open(FileTarget(url: url))
         } else if link.contains("://") || ["mailto:", "tel:"].contains(where: link.hasPrefix), let url = URL(string: link) {
-            NSWorkspace.shared.open(url)
+            SafeOpen.open(url)
         } else if let target = fileTarget(link) ?? wholePath(around: link) {
             open(target)
         }
@@ -196,7 +196,7 @@ final class ChatTerminalView: LocalProcessTerminalView {
     }
 
     private func open(_ target: FileTarget) {
-        if onOpenFile?(target.url, target.line, target.column) != true { NSWorkspace.shared.open(target.url) }
+        if onOpenFile?(target.url, target.line, target.column) != true { SafeOpen.file(target.url) }
     }
 
     /// The file `text` names (from the session's folder when relative), also as "file.swift:12" or "file.swift:12:4",
