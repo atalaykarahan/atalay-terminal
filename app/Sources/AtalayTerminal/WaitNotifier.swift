@@ -51,10 +51,13 @@ final class WaitNotifier {
     }
 
     private func notice(_ b: SessionBrief) -> [String: String] {
-        let folder = (b.cwd as NSString).lastPathComponent
-        let name = titleOf?(b) ?? b.title
+        // Streamer mode: the made-up names the dashboard shows.
+        let streamer = Streamer.on
+        let folder = streamer ? Streamer.project(b.cwd) : (b.cwd as NSString).lastPathComponent
+        let real = titleOf?(b) ?? b.title
+        let name = streamer && !real.isEmpty ? Streamer.fake("title", real) : real
         let tool = b.id.hasPrefix("ai:") ? "\(b.name) · " : ""
-        let what = b.waitingFor.flatMap { $0.isEmpty ? nil : $0 } ?? "waiting for your approval"
+        let what = b.waitingFor.flatMap { $0.isEmpty ? nil : streamer ? Streamer.fake("wait", $0) : $0 } ?? "waiting for your approval"
         return ["sid": b.id, "title": clip(name.isEmpty ? folder : name, 80), "folder": tool + folder, "what": clip(what, 200)]
     }
 }

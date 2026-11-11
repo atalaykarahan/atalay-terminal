@@ -56,6 +56,8 @@ final class SidebarModel: ObservableObject {
     private var lastPicked: String?
     /// Files of chats were deleted: the engine reads the list again.
     var onErased: (() -> Void)?
+    /// The dashboard's streamer mode (Streamer.swift): chats, folders and terminals show made-up names.
+    @Published var streamer = false
 
     /// The same folder however it's written (a trailing slash, `..`).
     static func folderKey(_ cwd: String) -> String {
@@ -81,8 +83,12 @@ final class SidebarModel: ObservableObject {
     }
 
     func title(of item: ChatItem) -> String {
-        customTitles[item.id] ?? (item.title.isEmpty ? item.lastPrompt : item.title)
+        let real = customTitles[item.id] ?? (item.title.isEmpty ? item.lastPrompt : item.title)
+        return streamer ? Streamer.fake("title", real) : real
     }
+
+    /// A folder's path as the list shows it (in a tooltip).
+    func shownPath(_ cwd: String) -> String { streamer ? Streamer.folder(cwd) : tildify(cwd) }
 
     /// A new name for a chat; empty gives it back its own.
     func rename(_ id: String, to name: String) {
@@ -406,7 +412,10 @@ final class SidebarModel: ObservableObject {
         return order.map { ($0, map[$0]!) }
     }
 
-    func labels(for cwds: [String]) -> [String: String] { distinctLabels(for: cwds) }
+    func labels(for cwds: [String]) -> [String: String] {
+        guard streamer else { return distinctLabels(for: cwds) }
+        return Dictionary(cwds.map { ($0, Streamer.project($0)) }, uniquingKeysWith: { a, _ in a })
+    }
 }
 
 /// One of the app's terminals with no Claude in it, in the chats list: the folder it was opened in, what runs in it,
@@ -616,7 +625,7 @@ struct SidebarView: View {
     /// One of the app's terminals with no Claude in it: what runs in it, and whether its window shows. A click shows it;
     /// ending it is in its menu only, so it can't go by mistake.
     private func termRow(_ t: TermRow) -> some View {
-        TerminalRow(term: t)
+        TerminalRow(term: t, streamer: model.streamer)
             .onTapGesture { actions.openTerminal(t.id) }
             .contextMenu {
                 Button("Show Terminal") { actions.openTerminal(t.id) }
@@ -646,7 +655,7 @@ struct SidebarView: View {
     /// A folder card's strip: a click folds it shut or open, ⌘-click picks it for the bulk bar.
     private func header(_ card: FolderCard, label: String, shut: Bool) -> some View {
         let cwd = card.cwd
-        return ProjectHeader(cwd: cwd, label: label, count: card.items.count + card.terms.count, terms: card.terms.count,
+        return ProjectHeader(cwd: cwd, shownPath: model.shownPath(cwd), label: label, count: card.items.count + card.terms.count, terms: card.terms.count,
                              pinned: card.pinned, shut: shut, archived: false, selected: model.selectedFolders.contains(cwd),
                              bulk: model.selectedFolders.count, onNew: { actions.newTerminal(cwd) },
                              onArchive: { withAnimation(.easeInOut(duration: 0.25)) { model.setFolder(cwd, archived: true) } },
@@ -670,7 +679,7 @@ struct SidebarView: View {
         let selected = model.selectedChats.contains(item.id)
         // With others picked too, its menu's Delete is for all of them.
         let picked = selected ? model.pickedChats.map(\.id) : []
-        return ChatRow(item: item, title: model.title(of: item), renaming: model.renaming == item.id,
+        return ChatRow(item: item, title: model.title(of: item), tip: model.streamer ? model.title(of: item) : nil, renaming: model.renaming == item.id,
                        onRename: { name in
                            if let name { model.rename(item.id, to: name) } else { model.renaming = nil }
                        },
@@ -739,6 +748,8 @@ private struct SectionHeader: View {
 
 private struct ProjectHeader: View {
     let cwd: String
+    /// The folder's path as its tooltip says it (made up in streamer mode).
+    let shownPath: String
     let label: String
     let count: Int
     /// The app's terminals in it, whether it was opened from the list, and whether it's folded shut.
@@ -813,7 +824,7 @@ private struct ProjectHeader: View {
             if NSEvent.modifierFlags.contains(.command) { onSelect() } else { onFold() }
         }
         .help(selected ? "Selected · ⌘-click again to leave it out"
-              : "\(tildify(cwd)) · click to fold \(shut ? "open" : "shut") · ⌘-click to select, for archiving or deleting several at once")
+              : "\(shownPath) · click to fold \(shut ? "open" : "shut") · ⌘-click to select, for archiving or deleting several at once")
         .onHover { hover = $0 }
         .contextMenu {
             if bulk > 1 && selected {
@@ -865,20 +876,24 @@ private struct CornerMarks: Shape {
 /// One of the app's terminals with no Claude in it, in its folder's card.
 private struct TerminalRow: View {
     let term: TermRow
+    /// Streamer mode: a made-up folder and command.
+    let streamer: Bool
     @State private var hover = false
 
     var body: some View {
+        let title = term.title.isEmpty ? "terminal" : streamer ? Streamer.project(term.title) : term.title
+        let job = term.job.isEmpty ? "idle" : streamer ? Streamer.fake("cmd", term.job) : term.job
         HStack(spacing: 7) {
             Image(systemName: "terminal")
                 .font(.system(size: 10))
                 .foregroundColor(term.job.isEmpty ? Theme.cDim : Theme.cAccent)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
-                Text(term.title.isEmpty ? "terminal" : term.title)
+                Text(title)
                     .font(.mono(11, term.shown ? .semibold : .regular))
                     .foregroundColor(Theme.cHi)
                     .lineLimit(1)
-                Text((["terminal", term.job.isEmpty ? "idle" : term.job] + (term.shown ? ["showing"] : [])).joined(separator: " · "))
+                Text((["terminal", job] + (term.shown ? ["showing"] : [])).joined(separator: " · "))
                     .font(.mono(9.5))
                     .foregroundColor(Theme.cDim)
                     .lineLimit(1)
@@ -894,7 +909,7 @@ private struct TerminalRow: View {
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .help("\(term.title) · \(tildify(term.cwd))")
+        .help(streamer ? title : "\(term.title) · \(tildify(term.cwd))")
     }
 }
 
@@ -902,6 +917,8 @@ private struct ChatRow: View {
     let item: ChatItem
     /// Its name (one the user gave it, else Claude's title), and whether it's being renamed in place.
     let title: String
+    /// What its tooltip says instead of the last prompt (streamer mode).
+    let tip: String?
     let renaming: Bool
     /// The new name, or nil when the rename is called off (Esc).
     let onRename: (String?) -> Void
@@ -1009,7 +1026,7 @@ private struct ChatRow: View {
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .help(item.lastPrompt.isEmpty ? title : item.lastPrompt)
+        .help(tip ?? (item.lastPrompt.isEmpty ? title : item.lastPrompt))
     }
 
     private func meta(live: Bool, status: String?) -> String {

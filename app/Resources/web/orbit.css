@@ -65,15 +65,21 @@
 #viewctl button:not(.off) .slash { display: none; }
 /* power save, the map's top right, as small and quiet as its other words (app.js setPowerSave): on, the map draws
    fewer and smaller frames */
-#pwr { position: absolute; top: 0; right: 8px; z-index: 3; display: flex; align-items: center; gap: 6px; height: 19px; padding: 0; border: 0; color: var(--dim); background: none; font: inherit; font-size: 0.86em; cursor: pointer; }
+/* The map's switches at its top right: party mode next to power save, streamer mode under it (app.js Party, Streamer). */
+.mapsw { position: absolute; top: 0; right: 8px; z-index: 3; display: flex; flex-direction: column; align-items: flex-end; }
+.mapsw-row { display: flex; align-items: center; gap: 16px; }
+#pwr, #strm, #party { display: flex; align-items: center; gap: 6px; height: 19px; padding: 0; border: 0; color: var(--dim); background: none; font: inherit; font-size: 0.86em; cursor: pointer; }
 #pwr[hidden] { display: none; }
-#pwr:hover { color: var(--txt); }
+#pwr:hover, #strm:hover, #party:hover { color: var(--txt); }
 #pwr em { color: var(--amber); font-style: normal; }
 #pwr em:empty { display: none; }
-#pwr .pwr-sw { position: relative; width: 20px; height: 11px; border: 1px solid rgba(var(--accent-rgb), 0.4); border-radius: 6px; background: rgba(0, 0, 0, 0.4); }
-#pwr .pwr-sw i { position: absolute; left: 1px; top: 1px; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); transition: transform 0.18s, background 0.18s; }
-#pwr.on .pwr-sw { border-color: var(--green); }
-#pwr.on .pwr-sw i { background: var(--green); box-shadow: 0 0 5px rgba(var(--green-rgb), 0.7); transform: translateX(9px); }
+#pwr .pwr-sw, #strm .pwr-sw, #party .pwr-sw { position: relative; width: 20px; height: 11px; border: 1px solid rgba(var(--accent-rgb), 0.4); border-radius: 6px; background: rgba(0, 0, 0, 0.4); }
+#pwr .pwr-sw i, #strm .pwr-sw i, #party .pwr-sw i { position: absolute; left: 1px; top: 1px; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); transition: transform 0.18s, background 0.18s; }
+#pwr.on .pwr-sw, #strm.on .pwr-sw { border-color: var(--green); }
+#pwr.on .pwr-sw i, #strm.on .pwr-sw i { background: var(--green); box-shadow: 0 0 5px rgba(var(--green-rgb), 0.7); transform: translateX(9px); }
+#party.on .pwr-sw { border-color: var(--magenta); }
+#party.on .pwr-sw i { background: var(--magenta); box-shadow: 0 0 6px var(--magenta); transform: translateX(9px); }
+#strm.on, #party.on { color: var(--txt); }
 #mapwrap .legend { right: 176px; z-index: 2; overflow: hidden; white-space: nowrap; }
 #mapwrap .legend .hint { overflow: hidden; text-overflow: ellipsis; }
 /* terminal ships: what runs (or the folder), cool blue; dim while the shell idles */

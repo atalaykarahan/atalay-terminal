@@ -49,7 +49,13 @@
   <main id="mapwrap">
     <div id="space"></div>
     <div class="maptag"><span>orbit.map</span><em id="m-map"></em></div>
-    <button id="pwr" type="button" role="switch" aria-checked="false" aria-label="power save" hidden><span>power save</span><em></em><i class="pwr-sw"><i></i></i></button>
+    <div class="mapsw">
+      <div class="mapsw-row">
+        <button id="party" type="button" role="switch" aria-checked="false" aria-label="party mode" title="Party mode: streamer mode's made-up names, and a show of made-up sessions on the map, busy with their subagents, to record and share. Your real sessions go on as they are."><span>party</span><i class="pwr-sw"><i></i></i></button>
+        <button id="pwr" type="button" role="switch" aria-checked="false" aria-label="power save" hidden><span>power save</span><em></em><i class="pwr-sw"><i></i></i></button>
+      </div>
+      <button id="strm" type="button" role="switch" aria-checked="false" aria-label="streamer mode" title="Streamer mode: every project, chat, file and command on the screen gets a made-up name, to record or share it. Everything else stays as it is."><span>streamer</span><i class="pwr-sw"><i></i></i></button>
+    </div>
     <div id="pwr-tip"></div>
     <div class="legend">
       <span><i style="background:var(--accent)"></i>working</span>
@@ -84,6 +90,7 @@
 <div id="toast"></div>
 <div id="boot"><img class="blogo" src="logo.png" alt=""><p class="bootname">ORBITERM</p><p>indexing transcripts…</p></div>
 <script src="hooks.js"></script>
+<script src="streamer-names.js"></script>
 <script src="app.js"></script>
 <script src="orbit.js"></script>
 <script src="xp.js"></script>

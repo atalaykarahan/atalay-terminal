@@ -27,6 +27,8 @@ final class ChatHUD: ObservableObject {
     @Published var chips: [TickerChip] = []
     /// False while the window is hidden, so its clocks stop ticking.
     @Published var visible = false
+    /// The dashboard's streamer mode (Streamer.swift): the header and the footer show made-up names.
+    @Published var streamer = false
     private var seq = 0
 
     init(terminalDir: String?) { self.terminalDir = terminalDir }
@@ -123,8 +125,12 @@ private struct TitleRow: View {
     var body: some View {
         let color = Color(hex: hex)
         let dir = status == "terminal" ? hud.terminalDir : nil
-        let name = dir.map { ($0 as NSString).lastPathComponent } ?? hud.brief?.name ?? "chat"
-        let title = dir.map(tildify) ?? hud.brief?.title ?? ""
+        let real = dir.map { ($0 as NSString).lastPathComponent } ?? hud.brief?.name ?? "chat"
+        let realTitle = dir.map(tildify) ?? hud.brief?.title ?? ""
+        // Streamer mode: the made-up ones the dashboard shows (an AI tool's own name stays).
+        let tools: Set<String> = ["chat", "Claude", "Codex", "Antigravity", "Gemini", "OpenCode", "Aider", "Cursor", "Copilot"]
+        let name = hud.streamer && !tools.contains(real) ? Streamer.fake("project", real) : real
+        let title = !hud.streamer ? realTitle : dir.map(Streamer.folder) ?? Streamer.fake("title", realTitle)
         let mur47 = Mur47.on
         HStack(spacing: 8) {
             if mur47 {
@@ -158,7 +164,8 @@ private struct TitleRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 8)
-            StatusPill(status: status, hex: hex, since: hud.brief?.statusSince ?? 0, waitingFor: hud.brief?.waitingFor, now: now)
+            StatusPill(status: status, hex: hex, since: hud.brief?.statusSince ?? 0,
+                       waitingFor: hud.streamer ? hud.brief?.waitingFor.map { Streamer.fake("wait", $0) } : hud.brief?.waitingFor, now: now)
         }
         .padding(.leading, 80)
         .padding(.trailing, 12)
@@ -203,7 +210,7 @@ private struct HUDRow: View {
     var body: some View {
         HStack(spacing: 14) {
             if let dir = hud.terminalDir, hud.status == "terminal" {
-                Text("terminal in \(tildify(dir))").foregroundColor(Theme.cDim).lineLimit(1)
+                Text("terminal in \(hud.streamer ? Streamer.folder(dir) : tildify(dir))").foregroundColor(Theme.cDim).lineLimit(1)
             } else if let b = hud.brief {
                 ContextBar(ctx: b.ctx, ctxMax: b.ctxMax)
                 if !b.model.isEmpty {
@@ -215,7 +222,7 @@ private struct HUDRow: View {
                 }
                 Counts(b: b)
                 if !b.actionName.isEmpty {
-                    ActionLabel(b: b, now: now)
+                    ActionLabel(b: b, now: now, streamer: hud.streamer)
                 }
             } else {
                 Text("starting claude…").foregroundColor(Theme.cDim)
@@ -288,12 +295,13 @@ private struct Counts: View {
 private struct ActionLabel: View {
     let b: SessionBrief
     let now: Date
+    let streamer: Bool
 
     var body: some View {
         let color = Color(hex: Theme.catHex[b.actionCat] ?? Theme.planHex)
         HStack(spacing: 5) {
             Text("▸ \(b.actionName)").foregroundColor(color).fontWeight(.bold)
-            Text(b.actionLabel)
+            Text(streamer ? Streamer.call(b.actionCat, b.actionLabel) : b.actionLabel)
                 .foregroundColor(Theme.cText)
                 .truncationMode(.tail)
             Text(fmtDur(nowMsDate(now) - b.actionSince)).foregroundColor(Theme.cDim)
@@ -389,7 +397,7 @@ struct ChatTickerView: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 6) {
                     ForEach(hud.chips) { chip in
-                        ChipView(chip: chip, now: tl.date)
+                        ChipView(chip: chip, now: tl.date, streamer: hud.streamer)
                             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
                     }
                 }
@@ -406,7 +414,7 @@ struct ChatTickerView: View {
         switch status {
         case "busy": return "● working"
         case "idle": return "◆ your turn"
-        case "waiting": return "⚠ NEEDS YOU" + (hud.brief?.waitingFor.map { " · \($0)" } ?? "")
+        case "waiting": return "⚠ NEEDS YOU" + (hud.brief?.waitingFor.map { " · \(hud.streamer ? Streamer.fake("wait", $0) : $0)" } ?? "")
         case "terminal": return "▸ terminal · claude to start · claude -r to resume"
         case "starting": return "◌ starting claude…"
         default: return "○ ended · close the window to remove it"
@@ -417,13 +425,14 @@ struct ChatTickerView: View {
 private struct ChipView: View {
     let chip: TickerChip
     let now: Date
+    let streamer: Bool
 
     var body: some View {
         let color = Color(hex: chip.hex)
         let fresh = now.timeIntervalSince(chip.at) < 1.4
         HStack(spacing: 5) {
             Text(chip.tag).foregroundColor(color).fontWeight(.bold)
-            Text(chip.text).foregroundColor(Theme.cText)
+            Text(streamer ? Streamer.call(chip.tag, chip.text) : chip.text).foregroundColor(Theme.cText)
         }
         .font(.mono(9.5))
         .lineLimit(1)
@@ -434,6 +443,11 @@ private struct ChipView: View {
         .overlay(Rectangle().stroke(color, lineWidth: 1))
         .shadow(color: fresh ? color : .clear, radius: 6)
     }
+}
+
+/// Frosted glass that lets the mouse through to what's under it (streamer mode's veil over a chat's terminals).
+final class PassThroughVeil: NSVisualEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 // MARK: - neon border, flash, beam
@@ -661,6 +675,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private var copiedUntil = Date.distantPast
     /// Out of the way while the dashboard shows a menu (see stepAside).
     private var steppedAside = false
+    /// The window's own name (the chat's title, a terminal's folder), for streamer mode to name it again.
+    private var realTitle: String
+    /// Streamer mode: frosted glass over the terminals (what they show can't be swapped for made-up text). They go on
+    /// running under it, and the keyboard still reaches them.
+    private let streamVeil = PassThroughVeil()
     /// iTerm2's tabs and split panes (Panes.swift): where the shown tab goes, its tab bar, each tab's root view (a
     /// terminal, or split views of them), and the panes besides this window's own terminal.
     private let paneArea = NSView()
@@ -683,6 +702,7 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     init(cwd: String, claudeArgs: [String]?, sessionId: String?, title: String, fontSize: CGFloat, frame: NSRect,
          manager: MainWindowController, detached: DetachedLink? = nil, mirror: Bool = false) {
         self.cwd = cwd
+        self.realTitle = title
         self.sessionId = sessionId
         self.detached = detached
         self.hud = ChatHUD(terminalDir: claudeArgs == nil ? cwd : nil)
@@ -834,6 +854,12 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
+        streamVeil.material = .hudWindow
+        streamVeil.blendingMode = .withinWindow
+        streamVeil.state = .active
+        streamVeil.isHidden = true
+        streamVeil.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(streamVeil, positioned: .above, relativeTo: paneArea)
         dropZone.wantsLayer = true
         dropZone.layer?.borderWidth = 2
         dropZone.layer?.cornerRadius = 6
@@ -863,6 +889,11 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
             paneArea.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
             selectionBadge.trailingAnchor.constraint(equalTo: paneArea.trailingAnchor, constant: -10),
             selectionBadge.bottomAnchor.constraint(equalTo: paneArea.bottomAnchor, constant: -6),
+            // Over the tabs and the terminals.
+            streamVeil.topAnchor.constraint(equalTo: header.bottomAnchor),
+            streamVeil.bottomAnchor.constraint(equalTo: paneArea.bottomAnchor),
+            streamVeil.leadingAnchor.constraint(equalTo: paneArea.leadingAnchor),
+            streamVeil.trailingAnchor.constraint(equalTo: paneArea.trailingAnchor),
         ])
     }
 
@@ -1622,7 +1653,8 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
     private func tabTitle(_ i: Int) -> String {
         let ts = terminals(in: i)
         if ts.contains(where: { $0 === terminal }) { return window?.title ?? "" }
-        return ((ts.first.flatMap { extra(of: $0) }?.currentFolder ?? cwd) as NSString).lastPathComponent
+        let folder = ts.first.flatMap { extra(of: $0) }?.currentFolder ?? cwd
+        return hud.streamer ? Streamer.project(folder) : (folder as NSString).lastPathComponent
     }
 
     /// As in iTerm2, the panes without the keyboard dim a little.
@@ -1862,11 +1894,27 @@ final class ChatWindowController: NSWindowController, NSWindowDelegate, LocalPro
         if let brief {
             if hud.brief != brief { hud.brief = brief }
             if brief.tab == id { sessionId = brief.id }
-            let title = brief.title.isEmpty ? brief.name : brief.title
-            if window?.title != title { window?.title = title }
+            realTitle = brief.title.isEmpty ? brief.name : brief.title
+            nameWindow()
         }
         if hud.terminalDir != nil, brief?.live != true { sessionId = nil }
         border.setStatus(hud.status)
+    }
+
+    /// The window's title (Mission Control's, the Window menu's, its first tab's): made up in streamer mode.
+    private func nameWindow() {
+        let title = hud.streamer ? Streamer.fake("title", realTitle) : realTitle
+        if window?.title != title { window?.title = title }
+    }
+
+    /// The dashboard's streamer mode: made-up names in the header, the footer, the tabs and the title, frosted glass over
+    /// the terminals. The chat itself goes on as it was.
+    func setStreamer(_ on: Bool) {
+        guard hud.streamer != on else { return }
+        hud.streamer = on
+        streamVeil.isHidden = !on
+        nameWindow()
+        if tabs.count > 1 { tabBar.show(titles: tabs.indices.map(tabTitle), active: activeTab) }
     }
 
     func setFont(_ size: CGFloat) { for tv in allTerminals { tv.font = Theme.mono(size) } }

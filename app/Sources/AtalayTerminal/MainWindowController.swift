@@ -260,6 +260,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let open = msg["open"] as? Bool == true
             for c in chats.values { open ? c.stepAside() : c.stepBack() }
             MessagePanel.stepAside(open)
+        // Streamer mode (the switch on the map): the chats list and the chat windows show made-up names too.
+        case "streamer":
+            let on = msg["on"] as? Bool == true
+            Streamer.on = on
+            sidebar.streamer = on
+            for c in chats.values { c.setStreamer(on) }
         case "log": NSLog("dashboard page: %@", String(describing: msg["msg"] ?? ""))
         // Two chats began (or stopped) writing the same file (files.heat): the corner's notice.
         case "clash":
@@ -824,6 +830,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if let frame { c.window?.setFrame(frame, display: false) }
         c.takesHistory = restored
         chats[c.id] = c
+        if Streamer.on { c.setStreamer(true) }
         if let sessionId, let b = briefs[sessionId] { c.apply(b) } else { c.apply(nil) }
         if show { c.show() }
         syncShells()

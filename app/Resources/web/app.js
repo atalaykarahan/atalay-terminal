@@ -97,17 +97,452 @@ function colorIndex(sid) {
 }
 const sessColor = (sid) => HUES[colorIndex(sid || '?') % HUES.length];
 const sessCss = (sid) => `var(--hue${colorIndex(sid || '?') % HUES.length})`;
+// ---------- streamer mode (the switch at the map's top right) ----------
+// For a screen that's recorded or shared: every project, chat, file, command, search and reply the dashboard shows is
+// swapped for a made-up one (streamer-names.js), the same one whenever the same real one comes back, on the map, in the
+// panels and in the log; the app does the same in its chats list and its chat windows. The sessions, their state, the
+// agents, the numbers and the animations stay as they are. Off whenever the app starts; a reload of the page keeps it.
+const Streamer = (() => {
+  const LISTS = window.STREAMER_NAMES || {};
+  let on = false;
+  // FNV-1a over the text's UTF-16 units: the app (Streamer.swift) picks the same made-up one for the same real one.
+  const hash = (s) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+    return h >>> 0;
+  };
+  const fake = (kind, real) => {
+    if (real == null || real === '') return real;
+    const s = String(real);
+    const list = LISTS[kind] || LISTS.title || [s];
+    return list[hash(s) % list.length];
+  };
+  // The texts the log's status lines are made of (a session's folder, what it waits for), with their made-up ones.
+  const parts = new Map();
+  const KEEP = new Set(['Claude', 'Claude Code', 'Codex', 'Antigravity', 'Gemini', 'OpenCode', 'Aider', 'Cursor', 'Copilot']);
+  const base = (p) => String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(p);
+  const project = (p) => (p ? fake('project', base(p)) : p);
+  const folder = (p) => {
+    if (!p) return p;
+    const f = '~/code/' + project(p);
+    parts.set(String(p), f);
+    return f;
+  };
+  const name = (n) => (!n || KEEP.has(n) ? n : fake('project', n));
+  const branch = (b) => (!b || /^(main|master|develop|dev|trunk)$/.test(b) ? b : fake('branch', b));
+  const wait = (w) => {
+    if (!w) return w;
+    const f = fake('wait', w);
+    parts.set(String(w), f);
+    return f;
+  };
+  // A tool call's text, as its kind of call has them: a search, a page, a file, a pattern, a command…
+  const KINDS = { web: 'search', browser: 'url', read: 'file', edit: 'file', search: 'grep', bash: 'cmd', agent: 'agent', mcp: 'mcp', plan: 'plan' };
+  const label = (c, n, l) => (l == null || l === '' ? l : fake(c === 'web' && n && n !== 'WebSearch' ? 'url' : KINDS[c] || 'title', l));
+  // A result's few words (200, exit 1) stay; anything longer, an error with a path in it, is made up too.
+  const meta = (m) => (!m || (/^[\w .:%()#-]{0,16}$/.test(String(m)) && !/[\\/]/.test(String(m))) ? m : fake('meta', m));
+  const call = (p) => (p ? { ...p, l: label(p.c, p.n, p.l) } : p);
+  const agent = (a) => ({ ...a, desc: a.desc ? fake('agent', a.desc) : a.desc, pending: (a.pending || []).map(call), last: call(a.last) });
+  const session = (s) => ({
+    ...s,
+    name: name(s.name),
+    title: s.title ? fake('title', s.title) : s.title,
+    lastPrompt: s.lastPrompt ? fake('title', s.lastPrompt) : s.lastPrompt,
+    cwd: folder(s.cwd),
+    branch: branch(s.branch),
+    waitingFor: wait(s.waitingFor),
+    pending: (s.pending || []).map(call),
+    last: call(s.last),
+    agents: (s.agents || []).map(agent),
+  });
+  // Every state is read for what its status lines will say, streaming or not: a line logged before the mode came on
+  // is made up too.
+  function learn(S) {
+    for (const s of S?.sessions || []) {
+      folder(s.cwd);
+      wait(s.waitingFor);
+    }
+  }
+  function state(S) {
+    if (!on || !S) return S;
+    const lastByCat = {};
+    for (const [c, v] of Object.entries(S.lastByCat || {})) lastByCat[c] = v ? { ...v, l: label(c, v.n, v.l) } : v;
+    return {
+      ...S,
+      sessions: S.sessions.map(session),
+      research: (S.research || []).map((r) => ({ ...r, l: fake(r.kind === 'search' ? 'search' : 'url', r.l), hosts: (r.hosts || []).map((h) => fake('host', h)), m: meta(r.m) })),
+      // A file keeps its own path as its key (rows, collisions, a cleared panel's counts): only what's shown changes.
+      files: (S.files || []).map((f) => ({ ...f, short: fake('file', f.p), shown: '~/code/' + fake('file', f.p) })),
+      lastByCat,
+    };
+  }
+  function told(text) {
+    let out = String(text ?? '');
+    for (const [real, f] of [...parts].sort((a, b) => b[0].length - a[0].length)) if (out.includes(real)) out = out.split(real).join(f);
+    return out;
+  }
+  function event(ev) {
+    // Party mode's own are made up already.
+    if (!on || !ev || ev.fake) return ev;
+    switch (ev.k) {
+      case 'tool':
+        return { ...ev, l: label(ev.c, ev.n, ev.l), m: meta(ev.m) };
+      case 'result':
+        return { ...ev, m: meta(ev.m) };
+      case 'prompt':
+        return { ...ev, l: fake('title', ev.l) };
+      case 'say':
+      case 'sys':
+        return { ...ev, l: fake('reply', ev.l) };
+      case 'state':
+        return { ...ev, l: told(ev.l) };
+      default:
+        return ev.l ? { ...ev, l: fake('title', ev.l) } : ev;
+    }
+  }
+  const terminals = (list) => (!on || !Array.isArray(list) ? list : list.map((t) => ({ ...t, cmd: t.cmd ? fake('cmd', t.cmd) : t.cmd, dir: project(t.dir), cwd: folder(t.cwd) })));
+  const runaways = (list) => (!on || !Array.isArray(list) ? list : list.map((r) => ({ ...r, name: r.name ? fake('proc', r.name) : r.name, cmd: r.cmd ? fake('cmd', r.cmd) : r.cmd })));
+  const spend = (d) => (!on || !d || !Array.isArray(d.projects) ? d : { ...d, projects: d.projects.map((p) => (p.id === '*' ? p : { ...p, label: project(p.path || p.label), path: folder(p.path) })) });
+  function set(v) {
+    on = !!v;
+    document.documentElement.classList.toggle('streamer', on);
+  }
+  return {
+    get on() {
+      return on;
+    },
+    set,
+    learn,
+    state,
+    event,
+    terminals,
+    runaways,
+    spend,
+    name: (n) => (on ? name(n) : n),
+  };
+})();
+
+// ---------- party mode (the switch next to power save) ----------
+// A show for a screen that's recorded: streamer mode's made-up names, and five made-up sessions among the real ones.
+// Three keep their subagents going (5, 12 and 6 of them), each subagent done 1 to 30 seconds after it started and
+// another taking its place; two make their calls fast, three at a time, and go after a few turns, a new one coming in
+// their place. Each turn is a prompt, the calls flying to the stations and back (now and then failed), now and then a
+// question for the user on the way (needs you) answered a few seconds later, the answer, and the user's turn for a
+// moment: the cards change places as the real ones do, the planets park and come back. None of it reaches the app or
+// the real sessions: it's only drawn here, and goes (blown up) when the switch is off.
+const Party = (() => {
+  const L = window.STREAMER_NAMES || {};
+  const pick = (kind) => {
+    const l = L[kind] || ['…'];
+    return l[Math.floor(Math.random() * l.length)];
+  };
+  const rand = (a, b) => a + Math.random() * (b - a);
+  // How often each kind of call comes, its tool and the kind of made-up text it has.
+  const CALLS = [['read', 26, 'Read', 'file'], ['edit', 18, 'Edit', 'file'], ['bash', 16, 'Bash', 'cmd'], ['search', 14, 'Grep', 'grep'],
+    ['web', 10, 'WebSearch', 'search'], ['mcp', 6, 'mcp__party__call', 'mcp'], ['plan', 4, 'TodoWrite', 'plan'], ['browser', 3, 'mcp__browser__navigate', 'url']];
+  // The five: their AI tool, how many subagents each keeps going, and how many calls at once.
+  const CAST = [['Claude Code', 5, 1], ['Claude Code', 12, 1], ['Codex', 6, 1], ['Claude Code', 0, 3], ['Antigravity', 0, 3]];
+  // The cards' order, as the engine gives it (RadarEngine's statusOrder): needs you, your turn, working, ended; the
+  // latest first.
+  const ORDER = { waiting: 0, idle: 1, busy: 2, ended: 3 };
+  let on = false, seq = 0;
+  const timers = new Set();
+  const sessions = new Map();
+  let x = null; // what the show adds to the day: its sessions, calls, searches, files, squares
+  const reset = () => (x = { made: 0, tools: 0, web: 0, errors: 0, cost: 0, agents: 0, calls: [], research: [], files: new Map(), ticker: [], byCat: {}, pending: {} });
+  reset();
+  const later = (ms, fn) => {
+    const t = setTimeout(() => {
+      timers.delete(t);
+      if (on) fn();
+    }, ms);
+    timers.add(t);
+  };
+  const here = (s) => sessions.get(s.id) === s;
+
+  // One of the five; the first ones as if they had been at it for a while.
+  function make(i, old) {
+    const [tool, crew, lanes] = CAST[i], now = Date.now(), proj = pick('project');
+    return {
+      id: `party:${++seq}`, cast: i, name: tool === 'Claude Code' ? proj : tool, tool, title: pick('title'), lastPrompt: '', cwd: '~/code/' + proj,
+      branch: pick('branch'), model: tool === 'Codex' ? 'gpt-5.5' : tool === 'Antigravity' ? 'gemini-3' : 'opus', effort: 'high', status: 'busy', live: true,
+      statusSince: now, rank: now, cpu: rand(8, 70), mem: Math.round(rand(180, 900)), kind: 'interactive', entry: '',
+      firstTs: old ? now - rand(5, 90) * 60_000 : now, lastTs: now, ctx: Math.round((old ? rand(30, 150) : rand(8, 30)) * 1000), ctxMax: 200_000,
+      turnMs: 0, turnAt: now, tok: { in: 0, out: 0, cr: 0, cw: 0 }, cost: old ? rand(0.4, 7) : 0, tools: old ? Math.round(rand(20, 260)) : 0, errors: 0,
+      web: 0, prompts: old ? Math.round(rand(2, 14)) : 0, byCat: {}, pending: [], last: null,
+      spark: Array.from({ length: 30 }, () => (old ? Math.round(rand(2, 16)) : 0)), flags: [], agents: [], agentsRunning: 0,
+      waitingFor: null, tty: '', pid: 0, host: 'term', tab: null, convId: null, crew, lanes,
+      // The two fast ones are done after a few turns.
+      until: crew ? 0 : now + rand(40, 90) * 1000,
+    };
+  }
+  const say = (ev) => {
+    map('event', ev);
+    logLine(ev, true);
+    marqueePush(ev);
+  };
+  // Its new state: a ripple on its planet, and the line the engine's own changes write in the log.
+  function status(s, st, line, cls) {
+    const prev = s.status;
+    if (prev === st) return;
+    s.status = st;
+    s.statusSince = s.rank = Date.now();
+    if (st !== 'waiting') s.waitingFor = null;
+    map('status', s.id, st, prev);
+    if (line) logLine({ k: 'state', t: Date.now(), s: s.id, l: line, cls, fake: true }, true);
+  }
+  // A call: to its station and back, done after a moment, now and then failed.
+  function call(s, a, kind) {
+    const now = Date.now(), id = `pe${++seq}`;
+    let r = Math.random() * 100, c = CALLS[0];
+    for (const k of CALLS) if ((r -= k[1]) < 0) {
+      c = k;
+      break;
+    }
+    if (kind) c = [kind, 0, kind === 'agent' ? 'Agent' : c[2], kind === 'agent' ? 'agent' : c[3]];
+    const [cat, , n, text] = c, l = kind === 'agent' ? a.desc : pick(text);
+    const p = { n, c: cat, l, t: now };
+    if (kind !== 'agent') (a || s).pending = [p];
+    x.pending[cat] = (x.pending[cat] || 0) + 1;
+    x.ticker.push({ id, c: cat, n, st: 'run' });
+    if (x.ticker.length > 160) x.ticker.shift();
+    const ev = { k: 'tool', id, t: now, s: s.id, n, c: cat, l, fake: true };
+    if (a && kind !== 'agent') ev.a = a.id;
+    say(ev);
+    later(rand(cat === 'web' || cat === 'bash' ? 900 : 250, cat === 'web' || cat === 'bash' ? 4500 : 2200), () => {
+      const ok = Math.random() > 0.06, d = Date.now() - now, owner = a || s;
+      x.pending[cat] = Math.max(0, x.pending[cat] - 1);
+      if (owner.pending[0] === p) owner.pending = [];
+      owner.last = p;
+      owner.tools++;
+      owner.lastTs = Date.now();
+      if (!ok) owner.errors++;
+      if (a) {
+        a.cost += rand(0.002, 0.02);
+        s.tools++;
+      }
+      s.lastTs = Date.now();
+      s.cost += rand(0.003, 0.04);
+      s.ctx = Math.min(s.ctxMax - 2000, s.ctx + Math.round(rand(200, 2600)));
+      s.spark = [...s.spark.slice(1), s.spark[29] + 1];
+      x.tools++;
+      x.calls.push(Date.now());
+      x.cost += rand(0.003, 0.04);
+      x.byCat[cat] = (x.byCat[cat] || 0) + 1;
+      if (!ok) x.errors++;
+      if (cat === 'web') {
+        x.web++;
+        s.web++;
+        x.research.unshift({ id, s: s.id, a: ev.a, kind: 'search', l, hosts: [pick('host')], m: ok ? '200' : '503', d, ok, t: now });
+        if (x.research.length > 20) x.research.pop();
+      }
+      if (cat === 'read' || cat === 'edit') {
+        const f = x.files.get(l) || { p: '~/code/' + l, short: l, r: 0, w: 0, last: 0, collision: false, clash: [], editors: [] };
+        if (cat === 'read') f.r++;
+        else f.w++;
+        f.last = Date.now();
+        if (!f.editors.some((e) => e.s === s.id)) f.editors.push({ s: s.id, a: null });
+        x.files.set(l, f);
+      }
+      const sq = x.ticker.find((q) => q.id === id);
+      if (sq) sq.st = ok ? 'ok' : 'err';
+      const res = { k: 'result', id, t: Date.now(), s: s.id, ok, d, fake: true };
+      if (ev.a) res.a = ev.a;
+      map('event', res);
+      logResult(res);
+    });
+  }
+  // A session's calls in its turn, one after the other; a subagent's as long as it runs.
+  function lane(s, a, fast) {
+    later(fast ? rand(250, 1400) : rand(600, 3200), () => {
+      if (!here(s) || s.status === 'ended' || (a && !a.running)) return;
+      if (a || s.status === 'busy') call(s, a);
+      lane(s, a, fast);
+    });
+  }
+  function spawn(s) {
+    if (!here(s) || s.status === 'ended') return;
+    // A new subagent comes in the session's turn.
+    if (s.status !== 'busy') return later(rand(800, 2000), () => spawn(s));
+    const now = Date.now();
+    const a = { id: `pa${++seq}`, sid: s.id, desc: pick('agent'), type: 'general-purpose', model: 'sonnet', running: true, pending: [], last: null,
+      tools: 0, cost: 0, errors: 0, firstTs: now, lastTs: now, bg: false };
+    s.agents.push(a);
+    x.agents++;
+    call(s, a, 'agent');
+    lane(s, a, true);
+    // Done 1 to 30 seconds after it started; another takes its place a little later.
+    later(rand(1, 30) * 1000, () => {
+      a.running = false;
+      a.pending = [];
+      a.lastTs = Date.now();
+      later(rand(3, 9) * 1000, () => {
+        s.agents = s.agents.filter((b) => b !== a);
+        spawn(s);
+      });
+    });
+  }
+  // A turn: the prompt, the work, now and then a question for the user on the way, the answer, then the user's turn.
+  function turn(s) {
+    if (!here(s) || s.status === 'ended') return;
+    s.title = s.lastPrompt = pick('title');
+    s.prompts++;
+    s.turnAt = Date.now();
+    say({ k: 'prompt', t: Date.now(), s: s.id, l: s.lastPrompt, fake: true });
+    status(s, 'busy');
+    s.rank = Date.now();
+    const long = (s.crew ? rand(35, 80) : rand(12, 30)) * 1000;
+    if (Math.random() < (s.crew ? 0.5 : 0.3)) later(long * rand(0.25, 0.7), () => ask(s));
+    later(long, () => finish(s));
+  }
+  function ask(s) {
+    if (!here(s) || s.status !== 'busy') return;
+    s.waitingFor = pick('wait');
+    s.pending = [];
+    status(s, 'waiting', `⚠ needs you · ${s.waitingFor}`, 'err');
+    later(rand(3, 8) * 1000, () => here(s) && s.status === 'waiting' && status(s, 'busy', '▶ unblocked · working again'));
+  }
+  function finish(s) {
+    if (!here(s) || s.status === 'ended') return;
+    if (s.status === 'waiting') return later(1000, () => finish(s));
+    s.turnMs = Date.now() - s.turnAt;
+    s.pending = [];
+    say({ k: 'say', t: Date.now(), s: s.id, l: pick('reply'), fake: true });
+    status(s, 'idle', '◆ turn finished · your move');
+    if (s.until && Date.now() > s.until) later(rand(3, 6) * 1000, () => leave(s));
+    else later((s.crew ? rand(3, 7) : rand(4, 11)) * 1000, () => turn(s));
+  }
+  // Done: ended for a moment (its card last, its planet dim), then gone (blown up), a new one coming meanwhile.
+  function leave(s) {
+    if (!here(s)) return;
+    status(s, 'ended', 'session ended');
+    later(rand(2, 5) * 1000, () => arrive(s.cast));
+    later(rand(5, 9) * 1000, () => here(s) && sessions.delete(s.id));
+  }
+  // A busy one's card goes up now and then, as a real one's does with its calls.
+  function stir(s) {
+    later(rand(6, 15) * 1000, () => {
+      if (!here(s)) return;
+      if (s.status === 'busy') s.rank = Date.now();
+      stir(s);
+    });
+  }
+  function arrive(i, old) {
+    const s = make(i, old);
+    sessions.set(s.id, s);
+    NAMES.set(s.id, s.name);
+    x.made++;
+    logLine({ k: 'state', t: Date.now(), s: s.id, l: `● session online · ${s.cwd}`, fake: true }, true);
+    for (let k = 0; k < s.lanes; k++) lane(s, null, s.lanes > 1);
+    for (let k = 0; k < s.crew; k++) later(rand(300, 6000), () => spawn(s));
+    turn(s);
+    stir(s);
+  }
+  function refresh() {
+    if (!RAW) return;
+    STATE = view(RAW);
+    renderAll();
+  }
+  function tick() {
+    refresh();
+    later(500, tick);
+  }
+
+  function set(v) {
+    if (!!v === on) return;
+    on = !!v;
+    if (on) {
+      reset();
+      // They come one after the other.
+      CAST.forEach((_, i) => later(i * rand(250, 700), () => arrive(i, true)));
+      tick();
+      return;
+    }
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
+    sessions.clear();
+    reset();
+    // Its lines in the log and the marquee go with it.
+    for (const el of [...$('log').querySelectorAll('.ln.fake')]) {
+      if (el.__id) LOGEL.delete(el.__id);
+      el.remove();
+    }
+    for (let i = MARQ.length - 1; i >= 0; i--) if (MARQ[i].fake) MARQ.splice(i, 1);
+    flushMarquee(true);
+    for (const id of [...NAMES.keys()]) if (String(id).startsWith('party:')) NAMES.delete(id);
+  }
+
+  // The day as the page shows it, with the show in it.
+  function add(V) {
+    if (!on || !V) return V;
+    const now = Date.now();
+    const fake = [...sessions.values()].map((s) => {
+      const agents = s.agents.map((a) => ({ ...a, pending: [...a.pending] }));
+      return { ...s, pending: [...s.pending], agents, agentsRunning: agents.filter((a) => a.running).length };
+    });
+    const live = fake.filter((s) => s.status !== 'ended');
+    const T = V.totals, perMin = x.calls.filter((t) => now - t < 60_000).length;
+    x.calls = x.calls.filter((t) => now - t < 60_000);
+    const sum = (a, b) => {
+      const o = { ...a };
+      for (const [k, n] of Object.entries(b)) o[k] = (o[k] || 0) + n;
+      return o;
+    };
+    const at = (s) => (s.rank === undefined ? s.lastTs : s.rank) || 0;
+    return {
+      ...V,
+      sessions: [...V.sessions, ...fake].sort((a, b) => (ORDER[a.status] ?? 3) - (ORDER[b.status] ?? 3) || at(b) - at(a)),
+      totals: {
+        ...T, live: T.live + live.length, sessionsToday: T.sessionsToday + x.made, runningAgents: T.runningAgents + live.reduce((n, s) => n + s.agentsRunning, 0),
+        agentsToday: T.agentsToday + x.agents, tools: T.tools + x.tools, web: T.web + x.web, errors: T.errors + x.errors, cost: T.cost + x.cost,
+        toolsPerMin: T.toolsPerMin + perMin, tokPerMin: T.tokPerMin + perMin * 2600, costPerHour: T.costPerHour + perMin * 0.6,
+      },
+      byCat: sum(V.byCat || {}, x.byCat),
+      pendingByCat: sum(V.pendingByCat || {}, x.pending),
+      research: [...x.research, ...(V.research || [])].sort((a, b) => b.t - a.t).slice(0, 30),
+      files: [...(V.files || []), ...x.files.values()].sort((a, b) => b.collision - a.collision || b.w * 3 + b.r - (a.w * 3 + a.r)).slice(0, 14),
+      ticker: [...(V.ticker || []), ...x.ticker].slice(-200),
+    };
+  }
+  return {
+    get on() {
+      return on;
+    },
+    set,
+    add,
+    has: (id) => sessions.has(id),
+    // A card's red button on one of the show's sessions: it just goes, and a fast one's place is taken again.
+    end: (id) => {
+      const s = sessions.get(id);
+      if (!s) return;
+      sessions.delete(id);
+      if (!s.crew && s.status !== 'ended') later(rand(2, 5) * 1000, () => arrive(s.cast));
+      refresh();
+    },
+  };
+})();
+// What the panels and the map show: the engine's day, made up in streamer mode, with party mode's show in it.
+const view = (raw) => Party.add(Streamer.state(raw));
+
 const NAMES = new Map();
-const sessName = (sid) => NAMES.get(sid) || String(sid || '?').slice(0, 6);
+// Party mode's sessions have made-up names already, the same as on their cards.
+const sessName = (sid) => (String(sid).startsWith('party:') ? NAMES.get(sid) || '…' : Streamer.name(NAMES.get(sid) || String(sid || '?').slice(0, 6)));
 
 // ---------- live data ----------
+// STATE is what the panels and the map show (made up in streamer mode); RAW, the engine's own, for the status lines and
+// for the mode going on or off.
 let STATE = null;
+let RAW = null;
+let TERMS = null;
+let RUNS = null;
 const lastStatus = new Map();
 const lastPrompts = new Map();
 
 function handleInit(d) {
-    STATE = d.state;
-    for (const s of STATE.sessions) {
+    RAW = d.state;
+    Streamer.learn(RAW);
+    STATE = view(RAW);
+    for (const s of RAW.sessions) {
       NAMES.set(s.id, s.name);
       colorIndex(s.id);
       lastStatus.set(s.id, s.status);
@@ -119,7 +554,7 @@ function handleInit(d) {
       logLine(ev, false);
       marqueePush(ev);
     }
-    map('seed', d.log);
+    map('seed', d.log.map(Streamer.event));
     setStreak({ n: Hooks.logic.streakOf(STATE.ticker) });
     flushMarquee(true);
     renderAll();
@@ -127,9 +562,53 @@ function handleInit(d) {
 }
 function handleState(next) {
     for (const s of next.sessions) NAMES.set(s.id, s.name);
+    Streamer.learn(next);
     transitions(next);
-    STATE = next;
+    RAW = next;
+    STATE = view(next);
     renderAll();
+}
+
+// The map's two switches: streamer mode (made-up names) and party mode (the names, and a show of made-up sessions).
+// Either one on, everything shown is named again from the engine's own data; nothing else changes. The app names its
+// chats list and chat windows the same way. Kept while the page lives (a reload keeps them), off whenever the app starts.
+const MODES = { streamer: false, party: false };
+try {
+  MODES.streamer = sessionStorage.getItem('radar.streamer') === '1';
+  MODES.party = sessionStorage.getItem('radar.party') === '1';
+} catch {}
+function setMode(which, on) {
+  MODES[which] = !!on;
+  try {
+    if (MODES[which]) sessionStorage.setItem('radar.' + which, '1');
+    else sessionStorage.removeItem('radar.' + which);
+  } catch {}
+  applyModes();
+}
+function applyModes() {
+  const renamed = Streamer.on !== (MODES.streamer || MODES.party);
+  Streamer.set(MODES.streamer || MODES.party);
+  Party.set(MODES.party);
+  for (const [id, which] of [['strm', 'streamer'], ['party', 'party']]) {
+    $(id).classList.toggle('on', MODES[which]);
+    $(id).setAttribute('aria-checked', String(MODES[which]));
+  }
+  native({ type: 'streamer', on: Streamer.on });
+  if (!RAW) return;
+  STATE = view(RAW);
+  if (renamed) {
+    for (const el of $('log').children) if (el.__ev) paintLine(el);
+    flushMarquee(true);
+    if (TERMS) map('terminals', Streamer.terminals(TERMS));
+    if (RUNS) {
+      const runs = Streamer.runaways(RUNS);
+      window.Danger?.update(runs);
+      map('runaways', runs);
+    }
+    if (window.Orbit?.relabel) window.Orbit.relabel();
+  }
+  renderAll();
+  hideTip();
 }
 // What the user can see decides the work: the app reports whether the dashboard is visible and in front;
 // a hidden page pauses CSS animations and the 3D view.
@@ -188,12 +667,14 @@ function setDiscord(s) {
 // The top bar is every AI's, whichever chat is in front: the Windows app still reports that chat, and nothing here
 // follows it.
 function connect() {
-  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, discord: setDiscord, activeSession: () => {}, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => map('terminals', list), terminalGone: (id) => map('terminalGone', id), idle: (s) => { map('idle', s); setIdle(Number(s)); }, openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { window.Danger?.update(list); map('runaways', list); }, openDanger: () => window.Danger?.open() };
+  window.__radar = { init: handleInit, state: handleState, events: (list) => list.forEach(onEvent), visibility: setVisibility, power: (on) => map('power', on), powerSave: setPowerSave, discord: setDiscord, activeSession: () => {}, cloud: (c) => window.Cloud?.render(c), social: (ev) => window.Social?.event(ev), terminals: (list) => { TERMS = list; map('terminals', Streamer.terminals(list)); }, terminalGone: (id) => map('terminalGone', id), idle: (s) => { map('idle', s); setIdle(Number(s)); }, openUpdate: () => window.Cloud?.openUpdate(), openProfile: () => window.Cloud?.openMenu('profile'), openView: (v) => window.GitView?.view(v), runaways: (list) => { RUNS = list; const runs = Streamer.runaways(list); window.Danger?.update(runs); map('runaways', runs); }, openDanger: () => window.Danger?.open() };
   native({ type: 'ready' });
+  // A reloaded page in streamer mode: the app's chats list and windows stay in it too.
+  native({ type: 'streamer', on: Streamer.on });
 }
 
 function onEvent(ev) {
-  map('event', ev);
+  map('event', Streamer.event(ev));
   switch (ev.k) {
     case 'tool':
     case 'prompt':
@@ -392,7 +873,8 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('on'), 2400);
 }
 function focusSession(sid) {
-  if (sid) native({ type: 'open', sid });
+  // Party mode's sessions are only drawn here: nothing to open.
+  if (sid && !Party.has(sid)) native({ type: 'open', sid });
 }
 
 const nums = new Map();
@@ -496,22 +978,29 @@ function markResult(el, ev) {
     st.textContent = (ev.ok ? '✓' : '✗') + (ev.d != null ? ' ' + fmtDur(ev.d) : '') + (ev.m ? ' · ' + ev.m : '');
   }
 }
-function logLine(ev, live) {
+// A log line's kind, its colour and its text (made up in streamer mode).
+function lineParts(ev) {
+  if (ev.k === 'tool') return [CAT[ev.c]?.label || ev.c, CAT[ev.c]?.css || 'var(--lavender)', toolText(ev)];
+  let [cat, col] = LOG_CAT[ev.k] || ['·', 'var(--lavender)'];
+  // Another AI tool's answer (Codex's, Antigravity's: their sessions are "ai:…") is its own, not Claude's.
+  if (ev.k === 'say' && String(ev.s || '').startsWith('ai:')) cat = 'reply';
+  return [cat, col, ev.k === 'prompt' ? `› ${ev.l}` : ev.l];
+}
+// A line written again from its event (streamer mode on or off).
+function paintLine(el) {
+  const ev = Streamer.event(el.__ev);
+  setText(el.querySelector('.who'), sessName(ev.s) + (ev.a ? ' ⤷' : ''));
+  setText(el.querySelector('.txt'), lineParts(ev)[2]);
+  if (ev.k === 'tool') markResult(el, ev);
+}
+function logLine(raw, live) {
   const box = $('log');
   const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 14;
-  let cat, col, text;
-  if (ev.k === 'tool') {
-    cat = CAT[ev.c]?.label || ev.c;
-    col = CAT[ev.c]?.css || 'var(--lavender)';
-    text = toolText(ev);
-  } else {
-    [cat, col] = LOG_CAT[ev.k] || ['·', 'var(--lavender)'];
-    // Another AI tool's answer (Codex's, Antigravity's: their sessions are "ai:…") is its own, not Claude's.
-    if (ev.k === 'say' && String(ev.s || '').startsWith('ai:')) cat = 'reply';
-    text = ev.k === 'prompt' ? `› ${ev.l}` : ev.l;
-  }
+  const ev = Streamer.event(raw);
+  const [cat, col, text] = lineParts(ev);
   const el = document.createElement('div');
-  el.className = `ln ${ev.k}${ev.err || ev.cls === 'err' ? ' err' : ''}${live ? ' enter' : ''}`;
+  el.__ev = raw;
+  el.className = `ln ${ev.k}${ev.err || ev.cls === 'err' ? ' err' : ''}${live ? ' enter' : ''}${raw.fake ? ' fake' : ''}`;
   el.innerHTML = `<span class="tm">${hhmmss(ev.t || Date.now())}</span><span class="who" style="color:${sessCss(ev.s)}">${esc(sessName(ev.s))}${ev.a ? ' ⤷' : ''}</span><span class="cat" style="color:${col}">${esc(cat)}</span><span class="txt">${esc(text)}</span><span class="st"></span>`;
   el.dataset.sid = ev.s || '';
   // session.log cleared (its right-click menu): what came before stays out of sight.
@@ -523,8 +1012,9 @@ function logLine(ev, live) {
     markResult(el, ev);
   }
   box.appendChild(el);
-  while (box.childElementCount > 220) {
-    const x = box.firstElementChild;
+  // Party mode's lines (made up) take room of their own, and go first: the real ones stay.
+  while (box.childElementCount > (Party.on ? 380 : 220)) {
+    const x = box.querySelector('.ln.fake') || box.firstElementChild;
     if (x.__id) LOGEL.delete(x.__id);
     x.remove();
   }
@@ -532,30 +1022,37 @@ function logLine(ev, live) {
 }
 function logResult(ev) {
   const el = LOGEL.get(ev.id);
-  if (el) markResult(el, ev);
+  if (!el) return;
+  // Kept with the call, so the line written again (streamer mode) keeps its result.
+  if (el.__ev) Object.assign(el.__ev, { ok: ev.ok, d: ev.d, m: ev.m });
+  markResult(el, Streamer.event(ev));
 }
 function logState(s, text, cls) {
   logLine({ k: 'state', t: Date.now(), s: s.id, l: text, cls }, true);
 }
 
 // ---------- marquee ----------
+// The prompts, searches, edits and agents going by, kept as they came (and written made up in streamer mode).
 const MARQ = [];
 let marqDirty = false;
+function marqText(raw) {
+  const ev = Streamer.event(raw);
+  if (ev.k === 'prompt' && !ev.cmd) return `${sessName(ev.s)} › ${clipT(ev.l, 90)}`;
+  if (ev.k === 'tool' && ev.c === 'web') return `${sessName(ev.s)} ${ev.n === 'WebSearch' ? '⌕' : '↓'} ${ev.l}`;
+  if (ev.k === 'tool' && ev.c === 'edit') return `${sessName(ev.s)} ✎ ${ev.l}`;
+  if (ev.k === 'tool' && (ev.n === 'Agent' || ev.n === 'Task')) return `${sessName(ev.s)} ◆ ${ev.l}`;
+  return null;
+}
 function marqueePush(ev) {
-  let s = null;
-  if (ev.k === 'prompt' && !ev.cmd) s = `${sessName(ev.s)} › ${clipT(ev.l, 90)}`;
-  else if (ev.k === 'tool' && ev.c === 'web') s = `${sessName(ev.s)} ${ev.n === 'WebSearch' ? '⌕' : '↓'} ${ev.l}`;
-  else if (ev.k === 'tool' && ev.c === 'edit') s = `${sessName(ev.s)} ✎ ${ev.l}`;
-  else if (ev.k === 'tool' && (ev.n === 'Agent' || ev.n === 'Task')) s = `${sessName(ev.s)} ◆ ${ev.l}`;
-  if (!s) return;
-  MARQ.push(s);
+  if (!((ev.k === 'prompt' && !ev.cmd) || (ev.k === 'tool' && (ev.c === 'web' || ev.c === 'edit' || ev.n === 'Agent' || ev.n === 'Task')))) return;
+  MARQ.push(ev);
   if (MARQ.length > 16) MARQ.shift();
   marqDirty = true;
 }
 function flushMarquee(force) {
   if (!marqDirty && !force) return;
   marqDirty = false;
-  if (MARQ.length) setText($('marquee'), MARQ.join('      ◇      '));
+  if (MARQ.length) setText($('marquee'), MARQ.map(marqText).filter(Boolean).join('      ◇      '));
 }
 $('marquee').addEventListener('animationiteration', () => flushMarquee(false));
 
@@ -721,6 +1218,7 @@ function askBox({ title, text, ok }) {
 // A card's red button: Claude stops wherever it runs (after a question), and the card goes. An ended session's card
 // just goes.
 async function endSession(id) {
+  if (Party.has(id)) return Party.end(id);
   const s = STATE.sessions.find((x) => x.id === id);
   if (!s) return;
   if (s.status !== 'ended') {
@@ -743,6 +1241,7 @@ async function endSession(id) {
 function createCard() {
   const el = document.createElement('div');
   el.className = 'card';
+  el.__born = Date.now();
   el.innerHTML = `<div class="ch"><span class="lights"><i class="l-close"></i><i class="l-min"></i></span><b class="nm"></b><span class="kind"></span><span class="pill"></span></div>
 <div class="title"></div><div class="path"></div><div class="act"></div>
 <div class="ctx"><span>ctx</span><div class="bar"><i></i></div><span class="cv"></span></div>
@@ -844,7 +1343,25 @@ function renderSessions() {
   tellClashes();
   const box = $('sessions');
   if (!STATE.sessions.length) return placeholder(box, 'no Claude Code session in the last 30 min');
+  // Party mode's cards change places often: each one glides to its new place, without its entrance again.
+  const glide = Party.on && !document.documentElement.classList.contains('paused');
+  const was = new Map();
+  if (glide) {
+    for (const el of box.children) {
+      was.set(el, el.getBoundingClientRect().top);
+      if (Date.now() - (el.__born || 0) > 600) el.classList.remove('enter');
+    }
+  }
   keyed(box, STATE.sessions, (s) => s.id, createCard, updateCard);
+  if (!glide) return;
+  // A glide on its way goes on from where the card is now.
+  const cards = [...box.children];
+  for (const el of cards) el.__glide?.cancel();
+  for (const el of cards) {
+    const top = was.get(el);
+    const dy = top === undefined ? 0 : top - el.getBoundingClientRect().top;
+    if (Math.abs(dy) > 1) el.__glide = el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 450, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  }
 }
 
 // ---------- clearing a panel (its right-click menu) ----------
@@ -929,6 +1446,11 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') document.querySelector('.pn-ctx')?.remove();
 });
 
+// The map's switches: party next to power save, streamer under it.
+$('strm').addEventListener('click', () => setMode('streamer', !MODES.streamer));
+$('party').addEventListener('click', () => setMode('party', !MODES.party));
+applyModes();
+
 function renderResearch() {
   const box = $('research');
   const c = clearedOf('p-research');
@@ -997,7 +1519,7 @@ function renderFiles() {
     },
     (el, f) => {
       setText(el.querySelector('.nm'), f.short);
-      el.title = f.p;
+      el.title = f.shown || f.p;
       el.querySelector('.r').style.width = ((f.r / max) * 100).toFixed(1) + '%';
       el.querySelector('.w').style.width = ((f.w / max) * 100).toFixed(1) + '%';
       const dots = [...new Set(f.editors.map((e) => e.s))].map((s) => `<i style="background:${sessCss(s)}"></i>`).join('');
@@ -1151,7 +1673,7 @@ function renderSpendHistory() {
     return;
   }
   askSpend(false);
-  const d = spendHist;
+  const d = Streamer.spend(spendHist);
   if (!d || !d.totals) {
     setText($('spend-sub'), `last ${SPEND_SPAN[spendRange]} · loading…`);
     for (const id of ['spend-chart', 'spend-rows', 'spend-models', 'spend-kv']) setHTML($(id), '');

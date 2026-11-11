@@ -10,6 +10,8 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 - Orbit: a Claude, Codex or Antigravity you quit with Ctrl+C (or /exit) blows up and leaves the list at once, as End Session does; it stayed as a dim "ended" planet (Claude up to 30 minutes, the others two) (Mac)
 - Chats list: delete chats, Claude Code's, Codex's and Antigravity's: right-click one → Delete…, ⌘-click (or ⇧-click) to pick several, or a whole folder's from its menu. A deleted chat stays 30 days in Settings · CHATS · deleted chats, where you can put it back; then it's deleted from the Mac for good. A running one is ended first (Mac)
 - Chats list: a Codex chat stays in the list once Codex is closed, as Claude's and Antigravity's do, and a click resumes it (Mac)
+- Streamer mode: the streamer switch at the orbit map's top right (under power save), and every project, chat, file, command and search on the screen gets a made-up name (how to center a div, todo-app-FINAL-v2…), in the chats list and the chat windows too, their terminals frosted: record or share your screen without showing your work. The sessions, agents and animations stay as they are (Mac)
+- Party mode: the party switch next to power save: streamer mode's made-up names, and five made-up sessions on the map and in the sessions list among yours, busy all the time: their subagents (5, 12 and 6 of them) finishing one by one and new ones taking their places, their turns finishing, now and then a question for you, their cards changing places, and new sessions coming in as others are done, for a screen worth sharing. Your real sessions go on as they are, and the show goes when it's off (Mac)
 
 ## 0.20.0
 

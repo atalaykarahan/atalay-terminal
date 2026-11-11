@@ -314,7 +314,7 @@ body::after {
 #tip .r, #pwr-tip .r { margin-top: 3px; color: var(--txt); }
 #tip .d, #pwr-tip .d { margin-top: 3px; color: var(--dim); }
 /* what power save changes, under its switch (app.js powerTip) */
-#pwr-tip { top: 23px; right: 8px; width: 340px; }
+#pwr-tip { top: 42px; right: 8px; width: 340px; }
 #pwr-tip.show { display: block; }
 #pwr-tip .h i { color: var(--amber); font-style: normal; font-weight: 400; }
 #pwr-tip .r span { display: inline-block; width: 92px; color: var(--dim); }
@@ -503,4 +503,10 @@ html.behind #activity .vs-ab.vs-ab-foot::before { animation-play-state: paused !
 .pn-ctx button { padding: 6px 9px; border: 0; border-radius: 4px; background: transparent; color: var(--txt); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .pn-ctx button:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--hi); }
 .pn-ctx hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line-soft); }
+/* Streamer mode (app.js Streamer): the note on the dashboard is a made-up one; the notes' board and window blurred. */
+html.streamer #p-notes .np-ed, html.streamer #p-notes .np-ed *, html.streamer #p-notes .np-ed *::before, html.streamer #m-notes { visibility: hidden !important; }
+html.streamer #notes { position: relative; }
+html.streamer #notes::before { content: 'TODO'; position: absolute; top: 10px; left: 14px; color: var(--hi); font-size: 1.3em; font-weight: 700; }
+html.streamer #notes::after { content: '☐  center the div\A☐  exit vim\A☑  blame the intern\A☐  write tests (someday)'; position: absolute; top: 40px; left: 14px; color: var(--txt); line-height: 1.8; white-space: pre; }
+html.streamer .np-tile .np-name, html.streamer .np-tile .np-mini, html.streamer .np-win .npw-name, html.streamer .np-win .np-ed { filter: blur(5px); }
 #log .ln.gone { display: none; }

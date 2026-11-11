@@ -770,6 +770,12 @@ function updateStations(dt, now) {
   }
 }
 
+// The page's names changed (streamer mode, app.js): each station's last call is named again from the state.
+function relabel() {
+  for (const c of CATS) STATIONS[c].last = '';
+  if (STATE) refreshStations(STATE);
+}
+
 function refreshStations(state) {
   for (const c of CATS) {
     const st = STATIONS[c];
@@ -1928,5 +1934,5 @@ function focusRunaway(pid) {
 }
 setCinematic(cineOn);
 // QUALITY too: the power save switch's tooltip (app.js) gives its numbers.
-window.Orbit = { quality: QUALITY, state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp };
+window.Orbit = { quality: QUALITY, state: onState, event: onEvent, status: onStatus, seed, activity, power, terminals: syncShips, terminalGone: shipGone, cinematic: startCinematic, idle: systemIdle, runaways: syncBoxes, focusRunaway, blowUp, relabel };
 for (const [fn, args] of R.MAPQ.splice(0)) window.Orbit[fn](...args);
