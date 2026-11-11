@@ -77,7 +77,7 @@
     const st = r.status || 'ended';
     const isActive = r.id === activeId;
     const badge = r.tool === 'antigravity' ? '<span class="tool-badge">agy</span>' : r.tool === 'codex' ? '<span class="tool-badge">codex</span>' : '';
-    return `<div class="row${r.open ? ' open' : ''}${isActive ? ' active is-active' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
+    return `<div class="row${r.open ? ' open' : ''}${isActive ? ' active' : ''}" data-id="${esc(r.id)}" title="${esc(r.lastPrompt || r.title)}">` +
       `<span class="dot s-${esc(st)}${r.status ? '' : ' hollow'}"></span>` +
       (r.id === renaming
         ? `<span class="txt"><input class="ren" value="${esc(r.title || r.lastPrompt)}" spellcheck="false" maxlength="120">`
