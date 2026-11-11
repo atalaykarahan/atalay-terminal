@@ -1,11 +1,11 @@
 import CryptoKit
 import Foundation
-import Security
 import WebKit
 
 /// The dashboard's notes (web/notes.js), kept in the app's folder on this Mac: a file for each note, and one for their
 /// order and the note pinned to the dashboard. Every file is encrypted (AES-GCM with a 256-bit key) and bound to its
-/// name, so a file copied over another doesn't open either; the key is made on this Mac and kept in its Keychain.
+/// name, so a file copied over another doesn't open either; the key is made on this Mac and kept in a file of the
+/// app's own that only this user can read (KeyFile).
 final class NotesStore {
     static let shared = NotesStore(dir: NotesStore.folder) { try NotesKey.get(create: $0) }
 
@@ -20,14 +20,15 @@ final class NotesStore {
     enum Failure: Error, CustomStringConvertible {
         /// There are notes, and no key to read them.
         case keyMissing
-        case keychain(OSStatus)
+        /// The key's file isn't a key, or a new one couldn't be written.
+        case keyFile
         case notANote(String)
         case badRequest
 
         var description: String {
             switch self {
-            case .keyMissing: return "the notes' key isn't in the Keychain"
-            case .keychain(let status): return "Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)")"
+            case .keyMissing: return "the notes' key is missing"
+            case .keyFile: return "the notes' key couldn't be read or saved"
             case .notANote(let name): return "\(name) isn't a note"
             case .badRequest: return "bad request"
             }
@@ -143,32 +144,24 @@ final class NotesStore {
     }
 }
 
-/// The notes' key: 32 random bytes in the login Keychain, under the app's own name (the staging build's apart).
+/// The notes' key: 32 random bytes in a file of the app's own (KeyFile), the staging build's apart.
 enum NotesKey {
-    static var service: String { (Bundle.main.bundleIdentifier ?? "atalay-terminal") + ".notes" }
-    private static let account = "notes"
+    static var name: String { Bundle.main.bundleIdentifier?.hasSuffix(".staging") == true ? "notes-staging" : "notes" }
 
-    static func get(create: Bool) throws -> SymmetricKey { try get(service: service, create: create) }
+    static func get(create: Bool) throws -> SymmetricKey { try get(name: name, create: create) }
 
-    static func get(service: String, create: Bool) throws -> SymmetricKey {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account, kSecReturnData as String: true,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-        var found: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &found)
-        if status == errSecSuccess, let data = found as? Data, data.count == 32 { return SymmetricKey(data: data) }
-        guard status == errSecItemNotFound else { throw NotesStore.Failure.keychain(status) }
+    static func get(name: String, create: Bool) throws -> SymmetricKey {
+        if let data = KeyFile.load(name) {
+            // A file that isn't a key is left as it is: a new key in its place would open none of the notes.
+            guard data.count == 32 else { throw NotesStore.Failure.keyFile }
+            return SymmetricKey(data: data)
+        }
         guard create else { throw NotesStore.Failure.keyMissing }
         let key = SymmetricKey(size: .bits256)
-        let name = (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "Atalay's Terminal"
-        let item: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                   kSecAttrAccount as String: account, kSecAttrLabel as String: "\(name) notes",
-                                   kSecValueData as String: key.withUnsafeBytes { Data($0) }]
-        let added = SecItemAdd(item as CFDictionary, nil)
+        if KeyFile.save(name, key.withUnsafeBytes { Data($0) }, fresh: true) { return key }
         // Made at the same moment elsewhere: that one is the key.
-        if added == errSecDuplicateItem { return try get(service: service, create: false) }
-        guard added == errSecSuccess else { throw NotesStore.Failure.keychain(added) }
-        return key
+        if KeyFile.load(name) != nil { return try get(name: name, create: false) }
+        throw NotesStore.Failure.keyFile
     }
 }
 

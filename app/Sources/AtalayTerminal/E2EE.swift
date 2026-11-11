@@ -7,7 +7,7 @@ import Security
 /// messages already open (they go through `social`), so no key is ever in a page.
 ///
 /// The keys:
-/// - this computer's own (X25519), in the Keychain: the account key's secret reaches it sealed to it;
+/// - this computer's own (X25519), in a file of the app's own (KeyFile): the account key's secret reaches it sealed to it;
 /// - the account's: a 32-byte secret on every computer of the account the user approved, from which an X25519 key
 ///   (sealing), an Ed25519 key (signing) and a key for the older generations are made. A computer leaving the account
 ///   brings a new generation, signed by the one before, the one before sealed in it, so old messages still open;
@@ -237,7 +237,7 @@ struct E2EEKey {
     }
 }
 
-/// What this computer keeps secret, in one Keychain item per API.
+/// What this computer keeps secret, in one file per API (KeyFile).
 struct E2EEVault: Codable {
     var account: String?
     var device: String?
@@ -251,41 +251,16 @@ struct E2EEVault: Codable {
     var recoverySeen = false
 }
 
-enum E2EEKeychain {
-    static var service: String { (Bundle.main.bundleIdentifier ?? "atalay-terminal") + ".e2ee" }
-
-    static func load(_ name: String) -> Data? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: name, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-        var found: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &found) == errSecSuccess else { return nil }
-        return found as? Data
-    }
-
-    @discardableResult
-    static func save(_ name: String, _ data: Data) -> Bool {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: name]
-        let updated = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if updated == errSecSuccess { return true }
-        guard updated == errSecItemNotFound else { return false }
-        let app = (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "Atalay's Terminal"
-        var item = query
-        item[kSecValueData as String] = data
-        item[kSecAttrLabel as String] = "\(app) message keys"
-        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
-    }
-}
-
 @MainActor
 final class E2EE {
     static let shared = E2EE()
 
     enum Phase: String { case off, starting, ready, locked }
 
-    /// Where the secret part lives (the Keychain; a probe gives it one in memory).
+    /// Where the secret part lives (a file of the app's own, KeyFile, one per API; a probe gives it one in memory).
     var vaultIO: (load: () -> Data?, save: (Data) -> Void) = (
-        { E2EEKeychain.load("vault " + Cloud.shared.apiName) },
-        { E2EEKeychain.save("vault " + Cloud.shared.apiName, $0) }
+        { KeyFile.load("messages-" + Cloud.shared.apiName) },
+        { KeyFile.save("messages-" + Cloud.shared.apiName, $0) }
     )
     /// Friends' pinned keys (not secret), next to the app's other files.
     lazy var pinsURL: URL = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
