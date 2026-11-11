@@ -3,6 +3,21 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.20.0
+
+- Top bar: every AI at once (Claude, Codex, Antigravity): today's totals of all of them and each one's 5-hour and weekly limits, whichever terminal you clicked
+- Codex: asking you to approve something shows NEEDS YOU at once (trust the hook once in Codex's /hooks), and it works again the moment you answer
+- Antigravity: NEEDS YOU the moment it asks, its planet stops the moment a turn ends (a declined tool or Esc too), and its chats join the chats list
+- Discord: your Discord profile shows you're in Atalay's Terminal and the AI tools at work (Settings · DISCORD). Thanks to @kwa0x2 on GitHub
+- Profiles: your own picture and links to your GitHub, Instagram, LinkedIn, X, YouTube or website on your card (Settings → PROFILE, signed in); a click on anyone's picture opens it big. Thanks to @Mur-47 on GitHub
+- Themes: Faruk İskender (teal on near-black). Thanks to @farukiskender on GitHub
+- Themes can react to what the app is doing, bring their own sounds and set the terminal cursor; a theme's decorations no longer stay after a switch. Thanks to @Svobodennn on GitHub
+- The orbit map takes your theme's colour instead of always orange. Thanks to @kwa0x2 on GitHub
+- Sounds: with sound on, a chat finishing its turn has its own sound (a click into a soft bell). Thanks to @farukiskender on GitHub
+- Sounds: a badge's sound no longer takes over your keyboard's play key
+- Runaways: macOS system services are no longer flagged, a live session's work is kept, and a frozen project shows as a TARDIS. Thanks to @EmirCobanOfficial on GitHub
+- Updates: an update downloaded before a restart that never happened goes in at the next launch. Thanks to @EmirCobanOfficial on GitHub
+
 ## 0.19.2
 
 - Updates: restarting into a new version no longer hangs the app on "restarting" (0.19.0 and 0.19.1 waited forever there; on those, quit with ⌘Q once and this version goes in)
@@ -154,18 +169,9 @@ Each version's lines are its release notes: the app lists them on its "what's ne
 
 ## Next
 
-- Sounds: a badge's sounds no longer hold the keyboard's play key: macOS took them for music (Now Playing), and the key played the badge's sound again (Mac and Windows)
-- Sounds: a chat that finishes its turn has a sound of its own (a click into a soft bell) instead of the sound switch's two notes, a turn quicker than a state update too. From PR #23, thanks to @farukiskender on GitHub (Mac and Windows)
 - Windows: folders whose names have Turkish or other non-English letters (Geliştirme, ü, ğ…) are read right, so their chats fill the panels again; a Codex or Antigravity chat's turn shows (and chimes) within a second, not at the next process scan. Thanks to @farukiskender on GitHub (PR #23)
 - Windows: Ctrl+C stops a command running in one of the app's terminals (ping, npm run dev…); it reached Claude, Codex and Antigravity, but never the commands a shell runs. From the PC's next restart on, as the app's terminal host keeps running through updates
 - Windows: Ctrl+C on a terminal's selection copies it and clears it, so the next Ctrl+C reaches the program again, as in Windows Terminal; a selection is copied only when the mouse lets go of it. Thanks to @EmirCobanOfficial on GitHub (EmirMac#7124 in the app)
-- Discord: your Discord profile shows you're in Atalay's Terminal, the AI tools at work and today's active time (Settings · DISCORD: on, the project's name off by default; never prompts or code). Thanks to @kwa0x2 on GitHub (Mac and Windows)
-- Profiles: your own picture and links to your other pages (GitHub, Instagram, LinkedIn, X, YouTube, a website) on your card, where friends and the leaderboard see them, set in Settings → PROFILE once signed in; anyone's picture opens big with a click. Thanks to @Mur-47 on GitHub (Mac and Windows)
-- Themes: Faruk İskender (teal on near-black). Thanks to @farukiskender on GitHub (from PR #35)
-- Themes: a theme can follow what the app is doing in its own CSS (a run of good tool results, idle, two chats on one file, chats waiting or working, a level-up), bring its own sounds or silence the app's, and set the terminal cursor's shape (docs/theme-hooks.md); a theme's decorations no longer stay on screen after a switch (MUR47's stamp). Thanks to @Svobodennn on GitHub (Mac and Windows)
-- Antigravity: its planet follows what the CLI does as it happens (its own log, transcript and steps, not a summary that lagged): it stops the moment a turn ends, after a declined tool or Esc too, and a confirmation it shows (writing a file outside the workspace too) turns it to NEEDS YOU at once, orbiting again once you answer; reads, searches and edits that asked were taken for work before. Its chats join the chats list, badged agy, as Codex's are badged codex (Mac and Windows)
-- Codex: asking you to approve a command, a patch or an MCP server's question shows NEEDS YOU at once, through Codex's own PermissionRequest hook (trust it once in Codex's /hooks), and its planet orbits again the moment you answer, as Codex's own log records it; its turn follows its session log, so a redraw or a leftover shell no longer starts a finished one again (Mac and Windows)
-- Top bar: every AI at once again, whichever terminal was clicked last: the day's totals of all of them, and a column per AI (Claude, Codex, and Antigravity's groups of models in use, as agy argon) with what's left of its 5-hour and weekly limits, when it fills again once under half, and no bar for a limit it doesn't have (Argon's is weekly only); Codex's and Antigravity's last limits stay after they quit. spend.ledger's today has a row per AI and every model in one line, and Codex and Antigravity no longer show a $0 they didn't cost (Mac and Windows)
 - Terminal view (PR #10, Ömer; Mac version written 2026-11-07, set aside): the chats and terminals shown take the dashboard's middle side by side, up to six in a grid, and the activity bar's terminal button brings them back. Hard to use as it is: they cover the map, so another one opens only from the chats list. Idea: the button brings every open one at once. The Mac code is kept at `refs/postponed/terminal-view` (`git cherry-pick refs/postponed/terminal-view`)
 - Terminals (important, reported 2026-11-03): resizing a window running `npm run dev` can blank the screen and lose its last lines. Cause (found 2026-11-04, reproduced headless with SwiftTerm + the relay + screen): screen 4.0 resizes a window bottom-anchored. Shrinking keeps the cursor's distance from the bottom, so with blank rows under the cursor (short output, after a clear) the output above it goes into screen's own history, which the view never shows, and only blank rows remain; growing pulls lines back in at the top. Fix to try: before a shrink, put the cursor on row max(0, old rows - new rows - blank rows under it) (screen then drops the blank bottom rows instead), apply the size, put the cursor back; the pty size has to wait for that (LocalProcessTerminalView.sizeChanged isn't open, so the relay holds it). Windows has no screen: check it there separately
 - caveman with "ponytail": seen mentioned somewhere; find out what it is and whether it's worth building in
