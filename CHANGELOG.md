@@ -3,22 +3,22 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
-## Next
+## 0.21.0
 
-- Windows: Atalay's Terminal is now Orbiterm. Your settings, sign-in and chats carry over
 - Notes: a note on the dashboard, between research.feed and files.heat, and all your notes on a board (the notepad in the activity bar). Write as in Notion (headings, to-dos, lists, quotes, code; type / for the menu), open a note in a window of its own, drag the notes into your own order, pin the one the dashboard shows. Notes stay on this computer, encrypted in the app's own folder
 - Orbit: a Claude, Codex or Antigravity you quit with Ctrl+C (or /exit) blows up and leaves the list at once, as End Session does; it stayed as a dim "ended" planet (Claude up to 30 minutes, the others two) (Mac)
-- Chats list: delete chats, Claude Code's, Codex's and Antigravity's: right-click one → Delete…, ⌘-click (or ⇧-click) to pick several, or a whole folder's from its menu. A deleted chat stays 30 days in Settings · CHATS · deleted chats, where you can put it back; then it's deleted from the Mac for good. A running one is ended first (Mac)
+- Chats list: delete chats, Claude Code's, Codex's and Antigravity's: right-click one → Delete…, ⌘-click (or ⇧-click) to pick several, or a whole folder's from its menu. A deleted chat stays 30 days in Settings · CHATS · deleted chats, where you can put it back; then it's deleted from the Mac for good. A running one is ended first
 - Chats list: a Codex chat stays in the list once Codex is closed, as Claude's and Antigravity's do, and a click resumes it (Mac)
-- Streamer mode: the streamer switch at the orbit map's top right (under power save), and every project, chat, file, command and search on the screen gets a made-up name (how to center a div, todo-app-FINAL-v2…), in the chats list and the chat windows too, their terminals frosted: record or share your screen without showing your work. The sessions, agents and animations stay as they are (Mac)
-- Messages: end-to-end encrypted. A message to a friend is sealed on your computer before it leaves and opened only on theirs; nobody in between, our server included, can read it. Your older messages stay as they were and still show; the chat says where encryption starts, a 🔒 in its header shows the security code you can compare with your friend's, and a friend still on an older version gets plain messages, with a line saying so (Mac)
-- Messages: your messages on all your computers: a computer that joins your account is approved from another one (both show a code to compare), or opens them with your recovery key (Settings · Account · show); a computer taken off your account no longer opens new messages (Mac)
-- Messages: reply to a message as on WhatsApp (hover → reply, or right-click), its quote above yours, a click on it shows the message it answers (Mac)
-- Messages: send code: </> code (or paste code into the box) keeps it as it is, coloured, with its language and a Copy button; long code folds; `inline code` too (Mac)
-- Messages: emoji: the emoji button (search, categories, recent ones first), :name: while typing (:fire → 🔥), and a message of only emoji shows big (Mac)
-- Messages: sending no longer makes the whole conversation blink and jump: only the new message slides in (Mac)
-- Party mode: the party switch next to power save: streamer mode's made-up names, and five made-up sessions on the map and in the sessions list among yours, busy all the time: their subagents (5, 12 and 6 of them) finishing one by one and new ones taking their places, their turns finishing, now and then a question for you, their cards changing places, and new sessions coming in as others are done, for a screen worth sharing. Your real sessions go on as they are, and the show goes when it's off (Mac)
+- Streamer mode: the streamer switch at the orbit map's top right (under power save), and every project, chat, file, command and search on the screen gets a made-up name (how to center a div, todo-app-FINAL-v2…), in the chats list and the chat windows too, their terminals frosted: record or share your screen without showing your work. The sessions, agents and animations stay as they are
+- Messages: end-to-end encrypted. A message to a friend is sealed on your computer before it leaves and opened only on theirs; nobody in between, our server included, can read it. Your older messages stay as they were and still show; the chat says where encryption starts, a 🔒 in its header shows the security code you can compare with your friend's, and a friend still on an older version gets plain messages, with a line saying so
+- Messages: your messages on all your computers: a computer that joins your account is approved from another one (both show a code to compare), or opens them with your recovery key (Settings · Account · show); a computer taken off your account no longer opens new messages
+- Messages: reply to a message as on WhatsApp (hover → reply, or right-click), its quote above yours, a click on it shows the message it answers
+- Messages: send code: </> code (or paste code into the box) keeps it as it is, coloured, with its language and a Copy button; long code folds; `inline code` too
+- Messages: emoji: the emoji button (search, categories, recent ones first), :name: while typing (:fire → 🔥), and a message of only emoji shows big
+- Messages: sending no longer makes the whole conversation blink and jump: only the new message slides in
+- Party mode: the party switch next to power save: streamer mode's made-up names, and five made-up sessions on the map and in the sessions list among yours, busy all the time: their subagents (5, 12 and 6 of them) finishing one by one and new ones taking their places, their turns finishing, now and then a question for you, their cards changing places, and new sessions coming in as others are done, for a screen worth sharing. Your real sessions go on as they are, and the show goes when it's off
 - Security fixes, found and fixed by @EmirCobanOfficial on GitHub (EmirMac#7124 in the app): a link in a terminal, a Markdown preview or the dashboard never starts an app or a script (it's shown in the Finder instead) and asks before it opens another app; a file opened from a link asks before its first save; on Windows the chats list's Show folder opens only folders
+- Windows: Atalay's Terminal is now Orbiterm. Your settings, sign-in and chats carry over
 
 ## 0.20.0
 
