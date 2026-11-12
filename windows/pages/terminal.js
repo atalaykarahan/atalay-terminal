@@ -20,6 +20,19 @@
     cursorStyle: ['block', 'bar', 'underline'].find((s) => s === token('--cursor-style')) || 'block',
     cursorBlink: token('--cursor-blink') !== '0',
   });
+  // Electron 45.3's Chromium (156.0.8078.96) turns down a canvas font that starts with a space and goes on drawing in its
+  // default 10px sans-serif. xterm.js's WebGL renderer names its glyphs' font that way (" normal 14px …" for all but
+  // italic text), so the terminal's text came out small and spaced out in its cells: the font is handed on trimmed.
+  for (const Ctx of [window.CanvasRenderingContext2D, window.OffscreenCanvasRenderingContext2D]) {
+    const font = Ctx && Object.getOwnPropertyDescriptor(Ctx.prototype, 'font');
+    if (!font || !font.set) continue;
+    Object.defineProperty(Ctx.prototype, 'font', {
+      ...font,
+      set(v) {
+        font.set.call(this, typeof v === 'string' ? v.trim() : v);
+      },
+    });
+  }
   const term = new Terminal({
     fontFamily: '"MesloLGS NF", "CaskaydiaCove Nerd Font", "Cascadia Mono", Consolas, monospace',
     fontSize: window.__termFont || 14, lineHeight: 1.1, ...cursor(), scrollback: 10000, allowProposedApi: true,

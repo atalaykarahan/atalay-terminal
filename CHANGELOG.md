@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.21.1 (Windows only)
+
+- Terminals: the text in chat and terminal windows reads as before again; since 0.21.0 it could come out small and spaced out, hard to read (the new Electron turned down the font the terminal gave its letters)
+
 ## 0.21.0
 
 - Notes: a note on the dashboard, between research.feed and files.heat, and all your notes on a board (the notepad in the activity bar). Write as in Notion (headings, to-dos, lists, quotes, code; type / for the menu), open a note in a window of its own, drag the notes into your own order, pin the one the dashboard shows. Notes stay on this computer, encrypted in the app's own folder
