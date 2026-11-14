@@ -3,6 +3,12 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.22.0
+
+- Orbiterm: Atalay's Terminal is now Orbiterm on the Mac too, in the Dock, the menu bar and the Finder. Your settings, sign-in and chats carry over
+- XP: once today's 16 counted hours or this week's 70 are in, the XP card says so; the time after that counts again from the next day, or as the oldest hours leave the last 7 days
+- Security: the app's link to the server is hardened
+
 ## 0.21.1 (Windows only)
 
 - Terminals: the text in chat and terminal windows reads as before again; since 0.21.0 it could come out small and spaced out, hard to read (the new Electron turned down the font the terminal gave its letters)
