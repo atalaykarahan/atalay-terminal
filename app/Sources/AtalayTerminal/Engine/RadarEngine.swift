@@ -1816,11 +1816,16 @@ final class RadarEngine {
         var views: [[String: Any]] = [], seen = Set<String>(), waiting: Pending?
         Self.agyRows(db, "SELECT conversation_id, title, status, agent_name, killed FROM conversation_summaries "
                      + "WHERE parent_conversation_id = ? ORDER BY last_modified_time DESC LIMIT 12", [parent]) { col in
-            let id = col(0), title = col(1), status = col(2), agent = col(3)
+            let id = col(0), title = col(1), status = col(2), agent = col(3), killed = col(4) == "1"
             seen.insert(id)
-            let running = (status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY")) && col(4) != "1"
             let path = root + "/brain/" + id + "/.system_generated/logs/transcript.jsonl"
             let mtime = fileStat(path)?.mtime ?? 0
+            // Running: its summary says so, or a step of its own isn't over yet. A subagent that set a `schedule` timer
+            // (or waits on a background task) has ended its turn, so its summary says IDLE, yet it goes on by itself
+            // when the timer fires: its parent's planet must not park meanwhile. Half an hour after it last wrote, a step
+            // left open no longer counts.
+            var running = (status.hasSuffix("_RUNNING") || status.hasSuffix("_BUSY")) && !killed
+            if !running, !killed, now - mtime < 30 * Self.MIN { running = Self.agySteps(root, id)?.active == true }
             var log = O.agentLogs[id] ?? AgyLog()
             if mtime != log.mtime {
                 log = Self.agyLog(path, mtime: mtime, id: id)
