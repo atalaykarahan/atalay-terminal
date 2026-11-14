@@ -14,8 +14,11 @@
 //   npm run dist                                        (--build-only) builds the installer, nothing else
 //   GH_TOKEN   a GitHub token that can write the releases repo (default: git's own sign-in to github.com on this PC)
 //
-// The API key is rotated for every release (scripts/new-key.sh on the Mac): copy the new one here first (README).
+// The API key is new for every release: with the admin token on this PC (~/.atalay-terminal/admin-token, or
+// ATALAY_ADMIN_TOKEN) the release makes it here, with its two decoys; without it, scripts/new-key.sh on the Mac makes it
+// and it's pasted here first (README).
 const cp = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const https = require('https');
 const os = require('os');
@@ -111,14 +114,76 @@ const newer = (a, b) => {
 
 let auth = '';
 
+const API = (process.env.ATALAY_API_URL || 'https://terminal-api.atalaykarahan.com').replace(/\/$/, '');
+function adminToken() {
+  if (process.env.ATALAY_ADMIN_TOKEN) return process.env.ATALAY_ADMIN_TOKEN.trim();
+  try {
+    return fs.readFileSync(path.join(os.homedir(), '.atalay-terminal', 'admin-token'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+// Readable by this user only, like an SSH key; written beside it first (<file>.new), and put in place by placePrivate.
+function writePrivate(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(`${file}.new`, text, { mode: 0o600 });
+  cp.execFileSync('icacls', [`${file}.new`, '/inheritance:r', '/grant:r', `${os.userInfo().username}:F`], { stdio: 'ignore', windowsHide: true });
+}
+const placePrivate = (file) => fs.renameSync(`${file}.new`, file);
+
+// This release's key, made and registered here, as the Mac's release.sh does with app/scripts/rotate-key.sh and
+// client-key.sh: a new key and two decoys go to the API first (the decoys checked as decoys: an API from before them
+// would take them as plain keys, so they're revoked then and nothing is built); then the old key file is put aside, by
+// its id, in client-keys, and the new ones take its place. A failure on the way leaves the old key file as it was.
+async function freshKey(keyFile, token) {
+  const newKey = () => `k${crypto.randomBytes(4).toString('hex')}:${crypto.randomBytes(32).toString('hex')}`;
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const put = async (line, fields) => {
+    const [id, secret] = line.split(':');
+    const r = await fetch(`${API}/v1/admin/client-keys/${id}`, { method: 'PUT', headers, body: JSON.stringify({ secret, ...fields }) });
+    if (!r.ok) throw new Error(`the API refused key ${id}: ${r.status}`);
+    return id;
+  };
+  const key = newKey();
+  const decoys = [newKey(), newKey()];
+  const id = await put(key, { label: `windows ${new Date().toISOString().slice(0, 10)}`, platform: 'windows' });
+  for (const d of decoys) await put(d, { label: `decoy beside ${id}`, decoy: true });
+  const list = await fetch(`${API}/v1/admin/client-keys`, { headers }).then((r) => (r.ok ? r.json() : { keys: [] }));
+  const known = new Map((list.keys || []).map((k) => [k.id, k]));
+  const bad = decoys.map((d) => d.split(':')[0]).filter((d) => !(known.get(d) || {}).decoy);
+  if (bad.length) {
+    for (const d of bad) await fetch(`${API}/v1/admin/client-keys/${d}`, { method: 'DELETE', headers });
+    throw new Error(`${API} doesn't know decoys yet (deploy the API first): they were revoked`);
+  }
+  writePrivate(keyFile, key + '\n');
+  writePrivate(`${keyFile}.decoys`, decoys.join('\n') + '\n');
+  if (fs.existsSync(keyFile)) {
+    const old = fs.readFileSync(keyFile, 'utf8').trim().split(':')[0];
+    if (/^[a-z0-9]{4,32}$/.test(old)) {
+      const archive = path.join(path.dirname(keyFile), 'client-keys');
+      fs.mkdirSync(archive, { recursive: true });
+      fs.copyFileSync(keyFile, path.join(archive, old));
+    }
+  }
+  placePrivate(keyFile);
+  placePrivate(`${keyFile}.decoys`);
+  return id;
+}
+
 (async () => {
   if (process.platform !== 'win32') fail('Windows builds are made on Windows');
   const keyFile = path.join(os.homedir(), '.atalay-terminal', 'client-key-windows');
-  // A key given in ATALAY_CLIENT_KEY (the Mac's windows/scripts/new-key.sh) is saved first, with its decoys.
+  // A key given in ATALAY_CLIENT_KEY (the Mac's windows/scripts/new-key.sh) is saved first, with its decoys; else a real
+  // release makes its own with the admin token (a dry run and npm run dist build with the key there is).
+  const admin = adminToken();
   if (process.env.ATALAY_CLIENT_KEY) cp.execFileSync(process.execPath, [path.join(__dirname, 'clientkey.js'), '--save'], { stdio: 'inherit' });
-  if (!fs.existsSync(keyFile)) fail(`no API key (${keyFile}): an unsigned build can't reach the API, so it isn't released`);
+  // GitHub first: a release that can't go out mustn't use up a key.
   auth = only ? '' : token();
   if (!auth && !dry && !only) fail('no GitHub token: set GH_TOKEN, or sign git in to github.com once (a push does)');
+  if (!process.env.ATALAY_CLIENT_KEY && admin && !dry && !only) {
+    console.log(`release: key ${await freshKey(keyFile, admin)} made for this release, with 2 decoys`);
+  }
+  if (!fs.existsSync(keyFile)) fail(`no API key (${keyFile}): an unsigned build can't reach the API, so it isn't released`);
 
   // rtk for the token saver (a pinned release, checked against its checksums): a release without it would leave its
   // switch off for everyone.

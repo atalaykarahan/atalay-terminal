@@ -48,8 +48,10 @@ Settings). New users download `Atalays-Terminal-Setup.exe` from that release; it
 
 A release, on the Windows PC:
 
-1. On the Mac, `windows/scripts/new-key.sh`: a fresh key for this release (the old one stops working a month later, by
-   when every running copy has updated). Copy it, then here, without it ever showing:
+1. A fresh key for this release (the one before stops earning XP 10 minutes after this release is out and stops working
+   24 hours after). With the admin token on this PC (`~/.atalay-terminal/admin-token`, readable by its user only, or
+   `$env:ATALAY_ADMIN_TOKEN`), step 3 makes it, with its two decoys, and marks it live once the release is out: nothing
+   to do here. Without it: on the Mac, `windows/scripts/new-key.sh`, then here, without it ever showing:
    `$env:ATALAY_CLIENT_KEY = (Get-Clipboard -Raw).Trim(); node scripts/clientkey.js --save; Remove-Item Env:ATALAY_CLIENT_KEY`
 2. Raise `version` in package.json to the next version, the one the Mac's next release takes too: the two apps are one
    product with one version number (0.13.0 is the first they share), so the admin page compares them alike.
