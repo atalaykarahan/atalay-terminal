@@ -88,6 +88,7 @@ const { createCodexHooks } = require('./codexhooks');
 const { createNotesStore } = require('./notesstore');
 const { createStreamer } = require('./streamer');
 const { createChatTrash } = require('./chattrash');
+const vendor = require('./vendor');
 
 let autoUpdater = null;
 try {
@@ -385,7 +386,8 @@ function noteToolsAtWork() {
   for (const s of engine.live()) {
     if (s.status !== 'busy') continue;
     const key = s.ai ? String(s.name || '').toLowerCase() : 'claude';
-    if (['claude', 'codex', 'gemini', 'antigravity'].includes(key)) toolsAt.set(key, now);
+    // Only when the process is the tool's own program (vendor.js): a program renamed after it earns its badge nothing.
+    if (['claude', 'codex', 'gemini', 'antigravity'].includes(key) && vendor.genuine(key, s.pid)) toolsAt.set(key, now);
   }
 }
 const toolsAtWork = () => [...toolsAt].filter(([, at]) => Date.now() - at < 90_000).map(([key]) => key).sort();

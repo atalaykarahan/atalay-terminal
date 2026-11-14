@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.22.1 (Windows only)
+
+- Badges: an AI tool's hours go to its badge only when its own program is at work (Claude Code, Codex and Antigravity signed by their makers), as on the Mac; a program renamed after one of them earns nothing
+
 ## 0.22.0
 
 - Orbiterm: Atalay's Terminal is now Orbiterm on the Mac too, in the Dock, the menu bar and the Finder. Your settings, sign-in and chats carry over
