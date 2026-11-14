@@ -197,6 +197,11 @@ async function freshKey(keyFile, token) {
   const config = notes ? { releaseInfo: { releaseNotes: notes } } : undefined;
   await builder.build({ targets: builder.Platform.WINDOWS.createTarget('dir'), publish: 'never', config });
   const unpacked = path.join(dist, 'win-unpacked');
+  // Where an installed copy looks for its updates (electron-updater reads it): electron-builder writes it only when it
+  // packs an installer, never for the folder alone, so it's written here as it would be. Without it a release never
+  // hears of the next one (0.22.0 and 0.22.1 went out so).
+  const pub = pkg.build.publish;
+  fs.writeFileSync(path.join(unpacked, 'resources', 'app-update.yml'), `provider: ${pub.provider}\nurl: ${pub.url}\nupdaterCacheDirName: ${pkg.name}-updater\n`);
   cp.execFileSync(process.execPath, [path.join(__dirname, 'guard.js'), unpacked, keyFile], { stdio: 'inherit' });
   await builder.build({ targets: builder.Platform.WINDOWS.createTarget('nsis'), prepackaged: unpacked, publish: 'never', config });
 
@@ -204,6 +209,7 @@ async function freshKey(keyFile, token) {
   const version = (/^version: (.+)$/m.exec(yml) || [])[1];
   const exe = (/^path: (.+)$/m.exec(yml) || [])[1];
   if (version !== pkg.version || !exe || !fs.existsSync(path.join(dist, exe))) fail(`dist/latest.yml doesn't match the build`);
+  if (!fs.existsSync(path.join(unpacked, 'resources', 'app-update.yml'))) fail('the build has no resources/app-update.yml: it would never update');
   if (only) return console.log(`release: built dist/${exe}, not published`);
   const files = [
     [exe, exe],

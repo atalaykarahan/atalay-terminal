@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.22.2 (Windows only)
+
+- Updates: the app finds its updates again; 0.22.0 and 0.22.1 never looked for them (on one of those, download the installer once more)
+
 ## 0.22.1 (Windows only)
 
 - Badges: an AI tool's hours go to its badge only when its own program is at work (Claude Code, Codex and Antigravity signed by their makers), as on the Mac; a program renamed after one of them earns nothing
