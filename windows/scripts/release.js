@@ -289,7 +289,11 @@ async function freshKey(keyFile, token) {
         headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
         body: JSON.stringify({ version, feed: feed.replace(/\/+$/, ''), notes: notes.slice(0, 4000) }),
         signal: AbortSignal.timeout(20_000),
-      }).then((r) => r.ok, () => false)
+      }).then(
+        // Its answer read to the end: a body left open makes Node on Windows abort on the way out (libuv's async.c).
+        (r) => r.text().then(() => r.ok, () => r.ok),
+        () => false,
+      )
     : false;
   if (named) console.log(`release: ${API} names ${version} to the Windows apps`);
   else console.warn(`release: the API doesn't name ${version} yet: PUT ${API}/v1/admin/windows-release {version, feed} with the admin token`);
