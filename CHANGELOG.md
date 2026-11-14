@@ -3,6 +3,10 @@
 Each version's lines are its release notes: the app lists them on its "what's new" screen
 (`app/scripts/release.sh <version> "<one line per change>"`).
 
+## 0.22.3 (Windows only)
+
+- Updates: the app also asks the server which version is current, so an update is always found and offered, even if the app's own check goes wrong
+
 ## 0.22.2 (Windows only)
 
 - Updates: the app finds its updates again; 0.22.0 and 0.22.1 never looked for them (on one of those, download the installer once more)

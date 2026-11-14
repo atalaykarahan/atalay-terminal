@@ -341,8 +341,9 @@ function popupMenu(items, at, view) {
   });
 }
 
+const API_BASE = STAGING ? 'http://127.0.0.1:4800' : (!RELEASE && process.env.ATALAY_API_URL) || 'https://terminal-api.atalaykarahan.com';
 const cloud = createCloud({
-  apiBase: STAGING ? 'http://127.0.0.1:4800' : (!RELEASE && process.env.ATALAY_API_URL) || 'https://terminal-api.atalaykarahan.com',
+  apiBase: API_BASE,
   dataDir: app.getPath('userData'),
   version: app.getVersion(),
   clientKey: RELEASE ? null : loadClientKey(),
@@ -2009,7 +2010,10 @@ const updates = (() => {
         pushCloud();
       }
     });
-    const look = () => poll().catch(() => {});
+    const look = () => {
+      poll().catch(() => {});
+      apiRelease().catch(() => {});
+    };
     setTimeout(look, 10_000);
     setInterval(look, 60_000);
     // Back from sleep or the lock screen: at once, not at the next minute.
@@ -2022,17 +2026,53 @@ const updates = (() => {
   // every 30 minutes here, so a release could wait half an hour to be seen): the feed's latest.yml, about 1 KB, is read
   // every minute with a time limit, and electron-updater only asked when it names a newer version than this one and the
   // one on offer, so its notice comes once.
-  const feed = (() => {
-    if (!usable) return null;
+  //
+  // Where to look is in resources\app-update.yml, written by the release. When it's missing (0.22.0 and 0.22.1 went out
+  // without it and never looked for an update) or the API names another feed (apiRelease), a copy of our own in the
+  // profile is used instead, so the check never hangs on that one file.
+  const OWN_FEED = 'https://github.com/atalaykarahan/atalay-terminal-releases/releases/download/windows';
+  // The only feeds taken from the API: one release (a plain tag, no "/" or "%", so no "../" can lead elsewhere on GitHub)
+  // of the app's own releases repo. The installer isn't code-signed: where it comes from is what keeps it the app's own.
+  const FEED_RE = /^https:\/\/github\.com\/atalaykarahan\/atalay-terminal-releases\/releases\/download\/[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/;
+  let feed = null;
+  function useFeed(url) {
+    const file = path.join(app.getPath('userData'), 'app-update.yml');
+    fs.writeFileSync(file, `provider: generic\nurl: ${url}\nupdaterCacheDirName: ${require('../package.json').name}-updater\n`);
+    autoUpdater.updateConfigPath = file;
+    feed = url;
+  }
+  if (usable) {
     try {
       const m = /^url:\s*(.+)$/m.exec(fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'));
-      return m ? m[1].trim().replace(/^['"]|['"]$/g, '').replace(/\/+$/, '') : null;
-    } catch {
-      return null;
+      feed = m ? m[1].trim().replace(/^['"]|['"]$/g, '').replace(/\/+$/, '') : null;
+    } catch {}
+    try {
+      if (!feed) useFeed(OWN_FEED);
+    } catch (e) {
+      console.error('updates:', e.message);
     }
-  })();
-  async function feedVersion() {
-    const res = await net.fetch(`${feed}/latest.yml?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+  }
+  // The server's word on the current Windows release (GET /v1/releases/windows, open: it needs no key, so it reaches an
+  // app whose key has died too). When it names a version newer than this one and the one on offer, electron-updater is
+  // asked at once, in the feed it names if that's a release of the app's own repo: the update can be offered from the
+  // server even when this app's own look at the feed went wrong, and nothing from anywhere else is ever installed.
+  async function apiRelease() {
+    const res = await net.fetch(`${API_BASE}/v1/releases/windows`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) return;
+    const r = await res.json();
+    const version = r && typeof r.version === 'string' ? r.version : '';
+    const url = r && typeof r.feed === 'string' ? r.feed.replace(/\/+$/, '') : '';
+    const current = () => (offer ? offer.version : app.getVersion());
+    if (!/^\d+\.\d+\.\d+$/.test(version) || !newerVersion(version, current()) || !FEED_RE.test(url)) return;
+    if (url !== feed) {
+      // A feed named by mistake mustn't take the place of one that works: taken only once it holds a newer version.
+      if (!newerVersion(await feedVersion(url), current())) return;
+      useFeed(url);
+    }
+    askUpdater();
+  }
+  async function feedVersion(base = feed) {
+    const res = await net.fetch(`${base}/latest.yml?t=${Date.now()}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error(`latest.yml: HTTP ${res.status}`);
     const m = /^version:\s*['"]?(\d[^'"\s]*)/m.exec(await res.text());
     if (!m) throw new Error('latest.yml: no version');
@@ -2076,7 +2116,7 @@ const updates = (() => {
       checking = true;
       pushCloud();
       try {
-        await poll();
+        await Promise.allSettled([poll(), apiRelease()]);
         // What electron-updater found, when it was asked, comes before "up to date" would.
         if (asking) await Promise.race([asking, new Promise((r) => setTimeout(r, 20_000))]);
       } catch {}

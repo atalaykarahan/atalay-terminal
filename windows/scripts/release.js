@@ -280,4 +280,17 @@ async function freshKey(keyFile, token) {
     const id = fs.readFileSync(keyFile, 'utf8').split(':')[0].trim();
     console.warn(`release: the release is out, but its key isn't marked live; from the Mac: PUT /v1/admin/client-keys/${id}/live with the admin token`);
   }
+
+  // The API names this release to every Windows app (GET /v1/releases/windows, read every minute with no key), which then
+  // looks for it in this feed even if its own look went wrong. Published already, so a failure only asks for it by hand.
+  const named = admin
+    ? await fetch(`${API}/v1/admin/windows-release`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ version, feed: feed.replace(/\/+$/, ''), notes: notes.slice(0, 4000) }),
+        signal: AbortSignal.timeout(20_000),
+      }).then((r) => r.ok, () => false)
+    : false;
+  if (named) console.log(`release: ${API} names ${version} to the Windows apps`);
+  else console.warn(`release: the API doesn't name ${version} yet: PUT ${API}/v1/admin/windows-release {version, feed} with the admin token`);
 })().catch((e) => fail(e.message));
