@@ -30,7 +30,7 @@ enum Detached {
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         let url = base.appendingPathComponent(prefix == "atl-" ? "screenrc" : "screenrc-" + prefix.dropLast())
         let rc = """
-        # Written by Atalay's Terminal for its chat sessions. The command key is Ctrl-^ so Ctrl-A reaches Claude.
+        # Written by Orbiterm for its chat sessions. The command key is Ctrl-^ so Ctrl-A reaches Claude.
         startup_message off
         escape ^^^^
         deflogin off
@@ -94,9 +94,9 @@ enum Detached {
 
     /// The app another build's session belongs to, by its name, for saying where a mirrored chat runs.
     static func owner(_ name: String) -> String {
-        if name.hasPrefix("atls-") { return "Atalay's Terminal Staging" }
-        if name.hasPrefix("atld-") { return "a development run of Atalay's Terminal" }
-        return "Atalay's Terminal"
+        if name.hasPrefix("atls-") { return "Orbiterm Staging" }
+        if name.hasPrefix("atld-") { return "a development run of Orbiterm" }
+        return "Orbiterm"
     }
 
     /// Makes the session take its display's size. A window that attached while hidden (without `-A`, so

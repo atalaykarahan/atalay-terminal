@@ -18,8 +18,9 @@ enum Activity {
     /// The AI tools seen at work (a session busy), for their badges (the API's badges.ts): claude, codex, gemini, antigravity.
     private static var toolsAt: [String: TimeInterval] = [:]
 
-    /// A session of `tool` (a brief's name: "Codex", "Gemini", "Antigravity"…; Claude's sessions are Claude) is busy.
-    static func toolAtWork(_ tool: String) {
+    /// A session of `tool` (a brief's name: "Codex", "Gemini", "Antigravity"…; Claude's sessions are Claude) is busy,
+    /// run by process `pid`: it counts when that process is the tool's own program (Vendor).
+    static func toolAtWork(_ tool: String, pid: Int32?) {
         let key: String
         switch tool.lowercased() {
         case "claude": key = "claude"
@@ -28,6 +29,7 @@ enum Activity {
         case "antigravity": key = "antigravity"
         default: return
         }
+        guard Vendor.genuine(key, pid: pid) else { return }
         toolsAt[key] = ProcessInfo.processInfo.systemUptime
     }
 

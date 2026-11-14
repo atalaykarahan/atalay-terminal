@@ -1,7 +1,7 @@
 import AppKit
 
 /// Watches the main thread from a background queue while the app is in front. When it stops answering for
-/// a few seconds (a hang), it saves a stack sample of the whole app to ~/Library/Logs/Atalay's Terminal/,
+/// a few seconds (a hang), it saves a stack sample of the whole app to ~/Library/Logs/Orbiterm/,
 /// one report per hang, so the cause can be seen instead of guessed.
 ///
 /// It only runs while the app is active: in the background App Nap legitimately delays the main queue,
@@ -59,11 +59,11 @@ final class HangWatchdog: @unchecked Sendable {
 
     private func record(_ silent: Double) {
         let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Logs/Atalay's Terminal")
+            .appendingPathComponent("Logs/Orbiterm")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let file = dir.appendingPathComponent("hang-\(stamp).txt")
-        NSLog("Atalay's Terminal: main thread unresponsive for %.1fs, sampling to %@", silent, file.path)
+        NSLog("Orbiterm: main thread unresponsive for %.1fs, sampling to %@", silent, file.path)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
         p.arguments = [String(getpid()), "3", "-file", file.path]

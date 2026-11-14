@@ -13,6 +13,63 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { fileURLToPath } = require('url');
 
+// ---------- the release's guard ----------
+// A released app (packaged) signs its API calls only through resources\guard.node (native/guard.c), which signs nothing
+// outside that release's own Orbiterm.exe and app.asar. It also stops for good (lock) when something could make this
+// app speak in someone else's name: a debugging switch (another program reaching into its pages), node-pty's files
+// changed (they load into this process) or the pages changed (resources\web, checked before each loads). What the files
+// should be comes from the guard, which scripts/guard.js builds over the finished app. Development features (DevTools,
+// ATL_PROBE, ATALAY_API_URL, a key file) are never on in a released app; a run from the sources has no guard.
+const RELEASE = app.isPackaged;
+// A staging package (npm run staging -- --packaged): a released build in every way, guard included, but it speaks to the
+// local API and never updates. Its own package.json says so; a release's can't be changed (asar integrity).
+const STAGING = RELEASE && require('../package.json').orbitermStaging === true;
+const guard = (() => {
+  if (!RELEASE) return null;
+  try {
+    return require(path.join(process.resourcesPath, 'guard.node'));
+  } catch {
+    return null;
+  }
+})();
+const builtFiles = (() => {
+  try {
+    return guard ? JSON.parse(guard.files()) : null;
+  } catch {
+    return null;
+  }
+})();
+// Every file under `dir` and its SHA-256 the same as `want` (path under `dir`, with forward slashes).
+function sameFiles(dir, want) {
+  if (!want) return false;
+  const got = {};
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name !== '.DS_Store') {
+        got[path.relative(dir, p).split(path.sep).join('/')] = e.isFile() ? crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex') : '?';
+      }
+    }
+  };
+  try {
+    walk(dir);
+  } catch {
+    return false;
+  }
+  const names = Object.keys(want);
+  return Object.keys(got).length === names.length && names.every((n) => got[n] === want[n]);
+}
+if (guard) {
+  const debugging = ['remote-debugging-port', 'remote-debugging-pipe', 'inspect', 'inspect-brk', 'inspect-port', 'js-flags']
+    .some((s) => app.commandLine.hasSwitch(s)) || process.argv.some((a) => /^--(inspect|remote-debugging|js-flags)/.test(a));
+  const pty = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty');
+  const ptyOwn = !!builtFiles && sameFiles(pty, builtFiles.pty);
+  // Changed node-pty files never load: the terminals run in the session host instead (terminals.js).
+  if (!ptyOwn) process.env.ORBITERM_NO_PTY = '1';
+  if (debugging || !ptyOwn) guard.lock();
+}
+
 const { createEngine } = require('./engine');
 const { createGit } = require('./git');
 const { createCloud } = require('./cloud');
@@ -42,8 +99,12 @@ try {
 const WEB = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.join(__dirname, '..', '..', 'app', 'Resources', 'web');
 const PRELOAD = path.join(__dirname, 'preload.js');
 // ATL_PROBE=<folder>: a check without windows on screen — the pages render out of sight, pictures of them land in the
-// folder, and the app quits (development only).
-const PROBE = process.env.ATL_PROBE || '';
+// folder, and the app quits (development only: a released app never runs it).
+const PROBE = RELEASE ? '' : process.env.ATL_PROBE || '';
+// The pages still the release's own, checked before one loads: once they aren't, the guard signs nothing more.
+function checkPages() {
+  if (guard && !sameFiles(WEB, builtFiles && builtFiles.web)) guard.lock();
+}
 
 // Run from the sources on a Mac (development), its data must not land in the Mac app's own folder.
 if (process.platform !== 'win32') app.setPath('userData', path.join(app.getPath('appData'), 'atalay-terminal-windows-dev'));
@@ -280,10 +341,11 @@ function popupMenu(items, at, view) {
 }
 
 const cloud = createCloud({
-  apiBase: process.env.ATALAY_API_URL || 'https://terminal-api.atalaykarahan.com',
+  apiBase: STAGING ? 'http://127.0.0.1:4800' : (!RELEASE && process.env.ATALAY_API_URL) || 'https://terminal-api.atalaykarahan.com',
   dataDir: app.getPath('userData'),
   version: app.getVersion(),
-  clientKey: loadClientKey(),
+  clientKey: RELEASE ? null : loadClientKey(),
+  guard,
   fetch: (url, init) => net.fetch(url, init),
   // Working, for the XP: someone at the keyboard in the last five minutes, and a sign of work — a Claude session
   // busy, or a terminal printing or typed in.
@@ -328,18 +390,13 @@ function noteToolsAtWork() {
 }
 const toolsAtWork = () => [...toolsAt].filter(([, at]) => Date.now() - at < 90_000).map(([key]) => key).sort();
 
-// The signing key this build's API calls carry (src/clientkey.js, written masked at build time, never committed). A run
-// from the sources against the local API (npm run staging) brings its own instead; a packaged app never reads one.
+// A run from the sources against the local API (npm run staging) signs with its own key file. A released app's key is
+// in its guard (above), never in a file or in app.asar.
 function loadClientKey() {
   try {
-    if (!app.isPackaged && process.env.ATALAY_CLIENT_KEY_FILE) {
-      const [id, secret] = fs.readFileSync(process.env.ATALAY_CLIENT_KEY_FILE, 'utf8').trim().split(':');
-      return id && /^[0-9a-f]+$/i.test(secret || '') ? { id, secret } : null;
-    }
-    const k = require('./clientkey');
-    const a = Buffer.from(k.a, 'base64'), b = Buffer.from(k.b, 'base64');
-    const secret = Buffer.from(a.map((x, i) => x ^ b[i])).toString('hex');
-    return k.id && secret ? { id: k.id, secret } : null;
+    if (!process.env.ATALAY_CLIENT_KEY_FILE) return null;
+    const [id, secret] = fs.readFileSync(process.env.ATALAY_CLIENT_KEY_FILE, 'utf8').trim().split(':');
+    return id && /^[0-9a-f]+$/i.test(secret || '') ? { id, secret } : null;
   } catch {
     return null;
   }
@@ -507,7 +564,8 @@ function zoom(step) {
 
 // ---------- windows ----------
 function webPrefs() {
-  return { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false };
+  // No DevTools in a released app: its console would reach the app's line to the API.
+  return { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, devTools: !RELEASE };
 }
 
 // A window shows the app's own pages and nothing else, as on the Mac (RadarView): a page from anywhere else, a file on
@@ -599,6 +657,7 @@ function createDashboard() {
   chatsView.setVisible(chatsList.shown);
   layout();
   for (const ev of ['resize', 'maximize', 'unmaximize', 'restore', 'enter-full-screen', 'leave-full-screen']) win.on(ev, layout);
+  checkPages();
   dashView.webContents.loadFile(path.join(WEB, 'index.html'));
   // The text size Settings keeps, on every load (a reload starts at 100% otherwise).
   dashView.webContents.on('did-finish-load', () => dashView.webContents.setZoomFactor(themes.uiScale()));
@@ -1532,6 +1591,7 @@ function showOverlay(js) {
       overReady = false;
       setTimeout(() => over && !over.isDestroyed() && over.webContents.reload(), 500);
     });
+    checkPages();
     over.loadFile(path.join(WEB, 'overlay.html'));
     over.on('blur', hideOverlay);
   }
@@ -1589,6 +1649,7 @@ function panelWindow(role, friend) {
     }
     setTimeout(() => !win.isDestroyed() && win.webContents.reload(), 500);
   });
+  checkPages();
   win.loadFile(path.join(WEB, 'messages.html'));
   return win;
 }
@@ -1900,7 +1961,7 @@ const updates = (() => {
   // starts): it goes in the moment the download is done, as on the Mac, rather than waiting for the user to step away
   // while the page says "downloading…" with no way out.
   let whenReady = false;
-  const usable = !!autoUpdater && app.isPackaged && !PROBE;
+  const usable = !!autoUpdater && app.isPackaged && !PROBE && !STAGING;
   const rightAway = () => !!settings.get('updateRightAway');
   const maybeRestart = () => {
     if (!ready || busy || terminals.list().some((t) => terminals.local(t.id))) return;
@@ -2069,6 +2130,8 @@ ipcMain.on('atl:boot', (e) => {
 });
 
 ipcMain.handle('atl:post', async (e, name, body) => {
+  // Only the app's own pages, in their main frame, as on the Mac: nothing loaded into a frame of theirs reaches the app.
+  if (!e.senderFrame || e.senderFrame !== e.sender.mainFrame || !ownPage(e.senderFrame.url)) throw new Error('refused');
   body = body || {};
   const win = BrowserWindow.fromWebContents(e.sender);
   try {
@@ -2189,8 +2252,9 @@ function buildMenu() {
           },
         },
         { label: 'Reload Dashboard', accelerator: 'CmdOrCtrl+R', click: () => dashView && dashView.webContents.reload() },
-        // The page that has the keys: the dashboard window's two are views, which the role doesn't reach.
-        { label: 'Toggle Developer Tools', accelerator: 'CmdOrCtrl+Shift+I', click: (_i, _w, wc) => wc && wc.toggleDevTools() },
+        // The page that has the keys: the dashboard window's two are views, which the role doesn't reach. Development
+        // only: a released app has no DevTools.
+        ...(RELEASE ? [] : [{ label: 'Toggle Developer Tools', accelerator: 'CmdOrCtrl+Shift+I', click: (_i, _w, wc) => wc && wc.toggleDevTools() }]),
         { type: 'separator' },
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => zoom(1) },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoom(-1) },

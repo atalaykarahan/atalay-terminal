@@ -622,6 +622,8 @@ final class E2EE {
     /// new chain their old key didn't sign marks their security code changed.
     private func friendKeys(_ id: String, need kid: String? = nil, fresh: Bool = false) async -> [E2EEKey]? {
         if !fresh, let known = friendKeys[id], kid.map({ k in known.contains { $0.kid == k } }) ?? true { return known }
+        // The id goes into the path: only an account id (a UUID) may, so a page can't steer this call elsewhere.
+        guard UUID(uuidString: id) != nil else { return nil }
         guard let r = await call("GET", "v1/e2ee/keys/\(id)") else { return friendKeys[id] }
         let keys = (r["keys"] as? [[String: Any]] ?? []).compactMap(E2EEKey.init)
         friendKeys[id] = keys

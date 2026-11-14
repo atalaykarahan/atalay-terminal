@@ -15,22 +15,26 @@ cd windows
 npm install          # node-pty comes prebuilt (N-API, loads in Electron as it is): nothing to compile
 npm start            # the app, from the sources
 npm run staging      # the same against the local API, never the live one (below)
-npm run dist         # dist/Atalays-Terminal-Setup-<version>.exe (on Windows)
+npm run staging -- --packaged   # a packaged build with its guard, as a release is made, against the local API
+npm run dist         # dist/Atalays-Terminal-Setup-<version>.exe, with its guard (on Windows, with the release key)
 npm run release -- "what changed"     # a signed build, published as the update every installed copy takes
 ```
 
 `npm run staging` is for trying things without touching real users' data, as the Mac's `dev.sh` and staging build
 are: the private API repo cloned as `api/` next to `app/` and `windows/` (gitignored there), running in Docker
 (`docker compose up -d` in `api/`, with an `ADMIN_TOKEN` of its own in `api/.env`). It registers a key of its own with
-that API (`~/.atalay-terminal/client-key-windows-staging`, so the release key in `src/clientkey.js` is never swapped)
-and keeps its own profile, so it runs next to the installed app.
+that API (`~/.atalay-terminal/client-key-windows-staging`, so the release key is never needed there) and keeps its own
+profile, so it runs next to the installed app.
 
 The app's API calls are signed with a key of its own (the API refuses unsigned ones). The key never goes to GitHub: it
 lives in `~/.atalay-terminal/client-key-windows` on the Mac (`scripts/new-key.sh` makes a fresh one before a release;
 the old one is revoked a month later) and is copied by hand to the Windows PC, which keeps it like an SSH key in
-`~/.atalay-terminal/client-key-windows` (readable by its user only). `node scripts/clientkey.js` writes it from there
-(or from `$env:ATALAY_CLIENT_KEY`), masked, into the gitignored `src/clientkey.js`; then `npm start` and `npm run dist`
-there are signed. The packaged app can't be run as plain Node, inspected or edited (Electron fuses).
+`~/.atalay-terminal/client-key-windows` (readable by its user only, with `client-key-windows.decoys` beside it). The
+key never goes into the app's JavaScript: a release's build compiles it into `resources/guard.node` (`native/guard.c`,
+built by `scripts/guard.js` with a pinned zig it fetches), a small native part that signs only inside that release's
+own `Orbiterm.exe` and `app.asar`. The packaged app can't be run as plain Node, inspected or edited (Electron fuses),
+opens no developer tools, and its guard stops signing when it's started with a debugging switch or its pages or
+node-pty were changed.
 
 ### Releases and updates
 
@@ -49,7 +53,8 @@ A release, on the Windows PC:
    `$env:ATALAY_CLIENT_KEY = (Get-Clipboard -Raw).Trim(); node scripts/clientkey.js --save; Remove-Item Env:ATALAY_CLIENT_KEY`
 2. Raise `version` in package.json to the next version, the one the Mac's next release takes too: the two apps are one
    product with one version number (0.13.0 is the first they share), so the admin page compares them alike.
-3. `npm run release -- "what changed" "what else"`: writes the key in, builds, and replaces the release's files
+3. `npm run release -- "what changed" "what else"`: builds the app, its guard over it, then the installer, and replaces
+   the release's files
    (`latest.yml`, the installer and its blockmap; `--dry-run` only shows them). It signs in to GitHub as git does on
    this PC (or with `$env:GH_TOKEN`).
 

@@ -1,40 +1,37 @@
 'use strict';
-// Writes src/clientkey.js from ATALAY_CLIENT_KEY ("keyid:hexsecret", copied from the Mac; README), or else from
-// ~/.atalay-terminal/client-key-windows, where the Windows PC that builds the releases keeps it like an SSH key (only its
-// user can read it): the key this build's API calls are signed with (the API refuses unsigned calls). It goes in masked,
-// as two byte strings that only give the key back together, so it isn't a plain string in the app; never committed
-// (.gitignore). Without either the build is unsigned: the dashboard and terminals work, friends, messages and levels don't.
+// Saves a release's API key, with its two decoys, on the Windows PC that builds the releases (README):
+//   $env:ATALAY_CLIENT_KEY = (Get-Clipboard -Raw).Trim(); node scripts/clientkey.js --save; Remove-Item Env:ATALAY_CLIENT_KEY
+// ATALAY_CLIENT_KEY holds what the Mac's windows/scripts/new-key.sh put on the clipboard: "keyid:hexsecret", then the
+// decoys the API registered beside it, joined by commas. The key goes to ~/.atalay-terminal/client-key-windows and the
+// decoys to client-key-windows.decoys, both readable by this user only, like an SSH key; scripts/guard.js builds them
+// into the release's guard. Nothing is written into the app's sources, and nothing shows on screen.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
 
 const keyFile = path.join(os.homedir(), '.atalay-terminal', 'client-key-windows');
-const raw = (process.env.ATALAY_CLIENT_KEY || (fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8') : '')).trim();
-const out = path.join(__dirname, '..', 'src', 'clientkey.js');
-if (!raw) {
-  console.log(`clientkey: no ATALAY_CLIENT_KEY nor ${keyFile}, building unsigned`);
+const raw = (process.env.ATALAY_CLIENT_KEY || '').trim();
+if (!process.argv.includes('--save') || !raw) {
+  console.log(`clientkey: ${fs.existsSync(keyFile) ? `a key is saved in ${keyFile}` : `no key in ${keyFile}`}; to save one: README`);
   process.exit(0);
 }
-const [id, secret] = raw.split(':');
-if (!/^[a-z0-9]{4,32}$/.test(id || '') || !/^[0-9a-f]{32,}$/i.test(secret || '')) {
-  console.error(`clientkey: ${process.env.ATALAY_CLIENT_KEY ? 'ATALAY_CLIENT_KEY' : keyFile} is not "keyid:hexsecret"`);
+const parts = raw.split(/[,\s]+/).filter(Boolean);
+const valid = (p) => /^[a-z0-9]{4,32}:[0-9a-f]{64}$/i.test(p);
+if (!parts.length || !parts.every(valid)) {
+  console.error('clientkey: ATALAY_CLIENT_KEY is not "keyid:hexsecret" (then its decoys, joined by commas)');
   process.exit(1);
 }
-// --save: a new release's key, given in ATALAY_CLIENT_KEY, also replaces the one this PC keeps, readable by its user only.
-if (process.argv.includes('--save') && process.env.ATALAY_CLIENT_KEY) {
-  fs.mkdirSync(path.dirname(keyFile), { recursive: true });
-  fs.writeFileSync(keyFile, raw + '\n', { mode: 0o600 });
+const write = (file, text) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text, { mode: 0o600 });
   if (process.platform === 'win32') {
-    require('child_process').execFileSync('icacls', [keyFile, '/inheritance:r', '/grant:r', `${os.userInfo().username}:F`], {
+    require('child_process').execFileSync('icacls', [file, '/inheritance:r', '/grant:r', `${os.userInfo().username}:F`], {
       stdio: 'ignore',
       windowsHide: true,
     });
   }
-  console.log(`clientkey: key ${id} saved in ${keyFile}`);
-}
-const key = Buffer.from(secret, 'hex');
-const mask = crypto.randomBytes(key.length);
-const masked = Buffer.from(key.map((b, i) => b ^ mask[i]));
-fs.writeFileSync(out, `'use strict';\n// Written by scripts/clientkey.js at build time; never committed.\nmodule.exports = ${JSON.stringify({ id, a: masked.toString('base64'), b: mask.toString('base64') })};\n`);
-console.log(`clientkey: key ${id} written`);
+};
+write(keyFile, parts[0] + '\n');
+if (parts.length > 1) write(`${keyFile}.decoys`, parts.slice(1).join('\n') + '\n');
+else fs.rmSync(`${keyFile}.decoys`, { force: true });
+console.log(`clientkey: key ${parts[0].split(':')[0]} saved in ${keyFile}, with ${parts.length - 1} decoys`);

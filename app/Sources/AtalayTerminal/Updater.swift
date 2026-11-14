@@ -93,19 +93,28 @@ enum Updater {
 
     /// Once this process has quit: swap the bundles (back to the old one if that fails), drop the download quarantine
     /// and, with `relaunch`, start the new build. With `relaunch` the app quits now; without, it's the user's quit.
+    /// The new build goes in under its own name (CFBundleName: "Orbiterm.app", where "Atalay's Terminal.app" was),
+    /// unless something else already has that name; then it takes the old one's place.
     static func apply(_ staged: Staged, relaunch: Bool) throws {
         let script = """
         while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done
         [ -d "$1" ] || exit 0
+        dest="$3"
+        [ "$dest" = "$2" ] || [ ! -e "$dest" ] || dest="$2"
         rm -rf "$2.old"
-        mv "$2" "$2.old" && { mv "$1" "$2" || mv "$2.old" "$2"; }
+        mv "$2" "$2.old" && { mv "$1" "$dest" || { mv "$2.old" "$2"; dest="$2"; }; }
         rm -rf "$2.old" "$1"
-        xattr -dr com.apple.quarantine "$2" 2>/dev/null
-        \(relaunch ? "open \"$2\"" : "")
+        [ -d "$dest" ] || dest="$2"
+        xattr -dr com.apple.quarantine "$dest" 2>/dev/null
+        \(relaunch ? "open \"$dest\"" : "")
         """
+        let current = Bundle.main.bundleURL
+        let name = (Bundle(url: staged.url)?.object(forInfoDictionaryKey: "CFBundleName") as? String)?
+            .filter { $0 != "/" && $0 != ":" }
+        let dest = name.flatMap { $0.isEmpty ? nil : current.deletingLastPathComponent().appendingPathComponent($0 + ".app") } ?? current
         let swap = Process()
         swap.executableURL = URL(fileURLWithPath: "/bin/sh")
-        swap.arguments = ["-c", script, "swap", staged.url.path, Bundle.main.bundleURL.path]
+        swap.arguments = ["-c", script, "swap", staged.url.path, current.path, dest.path]
         try swap.run()
         guard relaunch else { return }
         NSApp.terminate(nil)

@@ -968,12 +968,17 @@ window.Cloud = (() => {
       return setHTML(el, `<div class="mn-empty">${why}</div>`);
     }
     const r = Xp.rank(x.level);
+    // The ceilings (16 hours a day, 70 in any 7 days, the API's xp.ts) told as what comes next, not as a penalty.
     const rested =
-      x.rested > 0
-        ? `<b>rested</b> · the next ${Xp.dur(x.rested)} today earn double XP`
-        : x.today >= 8 * 3600
-          ? '<b>past 8 hours today</b> · half XP from here · take a break'
-          : 'rested again tomorrow · the first 2 hours each day earn double XP';
+      x.full === 'day'
+        ? "<b>today's hours are in</b> · 16 hours counted · tomorrow starts rested, the first 2 hours at double XP"
+        : x.full === 'week'
+          ? "<b>this week's hours are in</b> · 70 hours in 7 days counted · they come back as the days roll on"
+          : x.rested > 0
+            ? `<b>rested</b> · the next ${Xp.dur(x.rested)} today earn double XP`
+            : x.today >= 8 * 3600
+              ? '<b>past 8 hours today</b> · half XP from here · take a break'
+              : 'rested again tomorrow · the first 2 hours each day earn double XP';
     const ranks = Xp.RANKS.map((k) => {
       const state = x.level > k.to ? 'done' : x.level >= k.from ? 'now' : 'next';
       return `<div class="pf-rk ${state}" style="--rc:${k.color}"><i></i><b>${k.name}</b><span>level ${k.from}–${k.to}</span><em>${state === 'done' ? '✓' : state === 'now' ? 'you' : ''}</em></div>`;

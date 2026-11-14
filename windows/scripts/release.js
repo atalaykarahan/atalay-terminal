@@ -11,6 +11,7 @@
 //
 //   npm run release -- "what changed" ["what else"]     notes: one line per change
 //   npm run release -- --dry-run                        builds, then only shows what would go up
+//   npm run dist                                        (--build-only) builds the installer, nothing else
 //   GH_TOKEN   a GitHub token that can write the releases repo (default: git's own sign-in to github.com on this PC)
 //
 // The API key is rotated for every release (scripts/new-key.sh on the Mac): copy the new one here first (README).
@@ -25,7 +26,8 @@ const dist = path.join(root, 'dist');
 const pkg = require('../package.json');
 const args = process.argv.slice(2);
 const dry = args.includes('--dry-run');
-const notes = args.filter((a) => a !== '--dry-run').map((a) => a.trim()).filter(Boolean).join('\n');
+const only = args.includes('--build-only');
+const notes = args.filter((a) => a !== '--dry-run' && a !== '--build-only').map((a) => a.trim()).filter(Boolean).join('\n');
 const STABLE = 'Atalays-Terminal-Setup.exe';
 
 function fail(msg) {
@@ -112,29 +114,32 @@ let auth = '';
 (async () => {
   if (process.platform !== 'win32') fail('Windows builds are made on Windows');
   const keyFile = path.join(os.homedir(), '.atalay-terminal', 'client-key-windows');
-  if (!process.env.ATALAY_CLIENT_KEY && !fs.existsSync(keyFile)) {
-    fail(`no API key (${keyFile}): an unsigned build can't reach the API, so it isn't released`);
-  }
-  auth = token();
-  if (!auth && !dry) fail('no GitHub token: set GH_TOKEN, or sign git in to github.com once (a push does)');
+  // A key given in ATALAY_CLIENT_KEY (the Mac's windows/scripts/new-key.sh) is saved first, with its decoys.
+  if (process.env.ATALAY_CLIENT_KEY) cp.execFileSync(process.execPath, [path.join(__dirname, 'clientkey.js'), '--save'], { stdio: 'inherit' });
+  if (!fs.existsSync(keyFile)) fail(`no API key (${keyFile}): an unsigned build can't reach the API, so it isn't released`);
+  auth = only ? '' : token();
+  if (!auth && !dry && !only) fail('no GitHub token: set GH_TOKEN, or sign git in to github.com once (a push does)');
 
   // rtk for the token saver (a pinned release, checked against its checksums): a release without it would leave its
   // switch off for everyone.
   cp.execFileSync(process.execPath, [path.join(__dirname, 'fetch-rtk.js')], { stdio: 'inherit' });
   if (!fs.existsSync(path.join(root, 'vendor', 'rtk', 'rtk.exe'))) fail('no rtk in vendor/rtk, the token saver would be missing');
-  // The key in fresh (masked, into the gitignored src/clientkey.js), then the build.
-  cp.execFileSync(process.execPath, [path.join(__dirname, 'clientkey.js')], { stdio: 'inherit' });
+  // The key never goes into app.asar (an older build's src/clientkey.js mustn't go out with this one): it's in the
+  // guard. The build in three steps: the app's folder (dist/win-unpacked); its guard, built over that finished
+  // Orbiterm.exe and app.asar (scripts/guard.js), so it can't be inside them; the installer from the folder.
+  fs.rmSync(path.join(root, 'src', 'clientkey.js'), { force: true });
   const builder = require('electron-builder');
-  await builder.build({
-    targets: builder.Platform.WINDOWS.createTarget(),
-    publish: 'never',
-    config: notes ? { releaseInfo: { releaseNotes: notes } } : undefined,
-  });
+  const config = notes ? { releaseInfo: { releaseNotes: notes } } : undefined;
+  await builder.build({ targets: builder.Platform.WINDOWS.createTarget('dir'), publish: 'never', config });
+  const unpacked = path.join(dist, 'win-unpacked');
+  cp.execFileSync(process.execPath, [path.join(__dirname, 'guard.js'), unpacked, keyFile], { stdio: 'inherit' });
+  await builder.build({ targets: builder.Platform.WINDOWS.createTarget('nsis'), prepackaged: unpacked, publish: 'never', config });
 
   const yml = fs.readFileSync(path.join(dist, 'latest.yml'), 'utf8');
   const version = (/^version: (.+)$/m.exec(yml) || [])[1];
   const exe = (/^path: (.+)$/m.exec(yml) || [])[1];
   if (version !== pkg.version || !exe || !fs.existsSync(path.join(dist, exe))) fail(`dist/latest.yml doesn't match the build`);
+  if (only) return console.log(`release: built dist/${exe}, not published`);
   const files = [
     [exe, exe],
     [`${exe}.blockmap`, `${exe}.blockmap`],
@@ -196,4 +201,12 @@ let auth = '';
   });
   if (!live.includes(`version: ${version}`)) fail(`published, but ${feed}/latest.yml doesn't show ${version} yet`);
   console.log(`release: ${version} is out; new users: https://github.com/${owner}/${repo}/releases/download/${tag}/${STABLE}`);
+
+  // This build's key goes live: the Windows keys before it stop earning XP in 10 minutes and end in 24 hours. It's
+  // published already, so a failure here only asks for the same thing by hand.
+  const marked = cp.spawnSync(process.execPath, [path.join(__dirname, 'key-live.js'), keyFile], { stdio: 'inherit' });
+  if (marked.status !== 0) {
+    const id = fs.readFileSync(keyFile, 'utf8').split(':')[0].trim();
+    console.warn(`release: the release is out, but its key isn't marked live; from the Mac: PUT /v1/admin/client-keys/${id}/live with the admin token`);
+  }
 })().catch((e) => fail(e.message));

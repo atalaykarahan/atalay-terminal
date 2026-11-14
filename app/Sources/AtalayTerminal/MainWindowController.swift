@@ -44,7 +44,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         fontSize = saved >= 9 ? CGFloat(saved) : ITermLook.current?.fontSize ?? 13
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1480, height: 900),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Atalay's Terminal"
+        window.title = "Orbiterm"
         window.titlebarAppearsTransparent = true
         window.backgroundColor = Theme.bg
         window.appearance = NSAppearance(named: .darkAqua)
@@ -89,7 +89,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 if self?.briefs.values.contains(where: { $0.live && $0.status == "busy" }) == true { Activity.work() }
                 // Which AI tools were at work, for their badges: Claude's sessions, and the others by name ("ai:…").
                 for b in self?.briefs.values ?? [:].values where b.live && b.status == "busy" {
-                    Activity.toolAtWork(b.id.hasPrefix("ai:") ? b.name : "claude")
+                    Activity.toolAtWork(b.id.hasPrefix("ai:") ? b.name : "claude", pid: b.pid)
                 }
                 self?.pushTerminals()
                 // How long since the last input anywhere on the Mac: the orbit's cinematic camera waits for five
@@ -762,7 +762,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             openWindow(cwd: cwd, claudeArgs: [], sessionId: sid, title: title, detached: DetachedLink(name: name))
             return
         }
-        // Running in another Atalay's Terminal (the installed app and the staging build side by side): a mirror here,
+        // Running in another Orbiterm (the installed app and the staging build side by side): a mirror here,
         // a second screen on the same chat. Both windows show it live and type into the one Claude; closing the mirror
         // leaves the chat running there, End Session ends it there too.
         if let name = Detached.sessionName(hosting: pid, anyBuild: true) {
@@ -815,7 +815,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         Detached.start(name: link.name, cwd: cwd, claudeArgs: claudeArgs) { [weak self, weak c] ok in
             guard let self, let c else { return }
             guard ok else {
-                NSLog("Atalay's Terminal: screen couldn't start a session; this chat runs in the app only")
+                NSLog("Orbiterm: screen couldn't start a session; this chat runs in the app only")
                 return c.runLocally(claudeArgs: claudeArgs)
             }
             c.attachSession()

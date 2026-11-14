@@ -967,8 +967,10 @@ final class RadarEngine {
 
     // MARK: live registry + processes
 
+    /// A live process of this user's: Claude runs as the user, so one of someone else's (EPERM: root, another account)
+    /// isn't a chat of theirs, and a session file naming one (launchd's pid 1, say) would otherwise be a chat forever.
     private func alive(_ pid: Int32) -> Bool {
-        kill(pid, 0) == 0 || errno == EPERM
+        kill(pid, 0) == 0
     }
 
     private func pollRegistry() {
@@ -1021,7 +1023,9 @@ final class RadarEngine {
             S.endedAt = 0
             S.pid = pid
             if let name = j["name"] as? String { S.name = name }
-            S.reg = j["status"] as? String ?? "busy"
+            // A file without a status says nothing about work: idle until Claude says busy (its transcript still shows
+            // real work as it comes).
+            S.reg = j["status"] as? String ?? "idle"
             S.waitingFor = j["waitingFor"] as? String
             S.statusSince = (j["statusUpdatedAt"] as? NSNumber)?.doubleValue ?? (j["updatedAt"] as? NSNumber)?.doubleValue ?? S.statusSince
             S.kind = j["kind"] as? String ?? ""

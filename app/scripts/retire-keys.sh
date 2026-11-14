@@ -1,7 +1,7 @@
 #!/bin/bash
-# Revokes the keys put aside by scripts/rotate-key.sh more than <days> ago (30 by default): the apps still signing with
-# them are that many days behind, earn no XP since a day after their replacement and update themselves when their user
-# steps away; a revoked key gets "update required" from the API. Production only; scripts/release.sh runs it.
+# Revokes the keys put aside by scripts/rotate-key.sh more than <days> ago (30 by default). Bookkeeping only: the API
+# already stopped them (no XP 10 minutes after the next release went out, dead after 24 hours: src/clientauth.ts), so
+# the apps still signing with them get "update required" either way. Production only; scripts/release.sh runs it.
 #   scripts/retire-keys.sh [days]
 set -euo pipefail
 DAYS="${1:-30}"

@@ -23,7 +23,7 @@ if [ -z "$TOKEN" ]; then
 fi
 [ -n "$TOKEN" ] || { echo "no admin token for $API: save it in ~/.atalay-terminal/admin-token" >&2; exit 1; }
 
-APP="build/release/Atalay's Terminal.app"
+APP="build/release/Orbiterm.app"
 [ -d "$APP" ] || { echo "nothing to publish: build it first (scripts/release.sh does)" >&2; exit 1; }
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
 BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")
@@ -42,12 +42,12 @@ else
   # The zip for updates and the .dmg for new users, on a release page anyone can download from. The .dmg has the
   # same name in every release, so .../releases/latest/download/Atalays-Terminal.dmg (the README's link) is the newest.
   FILES=("$ZIP")
-  DMG="build/Atalay's Terminal $VERSION.dmg"
+  DMG="build/Orbiterm $VERSION.dmg"
   if [ -f "$DMG" ]; then
     cp "$DMG" build/Atalays-Terminal.dmg
     FILES+=(build/Atalays-Terminal.dmg)
   fi
-  TITLE="Atalay's Terminal $VERSION"
+  TITLE="Orbiterm $VERSION"
   gh release create "v$VERSION" "${FILES[@]}" --repo "$REPO" --title "$TITLE" --notes "${NOTES:-$TITLE}"
   URL="https://github.com/$REPO/releases/download/v$VERSION/$(basename "$ZIP")"
   # Registered only once the file can really be downloaded (a public repo, the upload done).

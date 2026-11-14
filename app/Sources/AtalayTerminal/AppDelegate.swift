@@ -11,6 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A build an earlier run staged but never restarted into goes in first: nothing runs yet, so nothing can stop
         // the quit, and the new build comes up in its place (the swap's script opens it).
         if let staged = Updater.leftover() { try? Updater.apply(staged, relaunch: true) }
+        // The pages checked against this build's own before anything signs a call (WebIntegrity); and what the shared
+        // URL cache kept of the API's calls (token and signature included) before they went through a session of their
+        // own (Cloud.session) goes.
+        WebIntegrity.check()
+        URLCache.shared.removeAllCachedResponses()
         NSApp.appearance = NSAppearance(named: .darkAqua)
         Mur47.registerFonts()
         buildMenu()
@@ -22,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         installMonitors()
-        if !Trackpad.start() { NSLog("Atalay's Terminal: trackpad finger tracking unavailable; ⌃ and the middle mouse button open the shortcut wheel") }
+        if !Trackpad.start() { NSLog("Orbiterm: trackpad finger tracking unavailable; ⌃ and the middle mouse button open the shortcut wheel") }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             Trackpad.start()
             // Sleep kills the live line to the API without a word; open a fresh one.
@@ -194,13 +199,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return item
         }
 
-        let app = submenu("Atalay's Terminal")
-        add(app, "About Atalay's Terminal", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "")
+        let app = submenu("Orbiterm")
+        add(app, "About Orbiterm", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "")
         app.addItem(.separator())
-        add(app, "Hide Atalay's Terminal", #selector(NSApplication.hide(_:)), "h")
+        add(app, "Hide Orbiterm", #selector(NSApplication.hide(_:)), "h")
         add(app, "Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option])
         app.addItem(.separator())
-        add(app, "Quit Atalay's Terminal", #selector(NSApplication.terminate(_:)), "q")
+        add(app, "Quit Orbiterm", #selector(NSApplication.terminate(_:)), "q")
 
         // iTerm2's keys (its Shell and Window menus, read from iTerm2 3.7): tabs and split panes in the chat or terminal
         // window in front (Panes.swift).

@@ -11,7 +11,7 @@
     "start": "electron .",
     "staging": "node scripts/staging.js",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "dist": "node scripts/fetch-rtk.js && electron-builder --win --publish never",
+    "dist": "node scripts/release.js --build-only",
     "release": "node scripts/release.js"
   },
   "dependencies": {

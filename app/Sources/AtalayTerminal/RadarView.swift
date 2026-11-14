@@ -13,10 +13,12 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, W
         // Sounds play without a click on the page first, as the message panels' do: the dashboard's pings when sound is on,
         // a theme's own (web/hooks.js).
         config.mediaTypesRequiringUserActionForPlayback = []
+        config.lockInspector()
         let ucc = WKUserContentController()
         ucc.addUserScript(WKUserScript(source: Self.terminalLook, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = ucc
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800), configuration: config)
+        webView.lockInspector()
         super.init()
         ThemeStore.shared.attach(webView, zooms: true)
         ucc.add(WeakMessageHandler(self), name: "radar")
@@ -29,6 +31,7 @@ final class RadarView: NSObject, WKScriptMessageHandler, WKNavigationDelegate, W
         webView.navigationDelegate = self
         webView.uiDelegate = self
         let dir = Self.webDirectory()
+        WebIntegrity.check()
         webView.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
     }
 

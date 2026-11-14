@@ -84,11 +84,13 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         let config = WKWebViewConfiguration()
         // Message sounds play without a click on the page first.
         config.mediaTypesRequiringUserActionForPlayback = []
+        config.lockInspector()
         let ucc = WKUserContentController()
         ucc.addUserScript(WKUserScript(source: "window.__MESSAGES_ROLE__ = '\(role.rawValue)'; window.__MESSAGES_FRIEND__ = \(Self.literal(friend));",
                                        injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.userContentController = ucc
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 380, height: 140), configuration: config)
+        webView.lockInspector()
         super.init()
         ThemeStore.shared.attach(webView)
         ucc.add(WeakMessageHandler(self), name: "messages")
@@ -126,6 +128,7 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         root.addSubview(webView)
         panel.contentView = root
         let dir = RadarView.webDirectory()
+        WebIntegrity.check()
         webView.loadFileURL(dir.appendingPathComponent("messages.html"), allowingReadAccessTo: dir)
         if role == .notices {
             // The level-up waits for the app to be in front.
@@ -452,7 +455,7 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             panel.level = .screenSaver
             panel.setFrame(s.frame, display: true)
             Self.takeoverOn = true
-            NSLog("Atalay's Terminal: level-up takeover on %@", NSStringFromRect(s.frame))
+            NSLog("Orbiterm: level-up takeover on %@", NSStringFromRect(s.frame))
             takeoverGuard?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated {
@@ -518,6 +521,11 @@ final class MessagePanel: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         } else if !panel.isVisible {
             panel.orderFront(nil)
         }
+    }
+
+    /// The panel stays on its own page: a link in a message opens in the browser (PagePolicy).
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(PagePolicy.decide(action))
     }
 
     /// The page's process died: load it again (it reports "ready" and asks for the conversations anew). A takeover it

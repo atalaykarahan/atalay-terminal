@@ -8,6 +8,7 @@
 # The Windows app: its packages, its builds, and the key its API calls are signed with (made at build time)
 /windows/node_modules/
 /windows/dist/
+/windows/dist-staging/
 /windows/src/clientkey.js
 /app/vendor/
 /windows/vendor/

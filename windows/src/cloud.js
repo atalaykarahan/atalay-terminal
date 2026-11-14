@@ -46,8 +46,10 @@ const isPrivate = (p) => {
   }
   return PRIVATE.some((t) => under(d, t));
 };
+// A fragment or a ';' parameter isn't sent as part of the path, so what's checked wouldn't be what goes out
+// ("v1/account/signout#" would reach sign-out).
 const allowed = (p) =>
-  !p.includes('..') && !isPrivate(p) && (SOCIAL_ROUTES.includes(p) || SOCIAL_TREES.some((t) => under(p, t)));
+  !/[#;]/.test(p) && !p.includes('..') && !isPrivate(p) && (SOCIAL_ROUTES.includes(p) || SOCIAL_TREES.some((t) => under(p, t)));
 // The AI tools the API counts hours with for their badges (its badges.ts).
 const TOOLS = new Set(['claude', 'codex', 'gemini', 'antigravity']);
 
@@ -121,10 +123,12 @@ function systemVersion() {
   return `${name} (${release})`;
 }
 
-// Released builds sign every call to the API with a key the public repository never has; main.js passes it in. The API
-// serves only the published app that way (its src/clientauth.ts): a copy built from source can't sign, so it earns no
-// XP and can't use friends or messages.
-function signer(clientKey) {
+// Released builds sign every call to the API with a key the public repository never has. The released app holds it in
+// its guard (native/guard.c: resources\guard.node, which signs only inside that release's own program); a run from the
+// sources against the local API (npm run staging) has its key passed in. The API serves only the published app that
+// way (its src/clientauth.ts): a copy built from source can't sign, so it earns no XP and can't use friends or messages.
+// `intact`: whether the app's pages are still the release's own (main.js); nothing is signed when they aren't.
+function signer(clientKey, guard, intact = () => true) {
   const key =
     clientKey && clientKey.id && /^(?:[0-9a-f]{2})+$/i.test(String(clientKey.secret || ''))
       ? { id: String(clientKey.id), secret: Buffer.from(String(clientKey.secret), 'hex') }
@@ -133,14 +137,20 @@ function signer(clientKey) {
   // signs with a time the API accepts.
   let skew = 0;
   return {
-    // Adds x-at-key, x-at-time and x-at-sig: HMAC-SHA256 of the time, method, path with query and the body's SHA-256.
+    // Adds x-at-key, x-at-time, x-at-nonce and x-at-sig: HMAC-SHA256 of "v2", the time, a new random nonce, the method,
+    // the path with query, the body's SHA-256 and the Authorization header's SHA-256. The API takes each nonce once and
+    // only with that token, so a call copied off the wire can't be sent again or under another account.
     sign(method, url, body, headers) {
-      if (!key) return;
+      if ((!key && !guard) || !intact()) return;
       const time = String(Math.trunc(Date.now() / 1000 + skew));
-      const text = [time, method, url.pathname + url.search, sha256(body ?? '')].join('\n');
-      headers['x-at-key'] = key.id;
+      const nonce = crypto.randomBytes(16).toString('hex');
+      const text = ['v2', time, nonce, method, url.pathname + url.search, sha256(body ?? ''), sha256(headers.authorization ?? '')].join('\n');
+      const signed = guard ? guard.sign(text) : { id: key.id, sig: crypto.createHmac('sha256', key.secret).update(text).digest('hex') };
+      if (!signed) return;
+      headers['x-at-key'] = signed.id;
       headers['x-at-time'] = time;
-      headers['x-at-sig'] = crypto.createHmac('sha256', key.secret).update(text).digest('hex');
+      headers['x-at-nonce'] = nonce;
+      headers['x-at-sig'] = signed.sig;
     },
     // Keeps up with the API's clock from a reply.
     learn(res) {
@@ -186,7 +196,7 @@ function createCloud(opts = {}) {
   const base = new URL(String(opts.apiBase || process.env.ATALAY_API_URL || API).replace(/\/*$/, '/'));
   const version = clean(opts.version || 'dev', /[^A-Za-z0-9.+-]/g, 32) || 'dev';
   const osVersion = clean(systemVersion(), /[^A-Za-z0-9 ().,+_-]/g, 64);
-  const key = signer(opts.clientKey);
+  const key = signer(opts.clientKey, opts.guard);
   // What the app reports about itself when it registers and on every heartbeat. No build number: see the top.
   const client = () => ({ appVersion: version, osVersion });
 

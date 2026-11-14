@@ -8,8 +8,14 @@ import Foundation
 @MainActor
 enum ClientKey {
     #if CLIENT_KEY
-    private static let key: (id: String, secret: SymmetricKey)? =
-        (embedded.id, SymmetricKey(data: zip(embedded.mask, embedded.data).map { $0 ^ $1 }))
+    /// The release's key sits among others shaped like it (build-app.sh, scripts/client-key.sh): `slot` is the key; the
+    /// others are never used. The index is worked out at run time, so the compiler keeps every one of them in the
+    /// program.
+    private static let key: (id: String, secret: SymmetricKey)? = {
+        let i = Int(CommandLine.argc) > 1_000_000 ? Int(CommandLine.argc) % embedded.count : slot
+        let k = embedded[i]
+        return (k.id, SymmetricKey(data: zip(k.mask, k.data).map { $0 ^ $1 }))
+    }()
     #else
     private static let key: (id: String, secret: SymmetricKey)? = nil
     #endif
@@ -30,15 +36,21 @@ enum ClientKey {
         bytes.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Adds x-at-key, x-at-time and x-at-sig: HMAC-SHA256 of the time, method, path with query and the body's
-    /// SHA-256. Call it once the request has its body.
+    /// Adds x-at-key, x-at-time, x-at-nonce and x-at-sig: HMAC-SHA256 of "v2", the time, a new random nonce, the method,
+    /// the path with query, the body's SHA-256 and the Authorization header's SHA-256. The API takes each nonce once and
+    /// only with that token, so a call copied off the wire can't be sent again or under another account. Call it once
+    /// the request has its body and token. Nothing is signed while the pages aren't this build's own (WebIntegrity).
     static func sign(_ req: inout URLRequest) {
-        guard let key, let url = req.url, let c = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return }
+        guard let key, WebIntegrity.intact, let url = req.url, let c = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return }
         let time = String(Int(Date().timeIntervalSince1970 + skew))
+        let nonce = SymmetricKey(size: .bits128).withUnsafeBytes { hex($0) }
         let target = c.percentEncodedPath + (c.percentEncodedQuery.map { "?" + $0 } ?? "")
-        let text = [time, req.httpMethod ?? "GET", target, hex(SHA256.hash(data: req.httpBody ?? Data()))].joined(separator: "\n")
+        let auth = hex(SHA256.hash(data: Data((req.value(forHTTPHeaderField: "authorization") ?? "").utf8)))
+        let text = ["v2", time, nonce, req.httpMethod ?? "GET", target, hex(SHA256.hash(data: req.httpBody ?? Data())), auth]
+            .joined(separator: "\n")
         req.setValue(key.id, forHTTPHeaderField: "x-at-key")
         req.setValue(time, forHTTPHeaderField: "x-at-time")
+        req.setValue(nonce, forHTTPHeaderField: "x-at-nonce")
         req.setValue(hex(HMAC<SHA256>.authenticationCode(for: Data(text.utf8), using: key.secret)), forHTTPHeaderField: "x-at-sig")
     }
 

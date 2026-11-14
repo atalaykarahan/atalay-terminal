@@ -1,6 +1,6 @@
 import Foundation
 
-/// Discord's Rich Presence: what the app is doing shows on your Discord profile ("Playing Atalay's Terminal"), as games
+/// Discord's Rich Presence: what the app is doing shows on your Discord profile ("Playing Orbiterm"), as games
 /// show theirs. On unless Settings · DISCORD turns it off. It says how many sessions run, how many are at work or wait
 /// for you and the AI tools at work, never a prompt, code or a file's name. Two more switches add the project's name
 /// (the folder of the session at work, "+2" for the other folders at work, all of them under the tool's picture) and
@@ -124,7 +124,7 @@ final class DiscordPresence {
         if showActive, let today = xp?.today, today >= 60 { parts.append("\(Self.duration(today)) today") }
 
         var assets: [String: Any] = ["large_image": "logo",
-                                     "large_text": xp.map { "Level \($0.level) · \($0.rank)" } ?? "Atalay's Terminal"]
+                                     "large_text": xp.map { "Level \($0.level) · \($0.rank)" } ?? "Orbiterm"]
         if let lead = pool.first, let key = Self.asset(Self.tool(lead)) {
             assets["small_image"] = key
             let all = showProject && projects.count > 1 ? " · " + projects.joined(separator: ", ") : ""

@@ -152,7 +152,9 @@ final class OverlayController: NSObject, WKScriptMessageHandlerWithReply, WKNavi
         panel = OverlayPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless, .nonactivatingPanel],
                              backing: .buffered, defer: false)
         let config = WKWebViewConfiguration()
+        config.lockInspector()
         webView = WKWebView(frame: .zero, configuration: config)
+        webView.lockInspector()
         super.init()
         ThemeStore.shared.attach(webView)
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "overlay")
@@ -182,7 +184,12 @@ final class OverlayController: NSObject, WKScriptMessageHandlerWithReply, WKNavi
         }
         panel.contentView = root
         let dir = RadarView.webDirectory()
+        WebIntegrity.check()
         webView.loadFileURL(dir.appendingPathComponent("overlay.html"), allowingReadAccessTo: dir)
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(PagePolicy.decide(action))
     }
 
     var isVisible: Bool { panel.isVisible }

@@ -7,7 +7,7 @@
 	<key>AtalayUpdateKey</key>
 	<string>lK12vK00l3AS50c2klz3CPDycT65DsqZ8Se97WYm9OE=</string>
 	<key>CFBundleDisplayName</key>
-	<string>Atalay's Terminal</string>
+	<string>Orbiterm</string>
 	<key>CFBundleExecutable</key>
 	<string>atalay-terminal</string>
 	<key>CFBundleIconFile</key>
@@ -17,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Atalay's Terminal</string>
+	<string>Orbiterm</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -28,11 +28,6 @@
 	<string>public.app-category.developer-tools</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Ending a chat copied from an iTerm2 session closes that iTerm2 tab too.</string>
 	<key>NSHighResolutionCapable</key>

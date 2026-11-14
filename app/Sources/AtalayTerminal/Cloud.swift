@@ -31,7 +31,7 @@ enum DeviceID {
     }()
 }
 
-/// The app's link to the Atalay's Terminal API: the user's hacker name and tag, how many are online, and newer builds.
+/// The app's link to the Orbiterm API: the user's hacker name and tag, how many are online, and newer builds.
 /// A heartbeat every minute keeps this Mac online and asks for updates.
 @MainActor
 final class Cloud {
@@ -60,6 +60,8 @@ final class Cloud {
         let days: [Int]?
         /// Listed on the leaderboard.
         let board: Bool?
+        /// A ceiling reached: "day" (16 hours today) or "week" (70 in the last 7 days); nil before the API had them.
+        let full: String?
     }
 
     struct State: Equatable {
@@ -134,8 +136,22 @@ final class Cloud {
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     /// 0 when run unbundled (swift run), which never asks for updates.
     let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
-    private let base = URL(string: ProcessInfo.processInfo.environment["ATALAY_API_URL"]
+    /// The API: Info.plist's AtalayAPIURL. ATALAY_API_URL overrides it only in the staging build and when run unbundled
+    /// (development): in the released app it would let anyone point the app, and its signed calls, at a server of theirs.
+    private let base = URL(string: (Cloud.mayRedirect ? ProcessInfo.processInfo.environment["ATALAY_API_URL"] : nil)
         ?? Bundle.main.object(forInfoDictionaryKey: "AtalayAPIURL") as? String ?? "http://127.0.0.1:4800")!
+    private static var mayRedirect: Bool {
+        let id = Bundle.main.bundleIdentifier
+        return id == nil || id?.hasSuffix(".staging") == true
+    }
+    /// The API's calls go through a session that keeps nothing on disk: URLSession.shared's cache kept their requests,
+    /// token and signature included, in the app's Caches folder.
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.urlCache = nil
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: c)
+    }()
     /// Which API this is (host and port), for what's kept per API: the token, the message keys (E2EE.swift).
     var apiName: String { (base.host ?? "api") + (base.port.map { "-\($0)" } ?? "") }
     private var client: [String: Any] {
@@ -421,7 +437,7 @@ final class Cloud {
                 if restartWhenReady { return restart(into: s) }
                 maybeRestart()
             } catch {
-                NSLog("Atalay's Terminal: update download failed: %@", String(describing: error))
+                NSLog("Orbiterm: update download failed: %@", String(describing: error))
                 state.updateProgress = nil
                 failedBuild = u.build
                 if restartWhenReady { state.updating = nil }
@@ -525,7 +541,7 @@ final class Cloud {
         }
         ClientKey.sign(&req)
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await Cloud.session.data(for: req)
             ClientKey.learn(from: response)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let json = (try? JSONSerialization.jsonObject(with: data)) ?? [String: Any]()
@@ -552,7 +568,7 @@ final class Cloud {
         if let token { req.setValue("Bearer " + token, forHTTPHeaderField: "authorization") }
         req.setValue("1", forHTTPHeaderField: "x-e2ee")
         ClientKey.sign(&req)
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await Cloud.session.data(for: req)
         ClientKey.learn(from: response)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
@@ -588,6 +604,9 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// checked on the path as the API reads it (decoded, any case, slashes squeezed), with no "." or ".." segment to
     /// walk it elsewhere, and a path that doesn't decode refused.
     static func pageMayCall(_ path: String) -> Bool {
+        // A fragment or a ';' parameter isn't sent as part of the path, so what's checked below wouldn't be what goes
+        // out ("v1/account/signout#" reached sign-out).
+        guard !path.contains("#"), !path.contains(";") else { return false }
         let routes = ["v1/me/status", "v1/me/activity", "v1/me/leaderboard", "v1/me/profile", "v1/me/avatar", "v1/feedback"]
         let trees = ["v1/social", "v1/friends", "v1/messages", "v1/leaderboard", "v1/notifications", "v1/roadmap", "v1/account", "v1/auth",
                      "v1/settings", "v1/badges"]
@@ -601,6 +620,10 @@ final class CloudBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        // Only the app's own pages, in their main frame: nothing loaded into a frame of theirs gets the token's reach.
+        guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.isFileURL == true else {
+            return replyHandler(nil, "refused")
+        }
         let body = message.body as? [String: Any] ?? [:]
         let name = body["name"] as? String ?? ""
         let cloud = Cloud.shared

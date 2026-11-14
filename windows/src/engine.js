@@ -2859,7 +2859,9 @@ class RadarEngine {
       S.live = true;
       S.pid = pid;
       if (typeof j.name === 'string') S.name = j.name;
-      S.reg = str(j.status) ?? 'busy';
+      // A file without a status says nothing about work: idle until Claude says busy (its transcript still shows real
+      // work as it comes).
+      S.reg = str(j.status) ?? 'idle';
       S.waitingFor = str(j.waitingFor) ?? null;
       S.statusSince = typeof j.statusUpdatedAt === 'number' ? j.statusUpdatedAt : typeof j.updatedAt === 'number' ? j.updatedAt : S.statusSince;
       S.kind = str(j.kind) ?? '';

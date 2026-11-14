@@ -11,10 +11,14 @@ const { execFileSync } = require('child_process');
 const { openHost } = require('./sessionhost');
 
 let pty = null;
-try {
-  pty = require('node-pty');
-} catch (e) {
-  console.error('terminals: node-pty is missing (npm run rebuild):', e.message);
+// Not when its files aren't the release's own (main.js, the guard): they would load into the app's process. The
+// terminals run in the session host then.
+if (!process.env.ORBITERM_NO_PTY) {
+  try {
+    pty = require('node-pty');
+  } catch (e) {
+    console.error('terminals: node-pty is missing (npm run rebuild):', e.message);
+  }
 }
 
 const WIN = process.platform === 'win32';
